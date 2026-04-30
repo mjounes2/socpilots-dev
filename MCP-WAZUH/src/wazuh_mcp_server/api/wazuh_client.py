@@ -289,7 +289,14 @@ class WazuhClient:
             raise ValueError(f"Invalid XML format: {str(e)}")
         except Exception as e:
             raise ValueError(f"Error parsing rule XML: {str(e)}")
-        
+
+        # Wazuh requires <group> as the root element
+        if root.tag != "group":
+            raise ValueError(
+                f"Invalid rule XML: root element must be <group name=\"...\">, got <{root.tag}>. "
+                "Wrap your <rule> elements in: <group name=\"custom,\">...</group>"
+            )
+
         # Ensure filename has .xml extension
         if not rule_filename.endswith('.xml'):
             rule_filename = f"{rule_filename}.xml"

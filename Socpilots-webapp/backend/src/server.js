@@ -459,8 +459,8 @@ app.post('/api/rules/deploy-custom', authMW, async (req, res) => {
     return res.status(400).json({ error: 'name, description, pattern required' });
   }
 
-  // Generate next available custom rule ID (200000-299999)
-  const ruleId = 200000 + Math.floor(Math.random() * 1000);
+  // Generate next available custom rule ID (200000-298999)
+  const ruleId = 200000 + Math.floor(Math.random() * 99000);
 
   // Build rule XML
   const safeDesc = String(description).replace(/[<>&]/g, '');
@@ -468,34 +468,26 @@ app.post('/api/rules/deploy-custom', authMW, async (req, res) => {
   const safeName = String(name).replace(/[<>&]/g, '');
   const grp = group || 'custom';
 
-  const ruleXml = `  <rule id="${ruleId}" level="${level || 5}">
+  const ruleXml = `<group name="${grp},custom,">
+  <rule id="${ruleId}" level="${level || 5}">
     <description>${safeDesc}</description>
     <match>${safePattern}</match>
     ${mitre ? `<mitre><id>${mitre}</id></mitre>` : ''}
-    <group>${grp}</group>
-  </rule>`;
+  </rule>
+</group>`;
 
-  // Use n8n MCP-Wazuh tool via the AI agent — most reliable path
-  const deployPrompt = `Deploy this custom Wazuh rule. Use the Wazuh MCP tool.
+  // Use n8n MCP-Wazuh tool via the AI agent
+  const deployPrompt = `Deploy this custom Wazuh rule using the Wazuh MCP tool add_wazuh_rule.
 
-RULE NAME: ${safeName}
-RULE ID: ${ruleId}
-GROUP: ${grp}
+Call add_wazuh_rule with exactly these parameters:
+- rule_content: the XML below (complete, do not modify)
+- rule_filename: "custom_rules.xml"
+- overwrite: true
 
 RULE XML:
 \`\`\`xml
 ${ruleXml}
 \`\`\`
-
-EXECUTE THESE STEPS using the Wazuh MCP tool:
-
-1. Read the current /var/ossec/etc/rules/local_rules.xml file content
-2. If file empty/missing, initialize with: <group name="local,custom,">\n</group>
-3. Insert the new <rule> block BEFORE the closing </group> tag
-4. Write the updated file back to /var/ossec/etc/rules/local_rules.xml
-5. Restart wazuh-manager: systemctl restart wazuh-manager
-6. Wait 5 seconds for service to come up
-7. Verify rule is loaded: list rules with id=${ruleId}
 
 Return ONLY a JSON object:
 {"success": true/false, "ruleId": ${ruleId}, "message": "...", "verified": true/false}`;

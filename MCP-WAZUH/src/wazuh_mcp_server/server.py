@@ -1588,18 +1588,23 @@ async def handle_tools_list(params: Dict[str, Any], session: MCPSession) -> Dict
         },
         {
             "name": "add_wazuh_rule",
-            "description": "[ACTION] Add a new Wazuh detection rule in XML format. Risk: MEDIUM, Reversible.",
+            "description": "[ACTION] Add a new Wazuh detection rule in XML format. Rule XML must be a complete document with <group name=\"...\"> as root element. Risk: MEDIUM, Reversible.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "rule_content": {
                         "type": "string",
-                        "description": "XML content of the rule(s) to add. Must be valid XML format with <rule> elements.",
+                        "description": "Complete XML document for the rule file. Must have <group name=\"...\"> as root element containing one or more <rule> elements.",
                     },
                     "rule_filename": {
                         "type": "string",
                         "default": "custom_rules.xml",
-                        "description": "Name of the rule file to create (e.g., 'my_rules.xml')",
+                        "description": "Name of the rule file (e.g., 'custom_rules.xml')",
+                    },
+                    "overwrite": {
+                        "type": "boolean",
+                        "default": True,
+                        "description": "Whether to overwrite an existing rule file. Set to true when updating custom_rules.xml.",
                     },
                 },
                 "required": ["rule_content"],
@@ -2194,7 +2199,8 @@ async def handle_tools_call(params: Dict[str, Any], session: MCPSession) -> Dict
             if len(rule_content) > 1048576:
                 raise ToolValidationError("rule_content", "exceeds maximum size of 1MB", "Reduce the rule content size")
             
-            result = await wazuh_client.add_rule(rule_content, rule_filename)
+            overwrite = arguments.get("overwrite", True)
+            result = await wazuh_client.add_rule(rule_content, rule_filename, overwrite=bool(overwrite))
             _success = True
             return _tool_result(f"Rule Addition Result:\n{json.dumps(result, indent=2, default=str)}")
 
