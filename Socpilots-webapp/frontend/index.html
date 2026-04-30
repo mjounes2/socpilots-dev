@@ -1839,7 +1839,6 @@ function isInvestigated(a){return _investigatedKeys.has(getAlertKey(a));}
 function renderAlerts(alerts){
   const el=document.getElementById('al-body');
   if(!alerts.length){el.innerHTML=empty('No alerts match');return;}
-  // Cache rendered alerts globally for click delegation
   window._renderedAlerts = alerts.slice(0,200);
 
   el.innerHTML=`<div class="tbl"><table><thead><tr><th>Time</th><th>Sev</th><th>Rule</th><th>Description</th><th>Agent</th><th>Src IP</th><th>MITRE</th><th>Status</th><th>Action</th></tr></thead><tbody>${
@@ -1848,10 +1847,10 @@ function renderAlerts(alerts){
       const lvl = parseInt(a.level) || 0;
       const isHighCritical = lvl >= 8;
       const investigateBtn = isHighCritical
-        ? `<button type="button" class="btn btn-sm alert-action-btn" data-action="investigate" data-idx="${i}" style="padding:5px 8px;background:var(--cdim);border:1px solid var(--c);color:var(--c);margin-right:4px" title="Run AI Investigation">🔍 Investigate</button>`
+        ? `<button type="button" class="btn btn-sm" onclick="investigateFromAlert(${i})" style="padding:5px 8px;background:var(--cdim);border:1px solid var(--c);color:var(--c);margin-right:4px" title="Run AI Investigation">🔍 Investigate</button>`
         : '';
       const reportBtn = investigated
-        ? `<button type="button" class="btn btn-h btn-sm alert-action-btn" data-action="report" data-idx="${i}" style="padding:5px 8px" title="View Saved Report">📋 Report</button>`
+        ? `<button type="button" class="btn btn-h btn-sm" onclick="viewInvestigation(${i})" style="padding:5px 8px" title="View Saved Report">📋 Report</button>`
         : '';
       const statusBadge = investigated
         ? '<span class="badge ok" style="font-size:9px" title="Investigated by AI">🤖 INVESTIGATED</span>'
@@ -1866,25 +1865,11 @@ function renderAlerts(alerts){
         <td>${(a.mitre||[]).slice(0,1).map(m=>`<span class="badge low" style="font-size:8px">${esc(m)}</span>`).join('')}</td>
         <td>${statusBadge}</td>
         <td style="white-space:nowrap;min-width:200px">
-          <button type="button" class="btn btn-p btn-sm alert-action-btn" data-action="view" data-idx="${i}" style="padding:5px 10px;margin-right:4px">View Details</button>${investigateBtn}${reportBtn}
+          <button type="button" class="btn btn-p btn-sm" onclick="showAlert(${i})" style="padding:5px 10px;margin-right:4px">View Details</button>${investigateBtn}${reportBtn}
         </td>
       </tr>`;
     }).join('')
   }</tbody></table></div>`;
-
-  // Attach event delegation handler (fires for any button click in this table)
-  el.onclick = function(e) {
-    const btn = e.target.closest('.alert-action-btn');
-    if (!btn) return;
-    e.preventDefault();
-    e.stopPropagation();
-    const action = btn.getAttribute('data-action');
-    const idx = parseInt(btn.getAttribute('data-idx'));
-    console.log('[Alert action]', action, 'index', idx);
-    if (action === 'view') showAlert(idx);
-    else if (action === 'investigate') investigateFromAlert(idx);
-    else if (action === 'report') viewInvestigation(idx);
-  };
 }
 // View previous AI investigation from DB (cached report)
 async function viewInvestigation(i){
