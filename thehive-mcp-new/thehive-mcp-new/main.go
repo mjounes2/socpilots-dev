@@ -236,6 +236,13 @@ func main() {
 		port = "8080"
 	}
 
+	// MCP_BASE_URL is the URL clients use to reach this server's /message endpoint.
+	// Must match what n8n (or other MCP clients) will POST to after receiving the SSE endpoint event.
+	mcpBaseURL := os.Getenv("MCP_BASE_URL")
+	if mcpBaseURL == "" {
+		mcpBaseURL = fmt.Sprintf("http://thehive-mcp:%s", port)
+	}
+
 	thehive := NewTheHiveClient(baseURL, apiKey)
 
 	s := server.NewMCPServer("TheHive MCP Server", "1.0.0")
@@ -388,8 +395,10 @@ func main() {
 	// ── HTTP server: SSE transport + health endpoint ───────────────
 
 	// SSE server — n8n connects to /sse, sends messages to /message
+	// WithBaseURL sets the message endpoint URL returned in the SSE event — must be
+	// reachable by the MCP client (n8n uses the Docker service name).
 	sseServer := server.NewSSEServer(s,
-		server.WithBaseURL(fmt.Sprintf("http://0.0.0.0:%s", port)),
+		server.WithBaseURL(mcpBaseURL),
 	)
 
 	mux := http.NewServeMux()
