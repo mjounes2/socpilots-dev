@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"strings"
 
@@ -230,12 +231,17 @@ func main() {
 		log.Fatal("THEHIVE_URL and THEHIVE_API_KEY must be set")
 	}
 
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+
 	thehive := NewTheHiveClient(baseURL, apiKey)
 
-	// Create MCP server
 	s := server.NewMCPServer("TheHive MCP Server", "1.0.0")
 
-	// Register tools
+	// ── Tools ──────────────────────────────────────────────────────
+
 	s.AddTool(mcp.NewTool("get-alerts",
 		mcp.WithDescription("Get all alerts from TheHive"),
 	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -244,14 +250,7 @@ func main() {
 			return nil, err
 		}
 		content, _ := json.Marshal(alerts)
-		return &mcp.CallToolResult{
-			Content: []mcp.Content{
-				mcp.TextContent{
-					Type: "text",
-					Text: string(content),
-				},
-			},
-		}, nil
+		return &mcp.CallToolResult{Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(content)}}}, nil
 	})
 
 	s.AddTool(mcp.NewTool("create-alert",
@@ -263,14 +262,7 @@ func main() {
 			return nil, err
 		}
 		content, _ := json.Marshal(alert)
-		return &mcp.CallToolResult{
-			Content: []mcp.Content{
-				mcp.TextContent{
-					Type: "text",
-					Text: string(content),
-				},
-			},
-		}, nil
+		return &mcp.CallToolResult{Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(content)}}}, nil
 	})
 
 	s.AddTool(mcp.NewTool("get-cases",
@@ -281,14 +273,7 @@ func main() {
 			return nil, err
 		}
 		content, _ := json.Marshal(cases)
-		return &mcp.CallToolResult{
-			Content: []mcp.Content{
-				mcp.TextContent{
-					Type: "text",
-					Text: string(content),
-				},
-			},
-		}, nil
+		return &mcp.CallToolResult{Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(content)}}}, nil
 	})
 
 	s.AddTool(mcp.NewTool("create-case",
@@ -300,14 +285,7 @@ func main() {
 			return nil, err
 		}
 		content, _ := json.Marshal(caseObj)
-		return &mcp.CallToolResult{
-			Content: []mcp.Content{
-				mcp.TextContent{
-					Type: "text",
-					Text: string(content),
-				},
-			},
-		}, nil
+		return &mcp.CallToolResult{Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(content)}}}, nil
 	})
 
 	s.AddTool(mcp.NewTool("get-tasks",
@@ -320,14 +298,7 @@ func main() {
 			return nil, err
 		}
 		content, _ := json.Marshal(tasks)
-		return &mcp.CallToolResult{
-			Content: []mcp.Content{
-				mcp.TextContent{
-					Type: "text",
-					Text: string(content),
-				},
-			},
-		}, nil
+		return &mcp.CallToolResult{Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(content)}}}, nil
 	})
 
 	s.AddTool(mcp.NewTool("create-task",
@@ -342,14 +313,7 @@ func main() {
 			return nil, err
 		}
 		content, _ := json.Marshal(task)
-		return &mcp.CallToolResult{
-			Content: []mcp.Content{
-				mcp.TextContent{
-					Type: "text",
-					Text: string(content),
-				},
-			},
-		}, nil
+		return &mcp.CallToolResult{Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(content)}}}, nil
 	})
 
 	s.AddTool(mcp.NewTool("get-observables",
@@ -362,14 +326,7 @@ func main() {
 			return nil, err
 		}
 		content, _ := json.Marshal(observables)
-		return &mcp.CallToolResult{
-			Content: []mcp.Content{
-				mcp.TextContent{
-					Type: "text",
-					Text: string(content),
-				},
-			},
-		}, nil
+		return &mcp.CallToolResult{Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(content)}}}, nil
 	})
 
 	s.AddTool(mcp.NewTool("create-observable",
@@ -384,14 +341,7 @@ func main() {
 			return nil, err
 		}
 		content, _ := json.Marshal(observable)
-		return &mcp.CallToolResult{
-			Content: []mcp.Content{
-				mcp.TextContent{
-					Type: "text",
-					Text: string(content),
-				},
-			},
-		}, nil
+		return &mcp.CallToolResult{Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(content)}}}, nil
 	})
 
 	s.AddTool(mcp.NewTool("get-logs",
@@ -404,14 +354,7 @@ func main() {
 			return nil, err
 		}
 		content, _ := json.Marshal(logs)
-		return &mcp.CallToolResult{
-			Content: []mcp.Content{
-				mcp.TextContent{
-					Type: "text",
-					Text: string(content),
-				},
-			},
-		}, nil
+		return &mcp.CallToolResult{Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(content)}}}, nil
 	})
 
 	s.AddTool(mcp.NewTool("create-log",
@@ -426,14 +369,7 @@ func main() {
 			return nil, err
 		}
 		content, _ := json.Marshal(logEntry)
-		return &mcp.CallToolResult{
-			Content: []mcp.Content{
-				mcp.TextContent{
-					Type: "text",
-					Text: string(content),
-				},
-			},
-		}, nil
+		return &mcp.CallToolResult{Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(content)}}}, nil
 	})
 
 	s.AddTool(mcp.NewTool("get-attachments",
@@ -446,18 +382,30 @@ func main() {
 			return nil, err
 		}
 		content, _ := json.Marshal(attachments)
-		return &mcp.CallToolResult{
-			Content: []mcp.Content{
-				mcp.TextContent{
-					Type: "text",
-					Text: string(content),
-				},
-			},
-		}, nil
+		return &mcp.CallToolResult{Content: []mcp.Content{mcp.TextContent{Type: "text", Text: string(content)}}}, nil
 	})
 
-	// Start the MCP server using stdio transport
-	if err := server.ServeStdio(s); err != nil {
+	// ── HTTP server: SSE transport + health endpoint ───────────────
+
+	// SSE server — n8n connects to /sse, sends messages to /message
+	sseServer := server.NewSSEServer(s,
+		server.WithBaseURL(fmt.Sprintf("http://0.0.0.0:%s", port)),
+	)
+
+	mux := http.NewServeMux()
+
+	// Health check for Docker healthcheck and monitoring
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintf(w, `{"status":"ok","service":"thehive-mcp","port":"%s"}`, port)
+	})
+
+	// Mount SSE server — handles /sse and /message
+	mux.Handle("/", sseServer)
+
+	log.Printf("TheHive MCP Server starting on :%s (SSE at /sse, messages at /message)", port)
+	if err := http.ListenAndServe(":"+port, mux); err != nil {
 		log.Fatalf("Server error: %v", err)
 	}
 }

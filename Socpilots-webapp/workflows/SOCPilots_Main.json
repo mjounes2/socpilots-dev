@@ -101,7 +101,7 @@
     },
     {
       "parameters": {
-        "endpointUrl": "http://79.143.190.97:8080/mcp",
+        "endpointUrl": "http://thehive-mcp:8080/sse",
         "options": {}
       },
       "type": "@n8n/n8n-nodes-langchain.mcpClientTool",
