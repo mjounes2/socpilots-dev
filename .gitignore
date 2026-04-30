@@ -1,0 +1,43 @@
+# Environment files — copy .env.template and fill values on the server
+.env
+*.env
+!.env.template
+!.env.example
+!.env.socpilots
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Go
+thehive-mcp-new/thehive-mcp-new/thehive-mcp-new
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log
+logs/

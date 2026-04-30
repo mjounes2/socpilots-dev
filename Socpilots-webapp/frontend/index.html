@@ -1,0 +1,3125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SOC Pilots — Command Center</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+/* ───────────────────────────────────────────────────────
+   SOC PILOTS v3 — Full Redesign
+   Theme: Military cyber ops  |  Deep navy + electric cyan
+──────────────────────────────────────────────────────── */
+:root{
+  --bg0:#050b14; --bg1:#071020; --bg2:#0b1628; --bg3:#0f1e34;
+  --bg4:#142240; --card:#091524; --card2:#0d1a2e;
+  --b1:#1a2f4a; --b2:#244060; --b3:#2e5070;
+  --c:#00e5ff; --c2:#00b8d4; --cdim:rgba(0,229,255,.1);
+  --g:#00e676; --gdim:rgba(0,230,118,.1);
+  --r:#ff1744; --rdim:rgba(255,23,68,.1);
+  --y:#ffab00; --ydim:rgba(255,171,0,.1);
+  --o:#ff6d00; --p:#d500f9; --pdim:rgba(213,0,249,.1);
+  --txt:#e2f0ff; --txt2:#5a7a9a; --txt3:#8ab0d0; --txt4:#142030;
+  --fw:'Rajdhani',sans-serif;
+  --fm:'JetBrains Mono',monospace;
+  --fb:'Space Grotesk',sans-serif;
+  --sb:230px; --tb:52px; --r3:4px;
+}
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%;background:var(--bg0);color:var(--txt);font-family:var(--fb);font-size:13px;overflow:hidden}
+::-webkit-scrollbar{width:3px;height:3px}
+::-webkit-scrollbar-track{background:var(--bg1)}
+::-webkit-scrollbar-thumb{background:var(--b2);border-radius:2px}
+
+/* ─── LAYOUT ────────────────────── */
+#app{display:grid;grid-template-columns:var(--sb) 1fr;grid-template-rows:var(--tb) 1fr;height:100vh}
+#sb{grid-row:1/3;background:var(--bg1);border-right:1px solid var(--b1);display:flex;flex-direction:column;overflow:hidden}
+#tb{background:var(--bg1);border-bottom:1px solid var(--b1);display:flex;align-items:center;padding:0 16px;gap:8px;z-index:10}
+#main{overflow-y:auto;background:var(--bg0);padding:16px}
+.page{display:none}.page.active{display:block}
+
+/* ─── SIDEBAR ─────────────────────── */
+.sb-logo{padding:14px 16px;border-bottom:1px solid var(--b1);display:flex;align-items:center;gap:10px;background:rgba(0,0,0,.2)}
+.sb-logo-icon{width:32px;height:32px;background:linear-gradient(135deg,rgba(0,229,255,.2),rgba(0,184,212,.1));border:1px solid rgba(0,229,255,.4);border-radius:6px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.sb-name{font-family:var(--fw);font-size:20px;font-weight:700;letter-spacing:3px;color:var(--txt)}
+.sb-name span{color:var(--c)}
+.sb-user{padding:10px 16px;border-bottom:1px solid var(--b1);background:rgba(0,0,0,.15)}
+.sb-uname{font-family:var(--fw);font-size:14px;font-weight:600;color:var(--txt)}
+.sb-badge{display:inline-block;font-size:9px;padding:2px 7px;background:var(--cdim);color:var(--c);border:1px solid rgba(0,229,255,.25);border-radius:2px;letter-spacing:1px;font-family:var(--fm);margin-top:3px;text-transform:uppercase}
+.sb-nav{flex:1;overflow-y:auto;padding:8px 0}
+.sb-sec{font-size:9px;color:#8ab0d0;letter-spacing:2px;padding:10px 16px 4px;font-family:var(--fm);text-transform:uppercase}
+.sbi{display:flex;align-items:center;gap:10px;padding:8px 16px;cursor:pointer;transition:all .12s;border-left:2px solid transparent;color:var(--txt2)}
+.sbi:hover{background:rgba(0,229,255,.04);color:var(--txt);border-left-color:rgba(0,229,255,.3)}
+.sbi.on{background:rgba(0,229,255,.08);border-left-color:var(--c);color:var(--c)}
+.sbi svg{width:15px;height:15px;flex-shrink:0;opacity:.7}
+.sbi.on svg{opacity:1}
+.sbi-lbl{font-family:var(--fb);font-size:13px;font-weight:500}
+.sbi-n{margin-left:auto;background:var(--rdim);color:var(--r);border:1px solid rgba(255,23,68,.25);font-size:9px;padding:2px 6px;border-radius:8px;font-family:var(--fm)}
+.sb-bot{border-top:1px solid var(--b1);padding:6px 0}
+
+/* ─── TOPBAR ──────────────────────── */
+.tb-brand{display:flex;align-items:center;gap:8px;margin-right:6px}
+.tb-icon{width:28px;height:28px;background:var(--cdim);border:1px solid rgba(0,229,255,.3);border-radius:4px;display:flex;align-items:center;justify-content:center}
+.tb-bname{font-family:var(--fw);font-size:16px;font-weight:700;letter-spacing:3px}
+.tb-bname span{color:var(--c)}
+.tb-clock{display:flex;flex-direction:column;align-items:center;padding:4px 12px;background:var(--bg2);border:1px solid var(--b1);border-radius:var(--r3);cursor:default}
+.tb-clock-hms{font-family:var(--fm);font-size:16px;font-weight:600;color:var(--c);letter-spacing:3px;line-height:1}
+.tb-clock-date{font-family:var(--fm);font-size:9px;color:#8ab0d0;margin-top:2px;letter-spacing:1px}
+.tb-pill{display:flex;align-items:center;gap:5px;padding:5px 10px;background:var(--bg2);border:1px solid var(--b1);border-radius:var(--r3);font-family:var(--fm);font-size:10px;cursor:default;white-space:nowrap}
+.led{width:6px;height:6px;border-radius:50%;flex-shrink:0;transition:all .3s}
+.led.g{background:var(--g);box-shadow:0 0 5px var(--g);animation:pulseG 2s infinite}
+.led.r{background:var(--r);box-shadow:0 0 4px var(--r)}
+.led.y{background:var(--y)}
+.led.x{background:var(--txt3)}
+@keyframes pulseG{0%,100%{opacity:1}50%{opacity:.5}}
+.tb-flex{flex:1}
+.tb-btn{display:flex;align-items:center;gap:5px;padding:5px 10px;background:transparent;border:1px solid var(--b1);border-radius:var(--r3);color:var(--txt2);font-size:10px;cursor:pointer;transition:all .12s;font-family:var(--fm)}
+.tb-btn:hover{border-color:var(--c);color:var(--c)}
+.tb-btn svg{width:11px;height:11px}
+.tb-user{display:flex;align-items:center;gap:7px;padding:4px 10px;background:var(--bg2);border:1px solid var(--b1);border-radius:var(--r3)}
+.tb-av{width:26px;height:26px;background:linear-gradient(135deg,var(--c),var(--c2));border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#000;font-family:var(--fw)}
+.tb-uname{font-size:11px;font-family:var(--fm)}
+
+/* ─── KPI CARDS ───────────────────── */
+.kpi-row{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:14px}
+.kpi{background:var(--card);border:1px solid var(--b1);border-radius:var(--r3);padding:14px 16px;position:relative;overflow:hidden;transition:transform .15s,border-color .2s;cursor:default}
+.kpi:hover{transform:translateY(-2px);border-color:var(--b2)}
+.kpi::after{content:"";position:absolute;bottom:0;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,var(--kc,var(--c)),transparent)}
+.kpi.cl{--kc:var(--c)}.kpi.cr{--kc:var(--r)}.kpi.co{--kc:var(--o)}.kpi.cy{--kc:var(--y)}.kpi.cp{--kc:var(--p)}.kpi.cg{--kc:var(--g)}
+.kpi-lbl{font-size:9px;color:#8ab0d0;letter-spacing:2px;text-transform:uppercase;font-family:var(--fm);margin-bottom:6px}
+.kpi-val{font-family:var(--fw);font-size:32px;font-weight:700;line-height:1;color:var(--kc,var(--c))}
+.kpi-sub{font-size:9px;color:var(--txt2);margin-top:5px;font-family:var(--fm)}
+
+/* ─── CARD ────────────────────────── */
+.card{background:var(--card);border:1px solid var(--b1);border-radius:var(--r3);padding:14px;position:relative;overflow:hidden}
+.card-hd{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.card-ttl{font-family:var(--fw);font-size:13px;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;color:var(--txt2);display:flex;align-items:center;gap:6px}
+.card-ttl svg{width:13px;height:13px;color:var(--c)}
+.live-badge{display:flex;align-items:center;gap:4px;font-size:9px;font-family:var(--fm);color:var(--g)}
+.live-dot{width:6px;height:6px;background:var(--g);border-radius:50%;box-shadow:0 0 5px var(--g);animation:pulseG 2s infinite}
+
+/* ─── GRID ────────────────────────── */
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+.g4{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.g32{display:grid;grid-template-columns:2fr 1fr;gap:12px}
+.mt{margin-top:12px}.mb{margin-bottom:12px}
+.row{display:flex;gap:7px;align-items:center;flex-wrap:wrap}
+
+/* ─── TABLE ───────────────────────── */
+.tbl{overflow-x:auto}
+table{width:100%;border-collapse:collapse}
+th{font-size:9px;color:#8ab0d0;letter-spacing:1.5px;text-transform:uppercase;padding:7px 10px;text-align:left;font-family:var(--fm);border-bottom:1px solid var(--b1);white-space:nowrap}
+td{padding:9px 10px;font-size:12px;border-bottom:1px solid rgba(26,47,74,.4);font-family:var(--fm);vertical-align:middle}
+tr:hover td{background:rgba(0,229,255,.02)}
+tr:last-child td{border-bottom:none}
+
+/* ─── BADGES ──────────────────────── */
+.badge{display:inline-flex;align-items:center;font-size:9px;padding:2px 7px;border-radius:3px;font-family:var(--fm);font-weight:600;white-space:nowrap;letter-spacing:.5px}
+.badge.critical{background:rgba(255,23,68,.18);color:var(--r);border:1px solid rgba(255,23,68,.3)}
+.badge.high{background:rgba(255,109,0,.15);color:var(--o);border:1px solid rgba(255,109,0,.28)}
+.badge.medium{background:rgba(255,171,0,.13);color:var(--y);border:1px solid rgba(255,171,0,.28)}
+.badge.low{background:var(--cdim);color:var(--c);border:1px solid rgba(0,229,255,.22)}
+.badge.ok,.badge.active{background:var(--gdim);color:var(--g);border:1px solid rgba(0,230,118,.22)}
+.badge.offline,.badge.inactive{background:var(--rdim);color:#ff6b6b;border:1px solid rgba(255,23,68,.2)}
+.badge.new{background:var(--cdim);color:var(--c);border:1px solid rgba(0,229,255,.2)}
+.badge.inprogress{background:var(--ydim);color:var(--y);border:1px solid rgba(255,171,0,.2)}
+.badge.resolved,.badge.closed{background:var(--gdim);color:var(--g);border:1px solid rgba(0,230,118,.2)}
+.badge.truepositive{background:var(--gdim);color:var(--g);border:1px solid rgba(0,230,118,.2)}
+.badge.falsepositive{background:var(--ydim);color:var(--y);border:1px solid rgba(255,171,0,.2)}
+.badge.duplicate{background:var(--cdim);color:var(--c);border:1px solid rgba(0,229,255,.2)}
+
+/* ─── BUTTONS ─────────────────────── */
+.btn{display:inline-flex;align-items:center;gap:5px;padding:6px 12px;border-radius:var(--r3);font-size:11px;font-family:var(--fb);font-weight:500;cursor:pointer;transition:all .12s;border:1px solid transparent;white-space:nowrap}
+.btn-p{background:var(--cdim);border-color:rgba(0,229,255,.3);color:var(--c)}
+.btn-p:hover{background:rgba(0,229,255,.18);box-shadow:0 0 12px rgba(0,229,255,.2)}
+.btn-g{background:var(--gdim);border-color:rgba(0,230,118,.25);color:var(--g)}
+.btn-r{background:var(--rdim);border-color:rgba(255,23,68,.25);color:var(--r)}
+.btn-h{background:transparent;border-color:var(--b1);color:var(--txt2)}
+.btn-h:hover{border-color:var(--c);color:var(--c)}
+.btn-sm{padding:4px 9px;font-size:10px}
+.btn svg{width:11px;height:11px}
+
+/* ─── FORMS ───────────────────────── */
+.fg{display:flex;flex-direction:column;gap:4px;margin-bottom:10px}
+.fl{font-size:9px;color:var(--txt2);letter-spacing:1px;text-transform:uppercase;font-family:var(--fm)}
+.fi,.fs,.fta{background:rgba(0,0,0,.4);border:1px solid var(--b2);border-radius:var(--r3);padding:8px 11px;color:var(--txt);font-family:var(--fm);font-size:12px;outline:none;transition:border-color .15s;width:100%}
+.fi:focus,.fs:focus,.fta:focus{border-color:var(--c)}
+.fs option{background:var(--card)}
+.fta{resize:vertical;min-height:70px}
+
+/* ─── BANNER ──────────────────────── */
+.banner{display:flex;gap:8px;padding:8px 12px;border-radius:var(--r3);font-size:11px;margin-bottom:10px;border:1px solid}
+.banner.err{background:var(--rdim);border-color:rgba(255,23,68,.25);color:var(--r)}
+.banner.ok{background:var(--gdim);border-color:rgba(0,230,118,.2);color:var(--g)}
+.banner.info{background:var(--cdim);border-color:rgba(0,229,255,.2);color:var(--c)}
+
+/* ─── LOADING ─────────────────────── */
+.spin{width:18px;height:18px;border:2px solid var(--b2);border-top-color:var(--c);border-radius:50%;animation:sp .55s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+.loading{display:flex;align-items:center;justify-content:center;gap:8px;min-height:120px;flex-direction:column}
+.loading p,.empty p{font-size:10px;color:#8ab0d0;font-family:var(--fm)}
+.empty{display:flex;align-items:center;justify-content:center;min-height:90px;flex-direction:column;gap:5px;color:#8ab0d0}
+
+/* ─── CHAT ────────────────────────── */
+.chat-wrap{display:flex;flex-direction:column;height:calc(100vh - var(--tb) - 78px)}
+.chat-msgs{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:10px}
+.cmsg{display:flex;gap:8px;max-width:94%}
+.cmsg.u{align-self:flex-end;flex-direction:row-reverse}
+.cav{width:28px;height:28px;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;font-family:var(--fw)}
+.cav.ai{background:var(--cdim);border:1px solid rgba(0,229,255,.3);color:var(--c)}
+.cav.u{background:linear-gradient(135deg,var(--c),var(--c2));color:#000}
+.cbub{padding:12px 14px;border-radius:4px;font-size:12px;line-height:1.7;font-family:var(--fm);word-break:break-word;overflow-wrap:anywhere}
+.cmsg.ai .cbub{background:var(--bg3);border:1px solid var(--b1);width:100%;max-width:100%;overflow-x:auto}
+.cmsg.u .cbub{background:var(--cdim);border:1px solid rgba(0,229,255,.2)}
+.chat-row{display:flex;gap:6px;padding:9px 12px;border-top:1px solid var(--b1);background:var(--bg1)}
+.chat-in{flex:1;background:rgba(0,0,0,.4);border:1px solid var(--b2);border-radius:4px;padding:8px 11px;color:var(--txt);font-family:var(--fm);font-size:12px;outline:none;resize:none;height:38px;transition:border-color .15s}
+.chat-in:focus{border-color:var(--c)}
+
+/* ─── KANBAN ──────────────────────── */
+.kanban{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px;align-items:start}
+.kb-col{background:var(--bg1);border:1px solid var(--b1);border-radius:var(--r3);overflow:hidden}
+.kb-hd{padding:9px 12px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--b1);font-size:11px;font-weight:700;font-family:var(--fw);letter-spacing:1.5px}
+.kb-n{font-family:var(--fm);font-size:9px;padding:2px 6px;border-radius:8px;background:rgba(0,0,0,.3)}
+.kb-card{margin:7px;padding:9px 11px;background:var(--card);border:1px solid var(--b1);border-radius:4px}
+.kb-card:hover{border-color:var(--b2)}
+.kb-ttl{font-size:11px;font-family:var(--fm);margin-bottom:6px;line-height:1.4}
+.kb-meta{display:flex;align-items:center;gap:4px;flex-wrap:wrap}
+
+/* ─── MODAL ───────────────────────── */
+.modal-ov{display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:200;align-items:center;justify-content:center;backdrop-filter:blur(4px)}
+.modal-ov.show{display:flex}
+.modal{background:var(--card);border:1px solid var(--b2);border-radius:4px;width:560px;max-width:92vw;max-height:88vh;overflow-y:auto;box-shadow:0 24px 64px rgba(0,0,0,.8)}
+.modal-hd{padding:14px 18px;border-bottom:1px solid var(--b1);display:flex;align-items:center;justify-content:space-between}
+.modal-ttl{font-family:var(--fw);font-size:15px;font-weight:600;letter-spacing:1px}
+.modal-x{background:none;border:none;color:var(--txt2);cursor:pointer;font-size:18px}.modal-x:hover{color:var(--r)}
+.modal-body{padding:18px}
+.modal-ft{padding:12px 18px;border-top:1px solid var(--b1);display:flex;gap:7px;justify-content:flex-end}
+
+/* ─── TOAST ───────────────────────── */
+#toasts{position:fixed;bottom:14px;right:14px;z-index:999;display:flex;flex-direction:column;gap:6px}
+.toast{padding:9px 13px;border-radius:4px;font-size:11px;font-family:var(--fm);display:flex;align-items:center;gap:7px;min-width:220px;animation:tIn .2s ease;border:1px solid}
+@keyframes tIn{from{opacity:0;transform:translateX(22px)}}
+.toast.ok{background:var(--gdim);border-color:rgba(0,230,118,.3);color:var(--g)}
+.toast.err{background:var(--rdim);border-color:rgba(255,23,68,.3);color:var(--r)}
+.toast.info{background:var(--cdim);border-color:rgba(0,229,255,.3);color:var(--c)}
+.toast.warn{background:var(--ydim);border-color:rgba(255,171,0,.3);color:var(--y)}
+
+/* ─── MAP ─────────────────────────── */
+#map-wrap{position:relative;background:var(--bg2);border-radius:4px;border:1px solid var(--b1);overflow:hidden}
+#map-wrap canvas{display:block;width:100%}
+#map-dots{position:absolute;inset:0;pointer-events:none}
+.mdot{position:absolute;border-radius:50%;transform:translate(-50%,-50%);cursor:pointer;z-index:2}
+.mdot::after{content:"";position:absolute;inset:-4px;border-radius:50%;border:1px solid currentColor;opacity:.5;animation:mRing 2s infinite}
+@keyframes mRing{0%{opacity:.5;transform:scale(1)}100%{opacity:0;transform:scale(2.5)}}
+.mtt{position:fixed;background:var(--bg3);border:1px solid var(--b2);border-radius:4px;padding:6px 10px;font-size:10px;font-family:var(--fm);color:var(--txt);z-index:50;display:none;pointer-events:none;box-shadow:0 4px 16px rgba(0,0,0,.5);white-space:nowrap}
+
+/* ─── CORRELATION GRAPH ───────────── */
+#corr-graph{width:100%;min-height:400px;background:var(--bg2);border-radius:4px;border:1px solid var(--b1);position:relative;overflow:hidden}
+.cg-node{position:absolute;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer;z-index:5}
+.cg-circle{border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;border:2px solid;transition:all .2s}
+.cg-circle:hover{transform:scale(1.2);filter:brightness(1.3)}
+.cg-lbl{font-size:8px;font-family:var(--fm);color:var(--txt2);text-align:center;max-width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:rgba(5,11,20,.8);padding:2px 4px;border-radius:2px}
+#corr-svg{position:absolute;inset:0;pointer-events:none}
+
+/* ─── IOC ─────────────────────────── */
+.ioc-section{padding:10px;background:var(--bg2);border:1px solid var(--b1);border-radius:4px;margin-bottom:10px}
+.ioc-lbl{font-size:9px;color:#8ab0d0;font-family:var(--fm);letter-spacing:1.5px;text-transform:uppercase;margin-bottom:5px}
+
+/* ─── STAT BAR ────────────────────── */
+.sbar-wrap{display:flex;align-items:center;gap:8px}
+.sbar-bg{flex:1;height:5px;background:var(--bg4);border-radius:3px;overflow:hidden}
+.sbar{height:100%;border-radius:3px;transition:width .8s}
+
+/* ─── MISC ────────────────────────── */
+.ai-txt{font-size:12px;font-family:var(--fm);line-height:1.9;color:var(--txt2);white-space:pre-wrap;word-break:break-word}
+.sep{height:1px;background:var(--b1);margin:12px 0}
+.mono{font-family:var(--fm)}
+.ph{margin-bottom:14px}
+.ph h1{font-family:var(--fw);font-size:20px;font-weight:700;letter-spacing:2px}
+.ph p{font-size:11px;color:var(--txt2);margin-top:2px;font-family:var(--fm)}
+</style>
+</head>
+<body>
+<script>
+const _T=sessionStorage.getItem("soc_token"),_U=sessionStorage.getItem("soc_user");
+if(!_T){location.replace("/login");}
+const CU=_U?JSON.parse(_U):{username:"Admin",role:"admin"};
+</script>
+<div id="app">
+
+<!-- ══ SIDEBAR ══════════════════════════════════════════════════ -->
+<aside id="sb">
+  <div class="sb-logo">
+    <div class="sb-logo-icon">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#00e5ff" stroke-width="1.5"><path d="M12 2L20 7V17L12 22L4 17V7Z"/><circle cx="12" cy="12" r="3" fill="#00e5ff" opacity=".9"/></svg>
+    </div>
+    <div class="sb-name">SOC<span>PILOTS</span></div>
+  </div>
+  <div class="sb-user">
+    <div class="sb-uname" id="sb-un">—</div>
+    <div class="sb-badge" id="sb-role">—</div>
+  </div>
+  <div class="sb-nav">
+    <div class="sb-sec">Overview</div>
+    <div class="sbi on" onclick="go('dashboard')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg><span class="sbi-lbl">Dashboard</span></div>
+    <div class="sbi" onclick="go('agents')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg><span class="sbi-lbl">Agents</span><span class="sbi-n" id="n-agents">—</span></div>
+    <div class="sb-sec">Detection</div>
+    <div class="sbi" onclick="go('alerts')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><span class="sbi-lbl">Alerts</span><span class="sbi-n" id="n-alerts">—</span></div>
+    <div class="sbi" onclick="go('rules')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><span class="sbi-lbl">Detection Rules</span></div>
+
+    <div class="sb-sec">Investigation</div>
+    <div class="sbi" onclick="go('cases')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v16"/></svg><span class="sbi-lbl">Cases</span><span class="sbi-n" id="n-cases">—</span></div>
+    <div class="sbi" onclick="go('hive-alerts')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg><span class="sbi-lbl">SP-CM Alerts</span></div>
+    <div class="sbi" onclick="go('hunt')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg><span class="sbi-lbl">Threat Hunt</span></div>
+    <div class="sbi" onclick="go('ioc')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg><span class="sbi-lbl">IOC Enrichment</span></div>
+    <div class="sbi" onclick="go('correlate')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.59 13.51l6.83 3.98M15.41 6.51l-6.82 3.98"/></svg><span class="sbi-lbl">Correlation</span></div>
+    <div class="sbi" onclick="go('threatmap')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 010 20M12 2a15.3 15.3 0 000 20"/></svg><span class="sbi-lbl">Live Threat Map</span></div>
+    <div class="sb-sec">AI & Reports</div>
+    <div class="sbi" onclick="go('create-rules')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/><circle cx="12" cy="12" r="10"/></svg><span class="sbi-lbl">Create Rules</span></div>
+    <div class="sbi" onclick="go('investigation')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><path d="M11 8v3M11 14v.01"/></svg><span class="sbi-lbl">AI Investigation</span><span class="sbi-n" id="n-investigation">—</span></div>
+    <div class="sbi" onclick="go('copilot')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a10 10 0 1010 10"/><path d="M12 6v6l4 2"/><circle cx="19" cy="5" r="3" fill="#00e5ff" stroke="none"/></svg><span class="sbi-lbl">SOCPilots AI</span></div>
+    <div class="sbi" onclick="go('reports')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg><span class="sbi-lbl">Reports</span></div>
+  </div>
+  <div class="sb-bot">
+    <div class="sbi" onclick="go('settings')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg><span class="sbi-lbl">Settings</span></div>
+    <div class="sbi" onclick="logout()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg><span class="sbi-lbl">Logout</span></div>
+  </div>
+</aside>
+
+<!-- ══ TOPBAR ══════════════════════════════════════════════════ -->
+<header id="tb">
+  <div class="tb-brand">
+    <div class="tb-icon">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#00e5ff" stroke-width="1.5"><path d="M12 2L20 7V17L12 22L4 17V7Z"/><circle cx="12" cy="12" r="2.5" fill="#00e5ff"/></svg>
+    </div>
+    <div class="tb-bname">SOC<span>PILOTS</span></div>
+  </div>
+  <div class="tb-clock">
+    <div class="tb-clock-hms" id="tb-hms">--:--:--</div>
+    <div class="tb-clock-date" id="tb-date">UTC</div>
+  </div>
+  <div class="tb-pill"><div class="led x" id="l-siem"></div><span id="lb-siem">SIEM</span></div>
+  <div class="tb-pill"><div class="led x" id="l-spcm"></div><span id="lb-spcm">SP-CM</span></div>
+  <div class="tb-pill"><div class="led x" id="l-ai"></div><span id="lb-ai">SOCPilots AI</span></div>
+  <div class="tb-flex"></div>
+  <button class="tb-btn" onclick="refresh()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>Refresh</button>
+  <div class="tb-user"><div class="tb-av" id="tb-av">Y</div><span class="tb-uname" id="tb-un">—</span></div>
+</header>
+
+<!-- ══ MAIN ════════════════════════════════════════════════════ -->
+<main id="main">
+
+<!-- DASHBOARD -->
+<div class="page active" id="page-dashboard">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+    <div>
+      <div style="font-family:var(--fw);font-size:22px;font-weight:700;letter-spacing:2px">SOC COMMAND CENTER</div>
+      <div style="font-size:11px;color:var(--txt2);font-family:var(--fm);margin-top:2px" id="dash-sub">Connecting to SIEM + SP-CM...</div>
+    </div>
+    <div style="display:flex;align-items:center;gap:6px">
+      <div class="live-dot"></div>
+      <span style="font-size:10px;font-family:var(--fm);color:var(--g)" id="dash-live-lbl">LIVE</span>
+      <span style="font-size:9px;font-family:var(--fm);color:#8ab0d0" id="dash-updated">—</span>
+    </div>
+  </div>
+  <!-- Row 1: Alert KPIs -->
+  <div class="kpi-row" style="grid-template-columns:repeat(4,1fr) 1.2fr 1.2fr;margin-bottom:10px">
+    <div class="kpi cl"><div class="kpi-lbl">Total Alerts</div><div class="kpi-val" id="k-total">—</div><div class="kpi-sub">all time</div></div>
+    <div class="kpi cr"><div class="kpi-lbl">Alerts 24h</div><div class="kpi-val" id="k-24h">—</div><div class="kpi-sub">last 24 hours</div></div>
+    <div class="kpi co"><div class="kpi-lbl">Critical</div><div class="kpi-val" id="k-crit">—</div><div class="kpi-sub">level ≥ 12</div></div>
+    <div class="kpi cy"><div class="kpi-lbl">High</div><div class="kpi-val" id="k-high">—</div><div class="kpi-sub">level 8–11</div></div>
+    <div class="kpi cp"><div class="kpi-lbl">Open Cases</div><div class="kpi-val" id="k-cases">—</div><div class="kpi-sub">SP-CM</div></div>
+    <div class="kpi" style="--kc:var(--g)" onclick="go('cases')" title="Click to view closed cases">
+      <div class="kpi-lbl">Closed Cases</div>
+      <div class="kpi-val" id="k-closed-cases">—</div>
+      <div class="kpi-sub">SP-CM resolved</div>
+    </div>
+  </div>
+  <!-- Row 2: Agent widgets -->
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:12px">
+    <div class="kpi" style="--kc:var(--c);border:1px solid var(--b1);cursor:pointer" onclick="go('agents')">
+      <div style="display:flex;align-items:center;gap:10px">
+        <div style="width:40px;height:40px;border-radius:50%;background:var(--cdim);border:1px solid rgba(0,229,255,.3);display:flex;align-items:center;justify-content:center;flex-shrink:0">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#00e5ff" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+        </div>
+        <div>
+          <div class="kpi-lbl">TOTAL AGENTS</div>
+          <div class="kpi-val" style="font-size:28px" id="k-ag-total">—</div>
+          <div class="kpi-sub">monitored endpoints</div>
+        </div>
+        <div style="margin-left:auto;font-family:var(--fm);font-size:9px;text-align:right;color:#8ab0d0">
+          <div style="color:var(--c)" id="k-ag-total-ids">SIEM</div>
+        </div>
+      </div>
+    </div>
+    <div class="kpi" style="--kc:var(--g);border:1px solid var(--b1);cursor:pointer" onclick="go('agents')">
+      <div style="display:flex;align-items:center;gap:10px">
+        <div style="width:40px;height:40px;border-radius:50%;background:var(--gdim);border:1px solid rgba(0,230,118,.3);display:flex;align-items:center;justify-content:center;flex-shrink:0;position:relative">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#00e676" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+          <div style="position:absolute;top:0;right:0;width:10px;height:10px;background:var(--g);border-radius:50%;border:2px solid var(--bg0);box-shadow:0 0 6px var(--g);animation:pulseG 2s infinite"></div>
+        </div>
+        <div>
+          <div class="kpi-lbl">ACTIVE AGENTS</div>
+          <div class="kpi-val" style="font-size:28px;color:var(--g)" id="k-ag-active">—</div>
+          <div class="kpi-sub">online — last 24h</div>
+        </div>
+        <div style="margin-left:auto;padding:4px 8px;background:var(--gdim);border:1px solid rgba(0,230,118,.25);border-radius:3px;font-size:9px;font-family:var(--fm);color:var(--g)">ONLINE</div>
+      </div>
+    </div>
+    <div class="kpi" style="--kc:var(--r);border:1px solid var(--b1);cursor:pointer" onclick="go('agents')">
+      <div style="display:flex;align-items:center;gap:10px">
+        <div style="width:40px;height:40px;border-radius:50%;background:var(--rdim);border:1px solid rgba(255,23,68,.3);display:flex;align-items:center;justify-content:center;flex-shrink:0">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#ff1744" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/><line x1="18" y1="6" x2="18" y2="6.01" stroke-width="3"/></svg>
+        </div>
+        <div>
+          <div class="kpi-lbl">DISCONNECTED</div>
+          <div class="kpi-val" style="font-size:28px;color:var(--r)" id="k-ag-disc">—</div>
+          <div class="kpi-sub">inactive / offline</div>
+        </div>
+        <div style="margin-left:auto;padding:4px 8px;background:var(--rdim);border:1px solid rgba(255,23,68,.25);border-radius:3px;font-size:9px;font-family:var(--fm);color:var(--r)" id="k-ag-disc-label">OFFLINE</div>
+      </div>
+    </div>
+  </div>
+  <!-- Row 2: Stacked bar timeline + Donut + Attack world map -->
+  <div style="display:grid;grid-template-columns:1.3fr .7fr 1fr;gap:12px;margin-bottom:12px">
+    <div class="card">
+      <div class="card-hd">
+        <div class="card-ttl"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>ALERT TIMELINE — 24H</div>
+        <div class="live-badge"><div class="live-dot"></div>LIVE</div>
+      </div>
+      <canvas id="ch-time" style="max-height:160px"></canvas>
+    </div>
+    <div class="card">
+      <div class="card-hd"><div class="card-ttl">SEVERITY</div></div>
+      <canvas id="ch-sev" style="max-height:130px"></canvas>
+      <div id="sev-leg" style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:8px"></div>
+    </div>
+    <div class="card" style="padding:12px">
+      <div class="card-hd" style="margin-bottom:6px">
+        <div class="card-ttl"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 010 20M12 2a15.3 15.3 0 000 20"/></svg>ATTACK ORIGINS</div>
+        <span style="font-size:9px;font-family:var(--fm);color:var(--r)" id="map-hit-cnt">0 IPs</span>
+      </div>
+      <div id="map-wrap"><canvas id="world-canvas" height="160"></canvas><div id="map-dots"></div></div>
+    </div>
+  </div>
+  <!-- Row 3: 4 sub-widgets -->
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1.1fr;gap:12px;margin-bottom:12px">
+    <div class="card"><div class="card-hd"><div class="card-ttl">TOP AGENTS</div></div><div id="d-agents"><div class="loading"><div class="spin"></div></div></div></div>
+    <div class="card"><div class="card-hd"><div class="card-ttl">TOP ATTACK IPs</div></div><div id="d-ips"><div class="loading"><div class="spin"></div></div></div></div>
+    <div class="card"><div class="card-hd"><div class="card-ttl">TOP RULES</div></div><div id="d-rules"><div class="loading"><div class="spin"></div></div></div></div>
+    <div class="card"><div class="card-hd"><div class="card-ttl">MITRE ATT&CK</div></div><div id="d-mitre"><div class="loading"><div class="spin"></div></div></div></div>
+  </div>
+  <!-- Row 4: Recent Critical + Severity bars -->
+  <div class="g32">
+    <div class="card"><div class="card-hd"><div class="card-ttl">RECENT CRITICAL ALERTS</div><button class="btn btn-h btn-sm" onclick="go('alerts')">View All →</button></div><div id="d-recent"><div class="loading"><div class="spin"></div></div></div></div>
+    <div class="card"><div class="card-hd"><div class="card-ttl">SEVERITY BREAKDOWN</div></div><div id="d-sevbars"></div></div>
+  </div>
+</div>
+
+<!-- AGENTS -->
+<div class="page" id="page-agents">
+  <div class="ph"><h1>AGENTS</h1><p>Wazuh monitored endpoints — SIEM aggregation</p></div>
+  <div class="card"><div class="card-hd"><div class="card-ttl">All Agents</div><div class="row"><input class="fi" style="width:180px" placeholder="Search..." id="ag-q" oninput="filterAgents()"><button class="btn btn-p btn-sm" onclick="loadAgents()">↻ Refresh</button></div></div><div id="ag-body"><div class="loading"><div class="spin"></div><p>Loading from SIEM...</p></div></div></div>
+</div>
+
+<!-- ALERTS -->
+<div class="page" id="page-alerts">
+  <div class="ph"><h1>ALERTS</h1><p>Live SIEM security alerts — wazuh-alerts-*</p></div>
+  <div class="card">
+    <div class="card-hd"><div class="card-ttl">Alert Feed</div>
+      <div class="row">
+        <input class="fi" style="width:140px" placeholder="Search..." id="al-q" oninput="filterAlerts()">
+        <select class="fs" style="width:100px" id="al-sev" onchange="loadAlerts()"><option value="">All Sev</option><option value="critical">Critical</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select>
+        <select class="fs" style="width:90px" id="al-hrs" onchange="loadAlerts()"><option value="0">All Time</option><option value="1">1h</option><option value="6">6h</option><option value="24" selected>24h</option><option value="72">3d</option><option value="168">7d</option></select>
+        <input class="fi" style="width:130px" placeholder="Agent..." id="al-agent" oninput="loadAlerts()">
+        <input class="fi" style="width:120px" placeholder="Src IP..." id="al-srcip" oninput="loadAlerts()">
+        <button class="btn btn-p btn-sm" onclick="loadAlerts()">↻ Refresh</button>
+      </div>
+    </div>
+    <div id="al-total" style="font-size:10px;color:#8ab0d0;font-family:var(--fm);margin-bottom:8px"></div>
+    <div id="al-body"><div class="loading"><div class="spin"></div><p>Loading from SIEM...</p></div></div>
+  </div>
+</div>
+
+<!-- RULES -->
+<div class="page" id="page-rules">
+  <div class="ph"><h1>DETECTION RULES</h1><p>Active rules from SIEM alert data</p></div>
+  <div class="card"><div class="card-hd"><div class="card-ttl">Active Rules</div><div class="row"><input class="fi" style="width:220px" placeholder="Search rules..." id="rl-q" oninput="filterRules()"><button class="btn btn-p btn-sm" onclick="loadRules()">↻ Refresh</button></div></div><div id="rl-body"><div class="loading"><div class="spin"></div></div></div></div>
+</div>
+
+<!-- CASES -->
+<div class="page" id="page-cases">
+  <div class="ph"><h1>SP-CM CASES</h1><p>SOCPilots Case Management</p></div>
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+    <select class="fs" style="width:160px" id="case-status" onchange="loadCases()"><option value="">All Status</option><option value="New">New</option><option value="InProgress">In Progress</option><option value="TruePositive">True Positive</option><option value="FalsePositive">False Positive</option><option value="Duplicate">Duplicate</option><option value="Resolved">Resolved</option></select>
+    <button class="btn btn-p" onclick="openModal('modal-case')">+ New Case</button>
+  </div>
+  <div class="kanban">
+    <div class="kb-col"><div class="kb-hd" style="border-top:2px solid var(--r)">NEW<span class="kb-n" id="cnt-new">0</span></div><div id="kb-new"></div></div>
+    <div class="kb-col"><div class="kb-hd" style="border-top:2px solid var(--y)">IN PROGRESS<span class="kb-n" id="cnt-ip">0</span></div><div id="kb-ip"></div></div>
+    <div class="kb-col"><div class="kb-hd" style="border-top:2px solid var(--g)">RESOLVED<span class="kb-n" id="cnt-res">0</span></div><div id="kb-res"></div></div>
+    <div class="kb-col"><div class="kb-hd" style="border-top:2px solid var(--p)">CLOSED<span class="kb-n" id="cnt-cl">0</span></div><div id="kb-cl"></div></div>
+  </div>
+</div>
+
+<!-- HIVE ALERTS -->
+<div class="page" id="page-hive-alerts">
+  <div class="ph"><h1>SP-CM ALERTS</h1><p>SOCPilots Case Management alert inbox</p></div>
+  <div class="card"><div class="card-hd"><div class="card-ttl">Alert Inbox</div><div class="row"><select class="fs" style="width:130px" id="ha-status" onchange="loadHiveAlerts()"><option value="">All</option><option value="New">New</option><option value="InProgress">In Progress</option></select><button class="btn btn-p btn-sm" onclick="loadHiveAlerts()">↻ Refresh</button></div></div><div id="ha-body"><div class="loading"><div class="spin"></div></div></div></div>
+</div>
+
+<!-- HUNT -->
+<div class="page" id="page-hunt">
+  <div class="ph"><h1>THREAT HUNT</h1><p>SIEM direct search + SOCPilots AI analysis</p></div>
+  <div class="card mb"><div class="card-hd"><div class="card-ttl">Hunt Indicator</div></div>
+    <div style="display:grid;grid-template-columns:150px 1fr auto;gap:8px;align-items:end">
+      <div class="fg" style="margin:0"><label class="fl">Type</label><select class="fs" id="hunt-type"><option value="ip">IP Address</option><option value="user">Username</option><option value="hash">File Hash</option><option value="domain">Domain</option><option value="process">Process</option><option value="rule">Rule ID</option></select></div>
+      <div class="fg" style="margin:0"><label class="fl">Value</label><input class="fi" id="hunt-val" placeholder="e.g. 192.168.1.100"></div>
+      <button class="btn btn-p" onclick="doHunt()" style="height:34px">Hunt</button>
+    </div>
+  </div>
+  <div id="hunt-os" style="display:none" class="card mb"><div class="card-hd"><div class="card-ttl" id="hunt-os-ttl">SIEM Results</div></div><div id="hunt-os-body"></div></div>
+  <div id="hunt-ai" style="display:none" class="card"><div class="card-hd"><div class="card-ttl">SOCPilots AI Analysis</div></div><div id="hunt-ai-body" class="ai-txt"></div></div>
+</div>
+
+<!-- IOC ENRICHMENT -->
+<div class="page" id="page-ioc">
+  <div class="ph"><h1>IOC ENRICHMENT</h1><p>IP, Domain, URL, Hash — Threat Intel + Geolocation via SOCPilots AI</p></div>
+  <div class="g2 mb">
+    <div class="card">
+      <div class="card-hd"><div class="card-ttl">INDICATOR LOOKUP</div></div>
+      <div class="fg"><label class="fl">Type</label>
+        <select class="fs" id="ioc-type"><option value="ip">IP Address</option><option value="domain">Domain</option><option value="url">URL</option><option value="hash">File Hash (MD5/SHA256)</option></select>
+      </div>
+      <div class="fg"><label class="fl">Indicator</label><input class="fi" id="ioc-val" placeholder="e.g. 45.148.10.157 or evil.com" style="font-size:14px"></div>
+      <button class="btn btn-p" style="width:100%;justify-content:center" onclick="doIOC()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+        Enrich via SOCPilots AI
+      </button>
+      <div class="sep"></div>
+      <div class="ioc-lbl">QUICK LOOKUP — TOP ATTACK IPs FROM SIEM</div>
+      <div id="ioc-quick" style="display:flex;flex-wrap:wrap;gap:5px"></div>
+    </div>
+    <div class="card"><div class="card-hd"><div class="card-ttl">ENRICHMENT RESULT</div></div><div id="ioc-result"><div class="empty"><p>Enter an indicator and click Enrich</p></div></div></div>
+  </div>
+  <div class="card">
+    <div class="card-hd"><div class="card-ttl"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 010 20"/></svg>GEO MAP — IOC LOCATION</div></div>
+    <div id="ioc-map-wrap" style="position:relative;background:var(--bg2);border-radius:4px;border:1px solid var(--b1);overflow:hidden"><canvas id="ioc-canvas" height="200"></canvas><div id="ioc-dots"></div></div>
+  </div>
+</div>
+
+<!-- CORRELATION -->
+<div class="page" id="page-correlate">
+  <div class="ph"><h1>CORRELATION</h1><p>Cross-platform indicator analysis — SIEM + SP-CM + SOCPilots AI</p></div>
+  <div class="card mb">
+    <div class="card-hd"><div class="card-ttl">CORRELATE INDICATOR</div></div>
+    <div style="display:flex;gap:8px"><input class="fi" id="corr-val" placeholder="IP, hash, domain, username..." style="font-size:14px"><button class="btn btn-p" onclick="doCorrelate()">Correlate</button></div>
+  </div>
+  <div id="corr-results" style="display:none">
+    <div class="g2 mb">
+      <div class="card"><div class="card-hd"><div class="card-ttl">SIEM MATCHES</div></div><div id="corr-siem"></div></div>
+      <div class="card"><div class="card-hd"><div class="card-ttl">SP-CM MATCHES</div></div><div id="corr-spcm"></div></div>
+    </div>
+    <!-- Visual Correlation Graph -->
+    <div class="card mb">
+      <div class="card-hd"><div class="card-ttl">CORRELATION GRAPH</div><div style="font-size:9px;font-family:var(--fm);color:#8ab0d0" id="cg-hint">Drag nodes to rearrange</div></div>
+      <div id="corr-graph">
+        <svg id="corr-svg" style="position:absolute;inset:0;width:100%;height:100%"></svg>
+      </div>
+    </div>
+    <div class="card"><div class="card-hd"><div class="card-ttl">SOCPilots AI REPORT</div></div><div id="corr-ai" class="ai-txt"></div></div>
+  </div>
+</div>
+
+<!-- LIVE THREAT MAP -->
+<div class="page" id="page-threatmap">
+  <div class="ph"><h1>LIVE THREAT MAP</h1><p>Real-time attack origins from SIEM IP data</p></div>
+  <div style="display:grid;grid-template-columns:1fr 280px;gap:12px;margin-bottom:12px">
+    <div class="card" style="padding:12px">
+      <div class="card-hd" style="margin-bottom:8px">
+        <div class="card-ttl">GLOBAL ATTACK MAP</div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <div class="live-dot"></div>
+          <span style="font-size:10px;font-family:var(--fm);color:var(--g)">LIVE</span>
+          <span style="font-size:9px;color:#8ab0d0;font-family:var(--fm)" id="tm-count">0 active IPs</span>
+        </div>
+      </div>
+      <div id="tm-map-wrap" style="position:relative;background:var(--bg2);border-radius:4px;border:1px solid var(--b1);overflow:hidden"><canvas id="tm-canvas" height="420"></canvas><div id="tm-dots"></div></div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <div class="card">
+        <div class="card-hd"><div class="card-ttl">TOP ATTACKERS</div></div>
+        <div id="tm-top-ips"><div class="loading"><div class="spin"></div></div></div>
+      </div>
+      <div class="card">
+        <div class="card-hd"><div class="card-ttl">ATTACK STATS</div></div>
+        <div id="tm-stats"><div class="loading"><div class="spin"></div></div></div>
+      </div>
+    </div>
+  </div>
+  <div class="g3">
+    <div class="card"><div class="card-hd"><div class="card-ttl">MITRE TACTICS</div></div><div id="tm-mitre"><div class="loading"><div class="spin"></div></div></div></div>
+    <div class="card"><div class="card-hd"><div class="card-ttl">TOP RULES</div></div><div id="tm-rules"><div class="loading"><div class="spin"></div></div></div></div>
+    <div class="card"><div class="card-hd"><div class="card-ttl">ATTACK TIMELINE</div></div><canvas id="ch-tm-time" style="max-height:140px"></canvas></div>
+  </div>
+</div>
+
+<!-- CREATE RULES -->
+<div class="page" id="page-create-rules">
+  <div class="ph" style="display:flex;align-items:center;justify-content:space-between">
+    <div><h1>CREATE DETECTION RULES</h1><p>Build and deploy Wazuh detection rules via SOCPilots AI → MCP</p></div>
+    <!-- Mode Toggle -->
+    <div style="display:flex;background:var(--bg2);border:1px solid var(--b1);border-radius:4px;padding:3px;gap:3px">
+      <button id="mode-btn-form" class="btn btn-p btn-sm" onclick="setRuleMode('form')" style="font-size:11px">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:11px;height:11px"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/></svg>
+        Form Builder
+      </button>
+      <button id="mode-btn-ai" class="btn btn-h btn-sm" onclick="setRuleMode('ai')" style="font-size:11px">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:11px;height:11px"><path d="M12 2a10 10 0 1010 10"/><circle cx="19" cy="5" r="3" fill="#00e5ff" stroke="none"/></svg>
+        AI Chat Mode
+      </button>
+    </div>
+  </div>
+
+  <!-- MODE A: Form Builder -->
+  <div id="mode-form">
+  <div class="g2 mb">
+    <!-- Rule Builder -->
+    <div class="card">
+      <div class="card-hd"><div class="card-ttl"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px"><path d="M12 5v14M5 12h14"/><circle cx="12" cy="12" r="10"/></svg>RULE BUILDER</div></div>
+      <div style="display:grid;grid-template-columns:2fr 1fr;gap:10px">
+        <div class="fg"><label class="fl">Rule Name *</label><input class="fi" id="cr-name" placeholder="e.g. SSH Brute Force Detection"></div>
+        <div class="fg"><label class="fl">Rule ID (optional, 200000-299999)</label><input class="fi" id="cr-id" type="number" min="200000" max="299999" placeholder="Auto-generated if blank"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div class="fg"><label class="fl">Severity Level (1-15)</label>
+          <select class="fs" id="cr-level">
+            <option value="5">5 — Low</option>
+            <option value="7">7 — Medium</option>
+            <option value="10" selected>10 — High</option>
+            <option value="12">12 — Critical</option>
+            <option value="15">15 — Maximum</option>
+          </select>
+        </div>
+        <div class="fg"><label class="fl">Category / Group</label>
+          <select class="fs" id="cr-group">
+            <option value="syslog">syslog</option>
+            <option value="sshd" selected>sshd</option>
+            <option value="web">web</option>
+            <option value="authentication">authentication</option>
+            <option value="intrusion_detection">intrusion_detection</option>
+            <option value="malware">malware</option>
+            <option value="custom">custom</option>
+          </select>
+        </div>
+      </div>
+      <div class="fg"><label class="fl">Rule Description *</label><input class="fi" id="cr-desc" placeholder="e.g. Multiple failed SSH login attempts from same IP"></div>
+      <div class="fg"><label class="fl">Log Pattern / Condition to Match</label><textarea class="fta" id="cr-pattern" placeholder="e.g. PAM authentication failure
+Failed password for
+sshd: Failed" style="min-height:80px"></textarea></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div class="fg"><label class="fl">MITRE ATT&CK Technique</label>
+          <select class="fs" id="cr-mitre">
+            <option value="">None</option>
+            <option value="T1110" selected>T1110 — Brute Force</option>
+            <option value="T1078">T1078 — Valid Accounts</option>
+            <option value="T1059">T1059 — Command Execution</option>
+            <option value="T1055">T1055 — Process Injection</option>
+            <option value="T1190">T1190 — Exploit Public App</option>
+            <option value="T1071">T1071 — App Layer Protocol</option>
+            <option value="T1486">T1486 — Data Encrypted</option>
+            <option value="T1040">T1040 — Network Sniffing</option>
+          </select>
+        </div>
+        <div class="fg"><label class="fl">Frequency Threshold (fires per min)</label>
+          <input class="fi" id="cr-freq" type="number" value="5" min="1" placeholder="e.g. 5">
+        </div>
+      </div>
+      <div class="fg"><label class="fl">Response Action</label>
+        <select class="fs" id="cr-action">
+          <option value="alert">Alert only</option>
+          <option value="alert_and_block">Alert + Block IP</option>
+          <option value="alert_and_case">Alert + Create SP-CM Case</option>
+          <option value="full_response">Alert + Block + Case</option>
+        </select>
+      </div>
+      <div class="fg"><label class="fl">Additional Context (optional)</label>
+        <textarea class="fta" id="cr-context" placeholder="Any additional context, examples, or specific conditions..."></textarea>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:4px">
+        <button class="btn btn-h" style="flex:1;justify-content:center" onclick="previewRule()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>Preview
+        </button>
+        <button class="btn" style="flex:1;justify-content:center;background:var(--cdim);border:1px solid var(--c);color:var(--c)" onclick="testRule()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px"><path d="M9 12l2 2 4-4M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>Test Rule
+        </button>
+        <button class="btn btn-p" style="flex:1;justify-content:center" onclick="createRule()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>Deploy to Wazuh
+        </button>
+      </div>
+    </div>
+
+    <!-- Preview + Result Panel -->
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <div class="card" style="flex:1">
+        <div class="card-hd"><div class="card-ttl">GENERATED RULE XML</div><button class="btn btn-h btn-sm" onclick="copyRule()" id="copy-rule-btn" style="display:none">Copy XML</button></div>
+        <div id="cr-preview"><div class="empty"><p>Click "Preview Rule" to generate rule XML</p></div></div>
+      </div>
+      <div class="card">
+        <div class="card-hd"><div class="card-ttl">DEPLOYMENT STATUS</div></div>
+        <div id="cr-status"><div class="empty"><p>Rule not yet deployed</p></div></div>
+      </div>
+    </div>
+  </div>
+  </div><!-- /g2 -->
+
+  <!-- Rule Templates -->
+  <div id="cr-templates-section" class="card mb">
+    <div class="card-hd"><div class="card-ttl">QUICK TEMPLATES</div><span style="font-size:10px;font-family:var(--fm);color:#8ab0d0">Click to auto-fill form</span></div>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
+      <div class="ioc-section" onclick="fillTemplate('ssh_bruteforce')" style="cursor:pointer;transition:border-color .15s;border:1px solid var(--b1)" onmouseover="this.style.borderColor='var(--c)'" onmouseout="this.style.borderColor='var(--b1)'">
+        <div style="font-size:11px;font-weight:600;color:#d8eaff;font-family:var(--fw);margin-bottom:4px">🔐 SSH Brute Force</div>
+        <div style="font-size:10px;color:#8ab0d0;font-family:var(--fm)">Level 10 · T1110<br>Auth failure threshold</div>
+      </div>
+      <div class="ioc-section" onclick="fillTemplate('web_scan')" style="cursor:pointer;transition:border-color .15s;border:1px solid var(--b1)" onmouseover="this.style.borderColor='var(--c)'" onmouseout="this.style.borderColor='var(--b1)'">
+        <div style="font-size:11px;font-weight:600;color:#d8eaff;font-family:var(--fw);margin-bottom:4px">🌐 Web Scanning</div>
+        <div style="font-size:10px;color:#8ab0d0;font-family:var(--fm)">Level 8 · T1190<br>HTTP 404 flood detection</div>
+      </div>
+      <div class="ioc-section" onclick="fillTemplate('priv_escalation')" style="cursor:pointer;transition:border-color .15s;border:1px solid var(--b1)" onmouseover="this.style.borderColor='var(--c)'" onmouseout="this.style.borderColor='var(--b1)'">
+        <div style="font-size:11px;font-weight:600;color:#d8eaff;font-family:var(--fw);margin-bottom:4px">⚡ Privilege Escalation</div>
+        <div style="font-size:10px;color:#8ab0d0;font-family:var(--fm)">Level 12 · T1068<br>sudo/su anomaly detection</div>
+      </div>
+      <div class="ioc-section" onclick="fillTemplate('malware_drop')" style="cursor:pointer;transition:border-color .15s;border:1px solid var(--b1)" onmouseover="this.style.borderColor='var(--c)'" onmouseout="this.style.borderColor='var(--b1)'">
+        <div style="font-size:11px;font-weight:600;color:#d8eaff;font-family:var(--fw);margin-bottom:4px">🦠 Malware Dropper</div>
+        <div style="font-size:10px;color:#8ab0d0;font-family:var(--fm)">Level 13 · T1204<br>Suspicious file execution</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Deployed Rules List -->
+  <div class="card">
+    <div class="card-hd"><div class="card-ttl">DEPLOYED CUSTOM RULES</div><button class="btn btn-p btn-sm" onclick="loadCustomRules()">↻ Refresh</button></div>
+    <div id="cr-list"><div class="loading"><div class="spin"></div><p>Loading from SIEM...</p></div></div>
+  </div>
+  </div><!-- /mode-form -->
+
+  <!-- MODE B: AI Chat Mode -->
+  <div id="mode-ai" style="display:none">
+    <div style="display:grid;grid-template-columns:1fr 320px;gap:12px;height:calc(100vh - 200px);min-height:500px">
+
+      <!-- Left: AI Chat for rule generation -->
+      <div class="card" style="display:flex;flex-direction:column;padding:0;overflow:hidden">
+        <div style="padding:9px 14px;border-bottom:1px solid var(--b1);background:var(--bg2);display:flex;align-items:center;gap:8px">
+          <div class="led g"></div>
+          <span style="font-size:11px;font-family:var(--fm);color:#d8eaff;font-weight:600">SOCPilots AI — Rule Generator</span>
+          <span style="font-size:10px;color:#8ab0d0;margin-left:auto;font-family:var(--fm)">Describe what you need → AI generates Wazuh XML</span>
+        </div>
+        <div id="rc-chat-msgs" style="flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:9px">
+          <div class="cmsg ai">
+            <div class="cav ai">SP</div>
+            <div class="cbub">
+              Hello! I'm your Rule Generation Assistant.<br><br>
+              Describe the security threat or behavior you want to detect and I'll generate a complete Wazuh rule XML.<br><br>
+              <strong style="color:var(--c)">Examples:</strong><br>
+              • "Detect SSH brute force — 5+ failures in 60 seconds"<br>
+              • "Alert when /etc/passwd is modified"<br>
+              • "Detect port scanning from external IPs"<br>
+              • "Monitor failed sudo attempts by non-admin users"<br><br>
+              I'll also auto-fill the form builder so you can fine-tune before deploying.
+            </div>
+          </div>
+        </div>
+        <div style="padding:9px 12px;border-top:1px solid var(--b1);background:var(--bg1)">
+          <!-- System prompt area -->
+          <div style="margin-bottom:7px">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+              <span style="font-size:9px;color:#8ab0d0;font-family:var(--fm);letter-spacing:1px;text-transform:uppercase">System Context (optional)</span>
+              <button class="btn btn-h btn-sm" style="font-size:9px;padding:2px 7px" onclick="toggleSysPrompt()">Toggle</button>
+            </div>
+            <textarea id="rc-sys-prompt" style="display:none;background:rgba(0,0,0,.4);border:1px solid var(--b2);border-radius:3px;padding:7px 10px;color:#8ab0d0;font-family:var(--fm);font-size:10px;width:100%;resize:none;height:50px;outline:none" placeholder="Add context: your OS, log format, specific conditions, environment details..."></textarea>
+          </div>
+          <div style="display:flex;gap:7px">
+            <textarea id="rc-chat-in" class="chat-in" placeholder="Describe the threat to detect..." onkeydown="rcChatKey(event)" style="height:40px"></textarea>
+            <button class="btn btn-p" id="rc-send-btn" onclick="sendRuleChat()">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+              Generate
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right: Generated XML + Import to Form -->
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <!-- Quick System Prompts -->
+        <div class="card">
+          <div style="font-family:var(--fw);font-size:11px;letter-spacing:1px;color:#8ab0d0;margin-bottom:8px">QUICK TEMPLATES</div>
+          <div style="display:flex;flex-direction:column;gap:4px">
+            <button class="btn btn-h btn-sm" style="justify-content:flex-start;font-size:10px;text-align:left;line-height:1.3;height:auto;padding:6px 9px;white-space:normal" onclick="rcTemplate('Detect SSH brute force attack: 5 or more failed authentication attempts within 60 seconds from the same source IP address. Level 10, MITRE T1110.')">
+              🔐 SSH Brute Force
+            </button>
+            <button class="btn btn-h btn-sm" style="justify-content:flex-start;font-size:10px;text-align:left;line-height:1.3;height:auto;padding:6px 9px;white-space:normal" onclick="rcTemplate('Detect privilege escalation: any sudo or su command executed by a non-admin user, especially attempts to run commands as root. Level 12, MITRE T1068.')">
+              ⚡ Privilege Escalation
+            </button>
+            <button class="btn btn-h btn-sm" style="justify-content:flex-start;font-size:10px;text-align:left;line-height:1.3;height:auto;padding:6px 9px;white-space:normal" onclick="rcTemplate('Detect web application scanning: 20+ HTTP 404 errors from the same IP within 1 minute, or requests containing sqlmap, nikto, nmap user-agent strings. Level 8, MITRE T1190.')">
+              🌐 Web App Scanner
+            </button>
+            <button class="btn btn-h btn-sm" style="justify-content:flex-start;font-size:10px;text-align:left;line-height:1.3;height:auto;padding:6px 9px;white-space:normal" onclick="rcTemplate('Detect malware dropper: execution of scripts downloaded from internet (wget/curl piped to bash), or execution of files from /tmp or /dev/shm directories. Level 13, MITRE T1204.')">
+              🦠 Malware Dropper
+            </button>
+            <button class="btn btn-h btn-sm" style="justify-content:flex-start;font-size:10px;text-align:left;line-height:1.3;height:auto;padding:6px 9px;white-space:normal" onclick="rcTemplate('Detect lateral movement: SMB or RDP authentication attempts to multiple hosts from a single source within a short time window. Level 12, MITRE T1021.')">
+              🔀 Lateral Movement
+            </button>
+            <button class="btn btn-h btn-sm" style="justify-content:flex-start;font-size:10px;text-align:left;line-height:1.3;height:auto;padding:6px 9px;white-space:normal" onclick="rcTemplate('Detect data exfiltration: large outbound data transfers (>100MB) to external IPs, or connections to known cloud storage services outside business hours. Level 12, MITRE T1041.')">
+              📤 Data Exfiltration
+            </button>
+            <button class="btn btn-h btn-sm" style="justify-content:flex-start;font-size:10px;text-align:left;line-height:1.3;height:auto;padding:6px 9px;white-space:normal" onclick="rcTemplate('Detect critical file modification: any changes to /etc/passwd, /etc/shadow, /etc/sudoers, or SSH authorized_keys files. Level 12, MITRE T1098.')">
+              📁 Critical File Change
+            </button>
+          </div>
+        </div>
+
+        <!-- Generated XML Panel -->
+        <div class="card" style="flex:1;overflow:hidden;display:flex;flex-direction:column">
+          <div class="card-hd" style="margin-bottom:8px">
+            <div class="card-ttl">GENERATED XML</div>
+            <div style="display:flex;gap:5px">
+              <button class="btn btn-h btn-sm" id="rc-copy-btn" onclick="rcCopyXML()" style="display:none;font-size:9px">Copy</button>
+              <button class="btn btn-p btn-sm" id="rc-import-btn" onclick="rcImportToForm()" style="display:none;font-size:9px">
+                → Import to Form
+              </button>
+            </div>
+          </div>
+          <div id="rc-xml-preview" style="flex:1;overflow-y:auto">
+            <div class="empty"><p>Generated XML will appear here</p></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<!-- AI INVESTIGATION -->
+<div class="page" id="page-investigation">
+  <div class="ph">
+    <h1>AI INVESTIGATION</h1>
+    <p>Deep AI analysis of high & critical alerts — dedicated investigation workflow</p>
+  </div>
+
+  <!-- Auto-Triage Control Bar -->
+  <div style="display:flex;align-items:center;gap:14px;padding:12px 16px;margin-bottom:12px;background:var(--bg2);border:1px solid var(--b1);border-left:3px solid var(--c);border-radius:4px;flex-wrap:wrap">
+    <div style="display:flex;align-items:center;gap:8px">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--c)"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+      <span style="font-family:var(--fw);font-size:13px;font-weight:700;letter-spacing:1px;color:var(--txt)">AUTO-TRIAGE</span>
+    </div>
+    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none">
+      <input type="checkbox" id="auto-triage-toggle" onchange="toggleAutoTriage()" style="width:18px;height:18px;cursor:pointer;accent-color:var(--c)">
+      <span id="auto-triage-status" style="font-family:var(--fm);font-size:12px;color:var(--txt2)">Disabled</span>
+    </label>
+    <div style="display:flex;align-items:center;gap:6px;font-family:var(--fm);font-size:11px;color:var(--txt3)">
+      <span>Min Level:</span>
+      <select id="auto-triage-level" onchange="updateAutoTriageSettings()" class="fs" style="width:80px">
+        <option value="8">8 (High)</option>
+        <option value="10">10</option>
+        <option value="12" selected>12 (Critical)</option>
+        <option value="14">14</option>
+      </select>
+      <span style="margin-left:10px">Interval:</span>
+      <select id="auto-triage-interval" onchange="updateAutoTriageSettings()" class="fs" style="width:90px">
+        <option value="60">60s</option>
+        <option value="120">2 min</option>
+        <option value="300" selected>5 min</option>
+        <option value="600">10 min</option>
+      </select>
+    </div>
+    <div id="auto-triage-info" style="margin-left:auto;font-family:var(--fm);font-size:10px;color:var(--txt3)">
+      <span id="auto-triage-status-detail"></span>
+    </div>
+  </div>
+
+  <!-- Tabs -->
+  <div style="display:flex;gap:0;margin-bottom:12px;border-bottom:1px solid var(--b1)">
+    <button class="inv-tab active" data-tab="live" onclick="switchInvTab('live')" style="background:none;border:none;color:var(--c);padding:8px 18px;cursor:pointer;font-family:var(--fw);font-size:11px;letter-spacing:1px;border-bottom:2px solid var(--c)">LIVE ALERTS</button>
+    <button class="inv-tab" data-tab="history" onclick="switchInvTab('history')" style="background:none;border:none;color:var(--txt3);padding:8px 18px;cursor:pointer;font-family:var(--fw);font-size:11px;letter-spacing:1px;border-bottom:2px solid transparent">INVESTIGATION HISTORY</button>
+  </div>
+
+  <!-- Stats Row -->
+  <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:14px">
+    <div class="kpi cr"><div class="kpi-lbl">Critical Alerts</div><div class="kpi-val" id="inv-crit">—</div><div class="kpi-sub">level ≥ 12</div></div>
+    <div class="kpi co"><div class="kpi-lbl">High Alerts</div><div class="kpi-val" id="inv-high">—</div><div class="kpi-sub">level 8–11</div></div>
+    <div class="kpi cy"><div class="kpi-lbl">Investigated</div><div class="kpi-val" id="inv-done">0</div><div class="kpi-sub">total saved</div></div>
+    <div class="kpi cg"><div class="kpi-lbl">Auto-Triaged</div><div class="kpi-val" id="inv-auto">0</div><div class="kpi-sub">by AI engine</div></div>
+    <div class="kpi cl"><div class="kpi-lbl">Last 24h</div><div class="kpi-val" id="inv-24h">0</div><div class="kpi-sub">investigations</div></div>
+  </div>
+
+  <div id="inv-tab-live" style="display:grid;grid-template-columns:1fr 1.4fr;gap:12px">
+
+    <!-- LEFT: Alert List -->
+    <div class="card">
+      <div class="card-hd">
+        <div class="card-ttl"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>HIGH/CRITICAL ALERTS</div>
+        <div class="row">
+          <select class="fs" style="width:110px" id="inv-sev" onchange="loadInvAlerts()">
+            <option value="">All H+C</option>
+            <option value="critical">Critical Only</option>
+            <option value="high">High Only</option>
+          </select>
+          <select class="fs" style="width:90px" id="inv-hrs" onchange="loadInvAlerts()">
+            <option value="6">6h</option>
+            <option value="24" selected>24h</option>
+            <option value="72">3d</option>
+            <option value="168">7d</option>
+          </select>
+          <button class="btn btn-p btn-sm" onclick="loadInvAlerts()">↻</button>
+        </div>
+      </div>
+      <div id="inv-list" style="max-height:calc(100vh - 320px);overflow-y:auto">
+        <div class="loading"><div class="spin"></div><p>Loading from SIEM...</p></div>
+      </div>
+    </div>
+
+    <!-- RIGHT: Investigation Result -->
+    <div class="card" style="display:flex;flex-direction:column">
+      <div class="card-hd">
+        <div class="card-ttl"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>INVESTIGATION RESULT</div>
+        <div class="row" id="inv-actions" style="display:none">
+          <button class="btn btn-h btn-sm" onclick="invCopyReport()">📋 Copy Report</button>
+          <button class="btn btn-p btn-sm" onclick="invEscalateCase()">→ Escalate to SP-CM</button>
+        </div>
+      </div>
+      <div id="inv-result" style="flex:1;overflow-y:auto;min-height:calc(100vh - 320px);max-height:calc(100vh - 320px)">
+        <div class="empty">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="width:38px;height:38px;color:var(--txt3);margin-bottom:8px"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+          <p>Select an alert from the left to start AI investigation</p>
+          <p style="font-size:9px;color:var(--txt3);margin-top:4px">Powered by dedicated investigation webhook</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- HISTORY TAB CONTENT -->
+  <div id="inv-tab-history" style="display:none">
+    <div class="card">
+      <div class="card-hd">
+        <div class="card-ttl">📋 Saved Investigations</div>
+        <div class="row">
+          <input class="fi" style="width:200px" placeholder="Search by rule, IP, agent..." id="hist-q" oninput="loadInvHistory()">
+          <select class="fs" style="width:110px" id="hist-sev" onchange="loadInvHistory()">
+            <option value="">All Severity</option>
+            <option value="critical">Critical</option>
+            <option value="high">High</option>
+          </select>
+          <button class="btn btn-p btn-sm" onclick="loadInvHistory()">↻ Refresh</button>
+        </div>
+      </div>
+      <div id="hist-body" style="max-height:calc(100vh - 360px);overflow-y:auto">
+        <div class="empty"><p>Click Refresh to load investigation history</p></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- INVESTIGATION DETAIL MODAL -->
+<div class="modal-ov" id="modal-investigation">
+  <div class="modal" style="width:850px;max-height:85vh">
+    <div class="modal-hd"><div class="modal-ttl">Investigation Report</div><button class="modal-x" onclick="closeModal('modal-investigation')">✕</button></div>
+    <div class="modal-body" id="modal-investigation-body" style="overflow-y:auto;max-height:65vh"></div>
+    <div class="modal-ft">
+      <button class="btn btn-h" onclick="closeModal('modal-investigation')">Close</button>
+      <button class="btn btn-p" onclick="invCopyFromModal()">📋 Copy Report</button>
+    </div>
+  </div>
+</div>
+
+<!-- SOCPilots AI -->
+<div class="page" id="page-copilot">
+  <div class="ph"><h1>SOCPilots AI</h1><p>SOCPilots AI → LLM → MCP (SIEM + SP-CM)</p></div>
+  <div style="display:grid;grid-template-columns:1fr 260px;gap:12px;height:calc(100vh - 140px)">
+    <div class="card" style="display:flex;flex-direction:column;padding:0;overflow:hidden">
+      <div style="padding:9px 13px;border-bottom:1px solid var(--b1);font-size:10px;font-family:var(--fm);display:flex;align-items:center;gap:7px">
+        <div class="led g"></div>SOCPilots AI → LLM → MCP (SIEM + SP-CM)
+        <span style="margin-left:auto;color:#8ab0d0" id="ctx-msgs">1 msg</span>
+      </div>
+      <div class="chat-msgs" id="chat-msgs">
+        <div class="cmsg ai"><div class="cav ai">SP</div><div class="cbub">Hello <strong id="chat-uname" style="color:var(--c)">—</strong>!<br><br>I'm SOCPilots AI — connected to your SIEM and SP-CM via MCP tools.<br><br>Ask about alerts, agents, cases, threats, or request automated response actions.</div></div>
+      </div>
+      <div class="chat-row"><textarea class="chat-in" id="chat-in" placeholder="Ask SOCPilots AI..." onkeydown="chatKey(event)"></textarea><button class="btn btn-p" id="chat-btn" onclick="sendChat()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>Send</button></div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <div class="card"><div style="font-family:var(--fw);font-size:12px;margin-bottom:9px;letter-spacing:1px;color:var(--txt2)">QUICK ACTIONS</div>
+        <div style="display:flex;flex-direction:column;gap:4px">
+          <button class="btn btn-h btn-sm" style="justify-content:flex-start;font-size:11px" onclick="quick('List all SIEM agents with status')">→ List agents</button>
+          <button class="btn btn-h btn-sm" style="justify-content:flex-start;font-size:11px" onclick="quick('Show top 10 critical alerts today')">→ Critical alerts</button>
+          <button class="btn btn-h btn-sm" style="justify-content:flex-start;font-size:11px" onclick="quick('List all open cases in SP-CM')">→ Open cases</button>
+          <button class="btn btn-h btn-sm" style="justify-content:flex-start;font-size:11px" onclick="quick('Brute force or credential attacks?')">→ Brute force check</button>
+          <button class="btn btn-h btn-sm" style="justify-content:flex-start;font-size:11px" onclick="quick('Most active MITRE ATT&CK techniques today?')">→ MITRE tactics</button>
+          <button class="btn btn-h btn-sm" style="justify-content:flex-start;font-size:11px" onclick="quick('Generate SOC executive summary for today')">→ Daily report</button>
+          <button class="btn btn-h btn-sm" style="justify-content:flex-start;font-size:11px" onclick="quick('Lateral movement or privilege escalation signs?')">→ Lateral movement</button>
+          <button class="btn btn-h btn-sm" style="justify-content:flex-start;font-size:11px" onclick="quick('How many active detection rules do we have in Wazuh? List the top 10 most fired rules today with their count and severity.')">→ Active rules count</button>
+        </div>
+      </div>
+      <div class="card"><div style="font-size:10px;font-family:var(--fm);color:#8ab0d0;line-height:2.3">
+        <div>OPERATOR: <span style="color:var(--c)" id="ctx-un">—</span></div>
+        <div>ENGINE: <span style="color:var(--c)">LLM</span></div>
+        <div>MCP SIEM: <span style="color:var(--g)">CONNECTED</span></div>
+        <div>MCP SP-CM: <span style="color:var(--g)">CONNECTED</span></div>
+      </div></div>
+    </div>
+  </div>
+</div>
+
+<!-- REPORTS -->
+<div class="page" id="page-reports">
+  <div class="ph"><h1>REPORTS</h1><p>SOCPilots AI executive reports</p></div>
+  <div class="g4 mb">
+    <div class="kpi cl"><div class="kpi-lbl">MTTD</div><div class="kpi-val" id="rpt-mttd">—</div><div class="kpi-sub">mean detect</div></div>
+    <div class="kpi cg"><div class="kpi-lbl">MTTR</div><div class="kpi-val" id="rpt-mttr">—</div><div class="kpi-sub">mean respond</div></div>
+    <div class="kpi cp"><div class="kpi-lbl">Open Cases</div><div class="kpi-val" id="rpt-cases">—</div><div class="kpi-sub">SP-CM</div></div>
+    <div class="kpi cr"><div class="kpi-lbl">Critical 24h</div><div class="kpi-val" id="rpt-crit">—</div><div class="kpi-sub">SIEM</div></div>
+  </div>
+  <div class="card"><div class="card-hd"><div class="card-ttl">AI EXECUTIVE SUMMARY</div><button class="btn btn-p btn-sm" onclick="genReport()">Generate Report</button></div><div id="rpt-body" style="font-size:12px;color:#8ab0d0;font-family:var(--fm)">Click "Generate Report" to get an AI summary via SOCPilots AI...</div></div>
+</div>
+
+<!-- SETTINGS -->
+<div class="page" id="page-settings">
+  <div class="ph"><h1>SETTINGS</h1><p>System configuration and diagnostics</p></div>
+  <div class="g2">
+    <div class="card"><div class="card-hd"><div class="card-ttl">DIAGNOSTICS</div><button class="btn btn-p btn-sm" onclick="testConn()">▶ Run Tests</button></div><div id="conn-res" style="font-size:11px;color:#8ab0d0;font-family:var(--fm)">Click "Run Tests"...</div></div>
+    <div class="card"><div class="card-hd"><div class="card-ttl">SYSTEM CONFIG</div></div>
+      <div style="font-size:11px;font-family:var(--fm);line-height:2.4;color:var(--txt2)">
+        <div style="color:#8ab0d0;font-size:9px;letter-spacing:1px">SIEM</div><div style="color:var(--c)">https://vmi3247591.contaboserver.net:9200</div>
+        <div style="color:#8ab0d0;font-size:9px;letter-spacing:1px;margin-top:8px">SP-CM</div><div>https://app.socpilots.com</div>
+        <div style="color:#8ab0d0;font-size:9px;letter-spacing:1px;margin-top:8px">SOCPilots AI</div><div>http://vmi3254460.contaboserver.net:5678</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</main>
+
+<!-- CREATE CASE MODAL -->
+<div class="modal-ov" id="modal-case">
+  <div class="modal">
+    <div class="modal-hd"><div class="modal-ttl">Create SP-CM Case</div><button class="modal-x" onclick="closeModal('modal-case')">✕</button></div>
+    <div class="modal-body">
+      <div class="fg"><label class="fl">Title *</label><input class="fi" id="cc-title" placeholder="Case title"></div>
+      <div class="fg"><label class="fl">Description</label><textarea class="fta" id="cc-desc" placeholder="Describe the incident..."></textarea></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div class="fg"><label class="fl">Severity</label><select class="fs" id="cc-sev"><option value="low">Low</option><option value="medium" selected>Medium</option><option value="high">High</option><option value="critical">Critical</option></select></div>
+        <div class="fg"><label class="fl">Tags</label><input class="fi" id="cc-tags" value="soc-pilots,siem"></div>
+      </div>
+    </div>
+    <div class="modal-ft"><button class="btn btn-h" onclick="closeModal('modal-case')">Cancel</button><button class="btn btn-p" onclick="createCase()">Create Case</button></div>
+  </div>
+
+<!-- ALERT DETAIL MODAL -->
+<div class="modal-ov" id="modal-alert">
+  <div class="modal" style="width:600px">
+    <div class="modal-hd"><div class="modal-ttl">Alert Detail</div><button class="modal-x" onclick="closeModal('modal-alert')">✕</button></div>
+    <div class="modal-body" id="modal-alert-body"></div>
+    <div class="modal-ft"><button class="btn btn-h" onclick="closeModal('modal-alert')">Close</button><button class="btn btn-p" onclick="escalateToCase()">Escalate → SP-CM Case</button></div>
+  </div>
+</div>
+
+<div id="toasts"></div>
+<div class="mtt" id="map-tt"></div>
+<script>
+// ═══════════════════════════════════════════════════════════════
+//  SOC PILOTS COMMAND CENTER — Main JS
+// ═══════════════════════════════════════════════════════════════
+
+// ─── INIT ────────────────────────────────────────────────────
+document.getElementById('sb-un').textContent    = CU.username;
+document.getElementById('sb-role').textContent  = CU.role.toUpperCase();
+document.getElementById('tb-un').textContent    = CU.username;
+document.getElementById('tb-av').textContent    = CU.username[0].toUpperCase();
+document.getElementById('chat-uname').textContent = CU.username;
+document.getElementById('ctx-un').textContent   = CU.username;
+const TOK = sessionStorage.getItem('soc_token');
+function logout(){ sessionStorage.clear(); location.replace('/login'); }
+
+// ─── UTC CLOCK ───────────────────────────────────────────────
+function tick(){
+  const n=new Date();
+  const pad=v=>String(v).padStart(2,'0');
+  const H=pad(n.getUTCHours()),M=pad(n.getUTCMinutes()),S=pad(n.getUTCSeconds());
+  const months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const days=['SUN','MON','TUE','WED','THU','FRI','SAT'];
+  document.getElementById('tb-hms').textContent=`${H}:${M}:${S}`;
+  document.getElementById('tb-date').textContent=`${days[n.getUTCDay()]}  ${months[n.getUTCMonth()]} ${n.getUTCDate()}, ${n.getUTCFullYear()}  UTC`;
+}
+tick(); setInterval(tick,1000);
+
+// ─── API ─────────────────────────────────────────────────────
+async function api(method,url,body=null){
+  try{
+    const r=await fetch(url,{method,headers:{'Content-Type':'application/json','Authorization':`Bearer ${TOK}`},body:body?JSON.stringify(body):null,signal:AbortSignal.timeout(160000)});
+    if(r.status===401){logout();return null;}
+    const data=await r.json().catch(()=>null);
+    if(r.status===429){
+      // Add 429 flag so caller knows
+      return {...(data||{}), _status:429, rateLimit:true};
+    }
+    return data;
+  }catch(e){
+    if(e.name==='TimeoutError'||e.name==='AbortError')return{_timeout:true,_timeoutMs:160000};
+    console.warn('[API]',e.message);return null;
+  }
+}
+const G=u=>api('GET',u), P=(u,b)=>api('POST',u,b);
+
+// ─── HELPERS ─────────────────────────────────────────────────
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function nl2br(s){return String(s||'').split('\n').join('<br>');}
+function mdBold(s){return s.replace(/\*\*(.+?)\*\*/g,'<strong style="color:var(--c)">$1</strong>');}
+
+// ═══════════════════════════════════════════════════════
+//  SOCPilots AI — Complete Markdown → Rich HTML Parser
+//  Handles: tables, code, headers, lists, bullets,
+//           badges, bold, italic, inline code, HR, emoji
+// ═══════════════════════════════════════════════════════
+function normalizeAIText(s){
+  if(!s||typeof s!=='string') return s;
+
+  // ALWAYS run normalization — GPT output can be partially flat
+  // even when it has some real newlines mixed in
+  let r=s;
+
+  // 1. Normalize literal \n escape sequences to real newlines
+  //    (sometimes n8n JSON sends double-escaped)
+  r=r.replace(/\\n/g,'\n');
+
+  // 2. Fix --- section separators run together with text
+  //    "text --- ### header" → "text\n---\n### header"
+  r=r.replace(/([^\n])\s*---\s*(?=#{1,4}|\*\*[A-Z])/g,'$1\n---\n');
+  r=r.replace(/([^\n])\s*---\s*([^\n-])/g,'$1\n---\n$2');
+
+  // 3. Separate ### header from table on same line
+  r=r.replace(/(#{1,4}[^|\n]+?)\s+(\|[^\n]+\|)/g,'$1\n$2');
+
+  // 4. Each table row on its own line (run 6x for long tables)
+  for(let i=0;i<6;i++) r=r.replace(/(\|[^\n]+\|)\s*(\|)/g,'$1\n$2');
+
+  // 5. Headers separated from preceding text
+  r=r.replace(/([^\n#\s])\s+(#{1,4}\s)/g,'$1\n\n$2');
+
+  // 6. ##### sub-headers on own lines when they follow text
+  r=r.replace(/([.!?:])\s+(#{1,5}\s+[*\w])/g,'$1\n\n$2');
+
+  // 7. Numbered list items
+  r=r.replace(/([.!?:])\s+(\d+\.\s+[A-Z*`\[🔍🚀⚠✅❌💡])/g,'$1\n$2');
+  r=r.replace(/(\d+\.)\s*\*\*([^\n]+)\*\*\s+(\d+\.)/g,'$1 **$2**\n$3');
+
+  // 8. Bullet items
+  r=r.replace(/([.!?:])\s+([-*]\s+[A-Z*`\[🔍🚀⚠✅❌💡\*\*])/g,'$1\n$2');
+
+  // 9. Clean up excessive blank lines (max 2)
+  r=r.replace(/\n{3,}/g,'\n\n');
+
+  return r.trim();
+}
+
+function parseAIMarkdown(raw){
+  if(!raw||typeof raw!=='string') return '';
+
+  // Normalize flat text before parsing
+  raw = normalizeAIText(raw);
+
+  // ── Inline styler ──────────────────────────────────
+  function styleInline(s){
+    return s
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      // **bold**
+      .replace(/\*\*(.+?)\*\*/g,'<strong style="color:var(--c);font-weight:700">$1</strong>')
+      // *italic*
+      .replace(/\*([^*\n]+?)\*/g,'<em style="color:var(--txt2)">$1</em>')
+      // `inline code`
+      .replace(/`([^`\n]+?)`/g,'<code style="background:rgba(0,229,255,.08);padding:2px 6px;border-radius:3px;font-family:var(--fm);color:var(--g);font-size:11px;border:1px solid rgba(0,229,255,.15)">$1</code>')
+      // ~~strikethrough~~
+      .replace(/~~(.+?)~~/g,'<del style="opacity:.5">$1</del>')
+      // [text](url)
+      .replace(/\[([^\]]+)\]\(([^)]+)\)/g,'<a href="$2" target="_blank" style="color:var(--c);text-decoration:underline">$1</a>');
+  }
+
+  // ── Severity badge ──────────────────────────────────
+  function sevBadgeStr(val){
+    const v=val.trim().toLowerCase();
+    if(/critical/i.test(v))return`<span class="badge critical">${esc(val.trim())}</span>`;
+    if(/high|level 1[2-5]/i.test(v))return`<span class="badge high">${esc(val.trim())}</span>`;
+    if(/medium|level [5-9]/i.test(v))return`<span class="badge medium">${esc(val.trim())}</span>`;
+    if(/low/i.test(v))return`<span class="badge low">${esc(val.trim())}</span>`;
+    if(/active|online|true positive|success/i.test(v))return`<span class="badge ok">${esc(val.trim())}</span>`;
+    if(/inactive|offline|false positive|fail/i.test(v))return`<span class="badge offline">${esc(val.trim())}</span>`;
+    if(/new/i.test(v))return`<span class="badge new">${esc(val.trim())}</span>`;
+    if(/progress/i.test(v))return`<span class="badge inprogress">${esc(val.trim())}</span>`;
+    return null;
+  }
+
+  // ── Number formatter ────────────────────────────────
+  function isNumeric(v){return /^[0-9][0-9,]*\.?[0-9]*$/.test(v.trim());}
+
+  // ── State ───────────────────────────────────────────
+  const lines   = raw.split('\n');
+  let   html    = '';
+  let   inTable = false;
+  let   inList  = false;
+  let   inOList = false;
+  let   inCode  = false;
+  let   codeLang= '';
+  let   codeContent = '';
+  let   blankCount  = 0;
+
+  const flushTable = ()=>{if(inTable){html+='</tbody></table></div>';inTable=false;}};
+  const flushList  = ()=>{if(inList) {html+='</ul>';inList=false;}};
+  const flushOList = ()=>{if(inOList){html+='</ol>';inOList=false;}};
+  const flushAll   = ()=>{flushTable();flushList();flushOList();};
+
+  for(let i=0;i<lines.length;i++){
+    const line = lines[i];
+    const trim = line.trim();
+
+    // ── CODE BLOCK ─────────────────────────────────
+    if(trim.startsWith('```')){
+      if(!inCode){
+        flushAll();
+        codeLang    = trim.slice(3).trim() || 'CODE';
+        codeContent = '';
+        inCode      = true;
+      } else {
+        html += `<div style="background:#060d1a;border:1px solid var(--b2);border-left:3px solid var(--c);border-radius:4px;padding:12px 14px;margin:8px 0;overflow-x:auto">
+          <div style="font-size:9px;color:var(--txt3);font-family:var(--fm);margin-bottom:8px;letter-spacing:1.5px;text-transform:uppercase;display:flex;align-items:center;gap:6px">
+            <span style="width:6px;height:6px;border-radius:50%;background:var(--c);display:inline-block"></span>${esc(codeLang)}
+          </div>
+          <pre style="margin:0;font-family:var(--fm);font-size:11px;color:#a8d8b0;white-space:pre-wrap;line-height:1.7;overflow-x:auto">${esc(codeContent.replace(/\n$/,''))}</pre>
+        </div>`;
+        inCode = false; codeContent = '';
+      }
+      continue;
+    }
+    if(inCode){ codeContent += line + '\n'; continue; }
+
+    // ── TABLE ROW ──────────────────────────────────
+    // Match ANY line starting with | (with or without closing pipe)
+    if(trim.startsWith('|') && trim.length > 1){
+      // ALWAYS skip separator lines: |---|---|  |------  |:---:|
+      // A separator has ONLY dashes, colons, pipes, spaces
+      if(trim.replace(/[|\-: ]/g,'').length === 0) continue;
+      // Also skip lone "|" or "|--"
+      if(trim.replace(/[| ]/g,'').length === 0) continue;
+      // Normalize: ensure closing pipe for parsing
+      const normalized = trim.endsWith('|') ? trim : trim + '|';
+      const cells = normalized.slice(1,-1).split('|').map(c=>c.trim());
+      // Skip if all cells are separators
+      if(cells.every(c=>/^[-:| ]*$/.test(c))) continue;
+      // Skip if only 1 empty cell
+      if(cells.length <= 1 && !cells[0]) continue;
+      if(!inTable){
+        flushList(); flushOList();
+        html += `<div style="overflow-x:auto;margin:10px 0;border-radius:4px;border:1px solid var(--b1)">
+          <table style="width:100%;border-collapse:collapse;font-size:12px;font-family:var(--fm);min-width:400px">
+          <thead style="background:rgba(0,229,255,.06)">
+          <tr>${cells.map(c=>`<th style="padding:9px 12px;text-align:left;border-bottom:2px solid var(--c);color:var(--c);font-weight:700;font-size:10px;letter-spacing:1px;white-space:nowrap">${styleInline(c)}</th>`).join('')}</tr>
+          </thead><tbody>`;
+        inTable = true;
+      } else {
+        const rowBg = cells.some(c=>/critical/i.test(c)) ? 'background:rgba(255,23,68,.04);' :
+                      cells.some(c=>/high/i.test(c))     ? 'background:rgba(255,109,0,.03);' : '';
+        html += `<tr style="${rowBg}hover:opacity:.8">`;
+        cells.forEach((c,ci)=>{
+          const badge = sevBadgeStr(c);
+          let cellHtml, cellStyle = 'padding:8px 12px;border-bottom:1px solid rgba(26,47,74,.5);color:var(--txt2);';
+          if(badge){
+            cellHtml  = badge;
+          } else if(isNumeric(c) && ci>0){
+            cellHtml  = `<span style="color:var(--c);font-weight:700">${esc(c)}</span>`;
+            cellStyle += 'text-align:right;';
+          } else if(c.match(/^CVE-\d{4}-\d+$/i)){
+            cellHtml  = `<span style="color:var(--y);font-weight:600;font-family:var(--fm)">${esc(c)}</span>`;
+          } else if(c.match(/^\d+\.\d+$/) && parseFloat(c)<=10){
+            // CVSS score
+            const score=parseFloat(c);
+            const sc=score>=9?'var(--r)':score>=7?'var(--o)':score>=4?'var(--y)':'var(--c)';
+            cellHtml=`<span style="color:${sc};font-weight:700">${esc(c)}</span>`;
+          } else {
+            cellHtml  = styleInline(c);
+          }
+          html += `<td style="${cellStyle}">${cellHtml}</td>`;
+        });
+        html += '</tr>';
+      }
+      continue;
+    }
+    if(inTable && !trim.startsWith('|')){ flushTable(); }
+
+    // ── HEADERS ────────────────────────────────────
+    const hMatch = trim.match(/^(#{1,4})\s+(.*)/);
+    if(hMatch){
+      flushAll();
+      const lvl = hMatch[1].length;
+      const txt = hMatch[2];
+      const cfg = {
+        1:{size:'20px',weight:'800',spacing:'2px',mt:'16px',color:'var(--txt)'},
+        2:{size:'16px',weight:'700',spacing:'1.5px',mt:'14px',color:'var(--txt)'},
+        3:{size:'13px',weight:'700',spacing:'1px',mt:'10px',color:'var(--c)'},
+        4:{size:'12px',weight:'600',spacing:'0.5px',mt:'8px',color:'var(--txt2)'},
+      }[lvl]||{size:'13px',weight:'700',spacing:'1px',mt:'10px',color:'var(--c)'};
+      html += `<div style="font-family:var(--fw);font-size:${cfg.size};font-weight:${cfg.weight};letter-spacing:${cfg.spacing};color:${cfg.color};margin-top:${cfg.mt};margin-bottom:5px;line-height:1.3">${styleInline(txt)}</div>`;
+      blankCount = 0;
+      continue;
+    }
+
+    // ── BULLET LIST  - / * / • ──────────────────────
+    const bulletMatch = trim.match(/^([-*•➤►▸])\s+(.*)/);
+    if(bulletMatch){
+      flushOList();
+      if(!inList){
+        html += '<ul style="margin:6px 0 6px 4px;display:flex;flex-direction:column;gap:4px;padding:0;list-style:none">';
+        inList = true;
+      }
+      const content = bulletMatch[2];
+      html += `<li style="display:flex;gap:8px;align-items:flex-start;font-size:12px;font-family:var(--fm);color:var(--txt2);line-height:1.6">
+        <span style="color:var(--c);flex-shrink:0;margin-top:2px">▸</span>
+        <span>${styleInline(content)}</span>
+      </li>`;
+      blankCount = 0;
+      continue;
+    }
+    flushList();
+
+    // ── NUMBERED LIST  1. 2. ───────────────────────
+    const olMatch = trim.match(/^(\d+)[.)]\s+(.*)/);
+    if(olMatch){
+      flushList();
+      if(!inOList){
+        html += '<ol style="margin:6px 0 6px 4px;display:flex;flex-direction:column;gap:4px;padding:0;list-style:none">';
+        inOList = true;
+      }
+      html += `<li style="display:flex;gap:8px;align-items:flex-start;font-size:12px;font-family:var(--fm);color:var(--txt2);line-height:1.6">
+        <span style="color:var(--c);font-weight:700;flex-shrink:0;min-width:20px;margin-top:2px">${olMatch[1]}.</span>
+        <span>${styleInline(olMatch[2])}</span>
+      </li>`;
+      blankCount = 0;
+      continue;
+    }
+    flushOList();
+
+    // ── HORIZONTAL RULE ────────────────────────────
+    if(/^(-{3,}|={3,}|\*{3,})$/.test(trim)){
+      // If we're in a table, this is a stray --- → skip it
+      if(inTable){ continue; }
+      flushAll();
+      html += '<div style="height:1px;background:linear-gradient(90deg,transparent,var(--b2),transparent);margin:12px 0"></div>';
+      continue;
+    }
+
+    // ── BLOCKQUOTE > ───────────────────────────────
+    if(trim.startsWith('> ')){
+      flushAll();
+      html += `<div style="border-left:3px solid var(--c);padding:6px 12px;margin:6px 0;background:var(--cdim);border-radius:0 4px 4px 0;font-size:12px;font-family:var(--fm);color:var(--txt2);font-style:italic">${styleInline(trim.slice(2))}</div>`;
+      continue;
+    }
+
+    // ── EMPTY LINE ─────────────────────────────────
+    if(!trim){
+      blankCount++;
+      if(blankCount===1){ html += '<div style="height:6px"></div>'; }
+      flushTable();
+      continue;
+    }
+    blankCount = 0;
+
+    // ── KEY: VALUE (definition-style lines) ────────
+    const kvMatch = trim.match(/^\*\*([^*:]+)[:：]\*\*\s*(.*)/);
+    if(kvMatch){
+      html += `<div style="display:flex;gap:8px;margin:3px 0;font-size:12px;font-family:var(--fm);flex-wrap:wrap">
+        <span style="color:var(--c);font-weight:700;white-space:nowrap">${esc(kvMatch[1])}:</span>
+        <span style="color:var(--txt2)">${styleInline(kvMatch[2])}</span>
+      </div>`;
+      continue;
+    }
+
+    // ── ALERT/NOTE LINES (🚀 ⚠️ ✅ ❌ 💡 🔴 🟡 etc) ──
+    const emojiStart = /^[🚀⚠️✅❌💡🔴🟡🟢🔵🔐🌐⚡🦠📋🎯📤📁🔍🛡️ℹ️⏱️⏳]/.test(trim);
+    if(emojiStart){
+      html += `<div style="display:flex;gap:8px;margin:4px 0;font-size:12px;font-family:var(--fm);color:var(--txt2);line-height:1.6;padding:5px 8px;background:rgba(0,229,255,.04);border-radius:3px">${styleInline(trim)}</div>`;
+      continue;
+    }
+
+    // ── SEPARATOR: bold heading on its own line ─────
+    if(/^_{3,}$/.test(trim)){
+      html += '<div style="height:1px;background:var(--b1);margin:10px 0"></div>';
+      continue;
+    }
+
+    // ── PARAGRAPH ──────────────────────────────────
+    // Last safety net: skip any line that is just pipes and dashes
+    if(/^[|\-: ]+$/.test(trim)) continue;
+    html += `<div style="font-size:12px;font-family:var(--fm);color:var(--txt2);line-height:1.75;margin:2px 0">${styleInline(trim)}</div>`;
+  }
+
+  // ── FLUSH remaining open tags ───────────────────
+  flushTable(); flushList(); flushOList();
+  if(inCode){
+    html += `<pre style="background:#060d1a;border:1px solid var(--b2);border-radius:4px;padding:12px;font-family:var(--fm);font-size:11px;color:#a8d8b0;white-space:pre-wrap;margin:8px 0">${esc(codeContent)}</pre>`;
+  }
+
+  return html || `<div style="font-size:12px;font-family:var(--fm);color:var(--txt2)">${esc(raw)}</div>`;
+}
+
+function fmtAI(s){return parseAIMarkdown(s);}
+function fmtDate(ts){
+  if(!ts)return'N/A';
+  try{const d=new Date(typeof ts==='number'?ts:ts),diff=Date.now()-d.getTime();
+    if(diff<3600000)return Math.floor(diff/60000)+'m ago';
+    if(diff<86400000)return Math.floor(diff/3600000)+'h ago';
+    if(diff<604800000)return Math.floor(diff/86400000)+'d ago';
+    return d.toLocaleDateString();}catch(e){return String(ts).slice(0,16);}
+}
+function sbadge(s){
+  const m={critical:'critical',high:'high',medium:'medium',low:'low',active:'ok',inactive:'offline',
+    new:'new',inprogress:'inprogress','in progress':'inprogress',resolved:'resolved',closed:'resolved',
+    truepositive:'truepositive','true positive':'truepositive',
+    falsepositive:'falsepositive','false positive':'falsepositive',duplicate:'duplicate',indeterminate:'duplicate'};
+  return m[(s||'').toLowerCase().replace(/[\s_-]/g,'')]||'low';
+}
+function spin(t='Loading...'){return`<div class="loading"><div class="spin"></div><p>${t}</p></div>`;}
+function empty(t){return`<div class="empty"><p>${esc(t)}</p></div>`;}
+function errBnr(t){return`<div class="banner err">${esc(t)}</div>`;}
+
+// ─── NAV ─────────────────────────────────────────────────────
+let CUR='dashboard';
+const LOAD_MAP={dashboard:loadDashboard,agents:loadAgents,alerts:loadAlerts,rules:loadRules,'create-rules':loadCustomRules,investigation:()=>{loadInvAlerts();loadAutoTriageSettings();loadInvHistory();},
+  cases:loadCases,'hive-alerts':loadHiveAlerts,threatmap:loadThreatMap,
+  ioc:loadIOCQuick,reports:loadReportMetrics};
+
+function go(p){
+  document.querySelectorAll('.page').forEach(x=>x.classList.remove('active'));
+  document.querySelectorAll('.sbi').forEach(x=>x.classList.remove('on'));
+  document.getElementById(`page-${p}`)?.classList.add('active');
+  document.querySelectorAll('.sbi').forEach(x=>{if(x.getAttribute('onclick')?.includes(`'${p}'`))x.classList.add('on');});
+  CUR=p; LOAD_MAP[p]?.();
+}
+function refresh(){LOAD_MAP[CUR]?.();}
+
+// ─── STATUS CHECK ─────────────────────────────────────────────
+async function checkStatus(){
+  const d=await G('/api/status');
+  const set=(lid,lbid,ok,lbl)=>{
+    const l=document.getElementById(lid),lb=document.getElementById(lbid);
+    if(l)l.className=`led ${ok?'g':'r'}`;
+    if(lb)lb.textContent=lbl;
+  };
+  if(!d){['l-siem','l-spcm','l-ai'].forEach(id=>{const el=document.getElementById(id);if(el)el.className='led r';});return;}
+  set('l-siem','lb-siem',d.opensearch?.ok,`SIEM${d.opensearch?.ok?` ${d.opensearch.latency||0}ms`:' ✗'}`);
+  set('l-spcm','lb-spcm',d.thehive?.ok,   `SP-CM${d.thehive?.ok?` ${d.thehive.latency||0}ms`:' ✗'}`);
+  set('l-ai',  'lb-ai',  d.n8n?.ok,       `SOCPilots AI${d.n8n?.ok?'':' ✗'}`);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  WORLD MAP ENGINE — Equirectangular projection
+// ═══════════════════════════════════════════════════════════════
+// More accurate continent outlines
+const CONTINENTS=[
+  // North America (incl. Central America)
+  [[-168,72],[-140,70],[-125,68],[-110,68],[-95,68],[-85,65],[-78,62],[-70,60],[-65,58],[-62,54],[-60,50],[-65,44],[-68,42],[-70,38],[-76,36],[-80,32],[-82,28],[-84,24],[-90,20],[-86,16],[-83,12],[-78,8],[-76,10],[-80,14],[-86,20],[-90,16],[-92,18],[-96,20],[-98,22],[-100,26],[-104,30],[-108,34],[-114,30],[-118,26],[-118,30],[-122,36],[-124,40],[-128,44],[-132,52],[-140,58],[-148,60],[-152,58],[-160,62],[-164,66],[-168,70]],
+  // Greenland
+  [[-44,84],[-20,84],[-16,80],[-20,76],[-30,76],[-40,78],[-48,82],[-44,84]],
+  // South America
+  [[-78,12],[-72,12],[-68,10],[-62,8],[-52,4],[-50,0],[-48,-4],[-46,-8],[-40,-14],[-38,-18],[-38,-22],[-42,-22],[-44,-26],[-50,-30],[-52,-34],[-58,-38],[-62,-42],[-66,-46],[-68,-50],[-72,-52],[-68,-56],[-64,-52],[-60,-52],[-56,-46],[-52,-42],[-50,-38],[-48,-30],[-48,-26],[-44,-22],[-42,-18],[-40,-14],[-42,-10],[-48,-8],[-52,-4],[-54,0],[-56,4],[-62,6],[-64,2],[-70,-2],[-74,-4],[-78,0],[-80,4],[-78,8],[-76,10],[-78,12]],
+  // Europe
+  [[-10,36],[-8,38],[-8,42],[-4,44],[0,44],[4,44],[8,44],[12,46],[16,48],[20,48],[24,48],[26,46],[28,44],[30,42],[28,40],[26,38],[22,38],[18,38],[14,38],[10,38],[6,40],[2,42],[0,44],[-4,48],[-6,48],[-8,52],[-6,54],[-2,54],[2,54],[6,56],[8,58],[12,60],[18,62],[24,64],[28,66],[26,68],[22,70],[16,70],[12,68],[8,66],[4,62],[2,58],[0,56],[-4,54],[-6,54],[-8,52],[-10,48],[-8,44],[-8,38],[-10,36]],
+  // Scandinavia
+  [[5,58],[8,56],[12,56],[16,58],[20,60],[24,62],[26,66],[22,68],[18,70],[14,72],[10,70],[8,66],[6,62],[5,58]],
+  // Africa
+  [[-18,16],[-16,20],[-18,24],[-14,26],[-10,28],[-6,30],[-2,30],[4,32],[8,32],[12,30],[16,28],[20,26],[24,22],[28,18],[32,14],[36,10],[40,8],[42,12],[44,10],[42,8],[38,4],[36,0],[34,-4],[32,-8],[30,-14],[28,-18],[28,-24],[26,-30],[24,-34],[26,-38],[28,-40],[30,-40],[32,-38],[34,-34],[36,-28],[34,-22],[34,-16],[36,-10],[38,-4],[40,0],[40,4],[36,8],[34,12],[30,14],[26,16],[22,16],[18,16],[14,14],[10,12],[6,10],[4,6],[0,4],[-4,4],[-8,4],[-12,8],[-14,10],[-16,12],[-18,16]],
+  // Asia (mainland)
+  [[26,42],[30,44],[36,46],[42,50],[48,54],[54,58],[60,62],[66,66],[72,68],[80,68],[88,68],[96,66],[100,62],[104,58],[110,56],[116,54],[122,52],[128,50],[132,48],[136,44],[138,40],[136,36],[132,34],[130,30],[126,26],[122,22],[118,18],[114,14],[110,10],[106,4],[104,0],[100,-4],[96,-6],[92,-2],[90,4],[88,8],[86,14],[84,18],[82,22],[78,26],[74,28],[70,22],[66,16],[62,12],[60,14],[56,18],[52,22],[50,26],[46,28],[44,26],[40,26],[38,30],[34,32],[32,36],[28,38],[26,40]],
+  // Indian Subcontinent
+  [[62,22],[66,18],[70,14],[72,8],[76,6],[80,8],[82,12],[84,16],[82,20],[78,24],[74,28],[70,22],[66,18],[62,22]],
+  // Southeast Asia
+  [[100,0],[102,-4],[104,-6],[106,-8],[108,-6],[112,-2],[116,2],[120,4],[122,8],[118,12],[114,16],[110,20],[106,16],[104,10],[100,4],[100,0]],
+  // Japan
+  [[130,34],[132,36],[136,40],[140,42],[140,38],[138,34],[134,32],[130,32],[130,34]],
+  // Australia
+  [[114,-22],[118,-20],[122,-18],[128,-16],[132,-12],[136,-12],[140,-14],[144,-16],[148,-20],[152,-24],[152,-28],[150,-32],[148,-36],[144,-38],[140,-38],[134,-36],[128,-32],[122,-28],[116,-26],[114,-22]],
+  // New Zealand
+  [[168,-46],[170,-44],[172,-42],[174,-40],[172,-38],[170,-36],[168,-36],[166,-44],[168,-46]],
+];
+
+const GEO_HEURISTIC=ip=>{
+  const cache=GEO_HEURISTIC._c||(GEO_HEURISTIC._c={});
+  if(cache[ip])return cache[ip];
+  const known={'2.57.122.189':{lat:48.86,lon:2.35,c:'France'},'45.148.10.157':{lat:52.37,lon:4.90,c:'Netherlands'},'178.238.230.45':{lat:48.21,lon:16.37,c:'Austria'},'37.60.237.66':{lat:51.51,lon:-0.13,c:'UK'},'172.31.73.231':{lat:39.04,lon:-76.64,c:'USA'}};
+  if(known[ip])return cache[ip]=known[ip];
+  const f=parseInt((ip||'0').split('.')[0]);
+  let g;
+  if(f<=50)g={lat:48+Math.random()*20,lon:5+Math.random()*30,c:'Europe'};
+  else if(f<=80)g={lat:38+Math.random()*15,lon:-80+Math.random()*50,c:'N.America'};
+  else if(f<=120)g={lat:30+Math.random()*25,lon:70+Math.random()*50,c:'Asia'};
+  else if(f<=160)g={lat:20+Math.random()*30,lon:20+Math.random()*60,c:'Africa/Mid-East'};
+  else if(f<=200)g={lat:35+Math.random()*20,lon:100+Math.random()*40,c:'E.Asia'};
+  else g={lat:(Math.random()-.4)*100,lon:(Math.random()-.5)*320,c:'Unknown'};
+  return cache[ip]=g;
+};
+
+function drawWorldMap(canvasId){
+  const cv=document.getElementById(canvasId);
+  if(!cv)return null;
+  // Force full width of parent container
+  const parent=cv.parentElement;
+  const W=parent?parent.clientWidth||800:800;
+  const H=parseInt(cv.getAttribute('height'))||200;
+  cv.width=W; cv.height=H;
+  cv.style.width=W+'px'; cv.style.height=H+'px';
+  const ctx=cv.getContext('2d');
+  // Deep space background
+  ctx.fillStyle='#060d1a'; ctx.fillRect(0,0,W,H);
+  // Faint grid
+  ctx.strokeStyle='rgba(0,229,255,.04)'; ctx.lineWidth=.4;
+  for(let lon=-180;lon<=180;lon+=30){const x=((lon+180)/360)*W;ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
+  for(let lat=-90;lat<=90;lat+=30){const y=((90-lat)/180)*H;ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
+  // Equator highlight
+  ctx.strokeStyle='rgba(0,229,255,.08)'; ctx.lineWidth=.8;
+  const eq=((90)/180)*H; ctx.beginPath();ctx.moveTo(0,eq);ctx.lineTo(W,eq);ctx.stroke();
+  // Draw continent paths
+  CONTINENTS.forEach(pts=>{
+    ctx.beginPath();
+    pts.forEach(([lon,lat],i)=>{
+      const x=((lon+180)/360)*W, y=((90-lat)/180)*H;
+      i?ctx.lineTo(x,y):ctx.moveTo(x,y);
+    });
+    ctx.closePath();
+    ctx.fillStyle='rgba(14,36,72,.92)'; ctx.fill();
+    ctx.strokeStyle='rgba(0,229,255,.22)'; ctx.lineWidth=.8; ctx.stroke();
+  });
+  const ll2xy=(lat,lon)=>({x:((lon+180)/360)*W,y:((90-lat)/180)*H});
+  return{ctx,W,H,ll2xy};
+}
+
+// Country flag emoji lookup
+const COUNTRY_FLAGS={
+  'France':'🇫🇷','Netherlands':'🇳🇱','Austria':'🇦🇹','UK':'🇬🇧','USA':'🇺🇸',
+  'Germany':'🇩🇪','Russia':'🇷🇺','China':'🇨🇳','Japan':'🇯🇵','India':'🇮🇳',
+  'Brazil':'🇧🇷','Australia':'🇦🇺','Canada':'🇨🇦','Italy':'🇮🇹','Spain':'🇪🇸',
+  'Turkey':'🇹🇷','Poland':'🇵🇱','Ukraine':'🇺🇦','Romania':'🇷🇴','Singapore':'🇸🇬',
+  'Korea':'🇰🇷','Vietnam':'🇻🇳','Indonesia':'🇮🇩','Malaysia':'🇲🇾','Thailand':'🇹🇭',
+  'Egypt':'🇪🇬','South Africa':'🇿🇦','Nigeria':'🇳🇬','Iran':'🇮🇷','Pakistan':'🇵🇰',
+  'Europe':'🌍','N.America':'🌎','Americas':'🌎','Asia':'🌏','Africa/Mid-East':'🌍',
+  'E.Asia':'🌏','Unknown':'🌐',
+};
+function getFlag(country){return COUNTRY_FLAGS[country]||'🌐';}
+
+// TARGET: your organization's server location (Contabo Germany)
+const TARGET_GEO={lat:51.5,lon:9.5,label:'YOUR ORG'};
+
+// Animated arc canvas overlay
+let _arcAnimFrame=null;
+const _arcs=[];
+
+function startArcAnimation(canvasId,ll2xy,W,H,dots){
+  if(_arcAnimFrame)cancelAnimationFrame(_arcAnimFrame);
+  // Overlay canvas for arcs
+  let arcCv=document.getElementById(canvasId+'_arcs');
+  if(!arcCv){
+    arcCv=document.createElement('canvas');
+    arcCv.id=canvasId+'_arcs';
+    arcCv.width=W; arcCv.height=H;
+    arcCv.style.cssText=`position:absolute;inset:0;pointer-events:none;width:${W}px;height:${H}px`;
+    const parent=document.getElementById(canvasId)?.parentElement;
+    if(parent)parent.appendChild(arcCv);
+  }
+  arcCv.width=W; arcCv.height=H;
+  const ctx=arcCv.getContext('2d');
+  const tgt=ll2xy(TARGET_GEO.lat,TARGET_GEO.lon);
+
+  // Build arc data from dots
+  const arcData=dots.slice(0,20).map(d=>{
+    const src=ll2xy(d.lat,d.lon);
+    return{sx:src.x,sy:src.y,tx:tgt.x,ty:tgt.y,progress:Math.random(),speed:0.003+Math.random()*0.004,color:d.count>10?'#ff1744':d.count>5?'#ff6d00':'#ffab00',count:d.count,ip:d.ip||'',country:d.c||''};
+  });
+
+  function easeInOut(t){return t<0.5?2*t*t:1-Math.pow(-2*t+2,2)/2;}
+  function drawArc(ctx,sx,sy,tx,ty,prog,color){
+    // Quadratic curve arc
+    const mx=(sx+tx)/2, my=Math.min(sy,ty)-Math.abs(tx-sx)*0.4;
+    const t=easeInOut(prog);
+    // Compute point on curve
+    const bx=(1-t)*(1-t)*sx+2*(1-t)*t*mx+t*t*tx;
+    const by=(1-t)*(1-t)*sy+2*(1-t)*t*my+t*t*ty;
+    // Draw partial arc
+    ctx.beginPath();
+    const steps=30; let px=sx,py=sy;
+    for(let i=0;i<=Math.floor(prog*steps);i++){
+      const tt2=i/steps;
+      const bt=easeInOut(tt2);
+      const qx=(1-bt)*(1-bt)*sx+2*(1-bt)*bt*mx+bt*bt*tx;
+      const qy=(1-bt)*(1-bt)*sy+2*(1-bt)*bt*my+bt*bt*ty;
+      i===0?ctx.moveTo(qx,qy):ctx.lineTo(qx,qy);
+    }
+    const alpha=0.5+prog*0.5;
+    ctx.strokeStyle=color.replace(')',`, ${alpha})`).replace('rgb(','rgba(').replace('#','rgba(').replace(/rgba\(([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})/i,(_,r,g,b)=>`rgba(${parseInt(r,16)},${parseInt(g,16)},${parseInt(b,16)}`);
+    ctx.strokeStyle=color+(alpha<1?'bb':'ff');
+    ctx.lineWidth=1.5; ctx.stroke();
+    // Draw head dot
+    ctx.beginPath(); ctx.arc(bx,by,3,0,Math.PI*2);
+    ctx.fillStyle=color; ctx.fill();
+    ctx.shadowBlur=8; ctx.shadowColor=color; ctx.fill(); ctx.shadowBlur=0;
+  }
+
+  function animate(){
+    ctx.clearRect(0,0,W,H);
+    arcData.forEach(a=>{
+      drawArc(ctx,a.sx,a.sy,a.tx,a.ty,a.progress,a.color);
+      a.progress+=a.speed;
+      if(a.progress>1.05){a.progress=0;a.speed=0.003+Math.random()*0.004;}
+    });
+    _arcAnimFrame=requestAnimationFrame(animate);
+  }
+  animate();
+}
+
+function renderDots(dots,dotsId,ll2xy,W,H){
+  const container=document.getElementById(dotsId); if(!container)return;
+  container.innerHTML='';
+  const tt=document.getElementById('map-tt');
+
+  dots.forEach(d=>{
+    const{x,y}=ll2xy(d.lat,d.lon);
+    if(x<4||x>W-4||y<4||y>H-4)return;
+    const size=Math.min(6+Math.log2((d.count||1)+1)*2,20);
+    const flag=getFlag(d.c||d.country||'');
+
+    const el=document.createElement('div');
+    el.className='mdot';
+    const color=d.count>20?'var(--r)':d.count>10?'var(--o)':'var(--r)';
+    el.style.cssText=`left:${x}px;top:${y}px;width:${size}px;height:${size}px;background:${color};box-shadow:0 0 ${size+4}px ${color};color:${color}`;
+
+    if(tt){
+      el.addEventListener('mouseenter',e=>{
+        tt.style.display='block';
+        tt.style.left=(e.clientX+14)+'px';
+        tt.style.top=(e.clientY-10)+'px';
+        tt.innerHTML=`<div style="display:flex;align-items:center;gap:7px;margin-bottom:4px">
+          <span style="font-size:20px">${flag}</span>
+          <div>
+            <div style="color:var(--r);font-weight:700;font-size:12px">${esc(d.ip||'Unknown IP')}</div>
+            <div style="color:#8ab0d0;font-size:10px">${esc(d.c||d.country||'Unknown Country')}</div>
+          </div>
+        </div>
+        <div style="font-size:10px;color:#d8eaff">Attack Hits: <strong style="color:var(--r)">${d.count||1}</strong></div>`;
+      });
+      el.addEventListener('mouseleave',()=>tt.style.display='none');
+    }
+    container.appendChild(el);
+  });
+
+  // Start arc animation — pick the canvas from container's parent
+  const parent=container.parentElement;
+  if(parent){
+    const cv=parent.querySelector('canvas');
+    if(cv&&ll2xy){
+      startArcAnimation(cv.id,ll2xy,W,H,dots);
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  DASHBOARD
+// ═══════════════════════════════════════════════════════════════
+let chTime=null,chSev=null,_dashMap=null;
+
+async function loadDashboard(){
+  document.getElementById('dash-sub').textContent='Loading from SIEM + SP-CM...';
+  const d=await G('/api/dashboard');
+  if(!d||d.error){document.getElementById('dash-sub').textContent='Error connecting — check Settings';return;}
+  document.getElementById('dash-sub').textContent=`SIEM + SP-CM connected`;
+  document.getElementById('dash-updated').textContent=`Updated ${new Date().toLocaleTimeString('en',{hour12:false})} UTC`;
+  const set=(id,v)=>{const el=document.getElementById(id);if(el)el.textContent=v??'—';};
+  set('k-total',d.totalAlerts?.toLocaleString());
+  set('k-24h',d.alerts24h?.toLocaleString());
+  set('k-crit',d.criticalAlerts?.toLocaleString());
+  set('k-high',d.highAlerts?.toLocaleString());
+  set('k-cases',d.openCases?.toLocaleString());
+  // Load closed cases count
+  (async()=>{
+    try{
+      const [tp,fp,dup]=await Promise.all([G('/api/cases?status=TruePositive'),G('/api/cases?status=FalsePositive'),G('/api/cases?status=Duplicate')]);
+      const closed=(tp?.cases?.length||0)+(fp?.cases?.length||0)+(dup?.cases?.length||0);
+      const el=document.getElementById('k-closed-cases');
+      if(el)el.textContent=closed.toLocaleString();
+    }catch(e){}
+  })();
+  set('k-agents',d.totalAgents?.toLocaleString());
+  document.getElementById('n-alerts').textContent=d.alerts24h||'—';
+  document.getElementById('n-cases').textContent=d.openCases||'—';
+  // Agent widgets — populated from /api/agents separately
+  loadAgentWidgets();
+  renderTimelineChart(d.timeline||[]);
+  renderSevChart(d.sevBreakdown||{});
+  renderSevBars(d.sevBreakdown||{},d.alerts24h||1);
+  // Init map — defer to ensure container has width
+  if(!_dashMap){
+    requestAnimationFrame(()=>{
+      _dashMap=drawWorldMap('world-canvas');
+    });
+  } else {
+    // Redraw if window was resized
+    const cv=document.getElementById('world-canvas');
+    if(cv&&cv.parentElement){
+      const newW=cv.parentElement.clientWidth;
+      if(Math.abs(newW - _dashMap.W) > 20) _dashMap=drawWorldMap('world-canvas');
+    }
+  }
+  loadTopAgents(); loadTopIPs(); loadTopRules(); loadMitre(); loadRecentCritical();
+}
+
+function renderTimelineChart(tl){
+  const cv=document.getElementById('ch-time'); if(!cv)return;
+  if(chTime)chTime.destroy();
+  const labels=tl.map(t=>{const h=new Date(t.time).getUTCHours();return (h<10?'0'+h:h)+':00';});
+  const mkDs=(key,color,label)=>({
+    label,
+    data:tl.map(t=>t[key]||0),
+    backgroundColor:color,
+    borderRadius:1,
+    borderWidth:0,
+    stack:'s',
+  });
+  chTime=new Chart(cv,{
+    type:'bar',
+    data:{labels,datasets:[
+      mkDs('critical','rgba(255,23,68,.92)','Critical'),
+      mkDs('high','rgba(255,109,0,.88)','High'),
+      mkDs('medium','rgba(255,171,0,.80)','Medium'),
+      mkDs('low','rgba(0,180,220,.65)','Low'),
+    ]},
+    options:{
+      responsive:true,
+      plugins:{
+        legend:{
+          display:true,
+          position:'top',
+          align:'end',
+          labels:{color:'#d8eaff',font:{size:10,family:'JetBrains Mono'},boxWidth:10,boxHeight:10,padding:12,
+            generateLabels:chart=>chart.data.datasets.map((ds,i)=>({text:ds.label,fillStyle:ds.backgroundColor,strokeStyle:'transparent',index:i,fontColor:'#d8eaff'}))
+          }
+        },
+        tooltip:{mode:'index',intersect:false,callbacks:{title:items=>'Hour: '+items[0].label}}
+      },
+      scales:{
+        x:{stacked:true,ticks:{color:'#8ab0d0',font:{size:9,family:'JetBrains Mono'},maxTicksLimit:10},grid:{color:'rgba(40,80,130,.4)'}},
+        y:{stacked:true,ticks:{color:'#8ab0d0',font:{size:9,family:'JetBrains Mono'}},grid:{color:'rgba(40,80,130,.4)'}},
+      }
+    }
+  });
+}
+
+function renderSevChart(sb){
+  const cv=document.getElementById('ch-sev'); if(!cv)return;
+  if(chSev)chSev.destroy();
+  const data=[sb.critical||0,sb.high||0,sb.medium||0,sb.low||0];
+  const colors=['rgba(255,23,68,.85)','rgba(255,109,0,.8)','rgba(255,171,0,.75)','rgba(0,229,255,.6)'];
+  const labels=['Critical','High','Medium','Low'];
+  chSev=new Chart(cv,{type:'doughnut',data:{labels,datasets:[{data,backgroundColor:colors,borderColor:'#091524',borderWidth:2,hoverOffset:5}]},
+    options:{responsive:true,cutout:'65%',plugins:{legend:{display:false}}}});
+  const leg=document.getElementById('sev-leg');
+  if(leg)leg.innerHTML=labels.map((l,i)=>`<div style="display:flex;align-items:center;gap:5px;font-size:10px;font-family:var(--fm)"><div style="width:8px;height:8px;border-radius:2px;background:${colors[i]}"></div><span style="color:#8ab0d0">${l}</span><span style="margin-left:auto;color:var(--txt)">${(data[i]||0).toLocaleString()}</span></div>`).join('');
+}
+
+function renderSevBars(sb,total){
+  const el=document.getElementById('d-sevbars'); if(!el)return;
+  const items=[{l:'Critical',v:sb.critical||0,c:'var(--r)'},{l:'High',v:sb.high||0,c:'var(--o)'},{l:'Medium',v:sb.medium||0,c:'var(--y)'},{l:'Low',v:sb.low||0,c:'var(--c)'}];
+  el.innerHTML=items.map(i=>{
+    const pct=total>0?Math.round((i.v/total)*100):0;
+    return`<div style="margin-bottom:12px"><div style="display:flex;justify-content:space-between;margin-bottom:4px;font-size:11px;font-family:var(--fm)"><span style="color:${i.c}">${i.l}</span><span style="color:var(--txt2)">${i.v.toLocaleString()} <span style="color:#8ab0d0">(${pct}%)</span></span></div><div class="sbar-bg"><div class="sbar" style="width:${pct}%;background:${i.c}"></div></div></div>`;
+  }).join('');
+}
+
+async function loadTopAgents(){
+  const data=await G('/api/stats/top-agents'); const el=document.getElementById('d-agents');
+  if(!data?.length){el.innerHTML=empty('No data');return;}
+  el.innerHTML=`<div style="display:flex;flex-direction:column;gap:6px">${data.slice(0,7).map((a,i)=>`<div style="display:flex;align-items:center;gap:8px"><span style="font-size:9px;color:var(--txt4);font-family:var(--fm);min-width:12px">${i+1}</span><div class="led g" style="flex-shrink:0"></div><span style="flex:1;font-size:12px;font-family:var(--fm)">${esc(a.name)}</span><span style="font-size:10px;color:var(--c);font-family:var(--fm)">${(a.count||0).toLocaleString()}</span></div>`).join('')}</div>`;
+}
+
+async function loadTopIPs(){
+  const data=await G('/api/stats/top-ips'); const el=document.getElementById('d-ips');
+  if(!data?.length){el.innerHTML=empty('No data');return;}
+  el.innerHTML=`<div style="display:flex;flex-direction:column;gap:6px">${data.slice(0,7).map((d,i)=>`<div style="display:flex;align-items:center;gap:8px"><span style="font-size:9px;color:var(--txt4);font-family:var(--fm);min-width:12px">${i+1}</span><div style="width:6px;height:6px;border-radius:50%;background:var(--r);flex-shrink:0"></div><span style="flex:1;font-size:12px;font-family:var(--fm)">${esc(d.ip)}</span><span class="badge high" style="font-size:9px">${d.count}</span></div>`).join('')}</div>`;
+  // Render map dots
+  if(_dashMap){
+    const dots=data.slice(0,25).map(d=>{const g=GEO_HEURISTIC(d.ip);return{...g,ip:d.ip,count:d.count,c:g.c};});
+    renderDots(dots,'map-dots',_dashMap.ll2xy,_dashMap.W,_dashMap.H);
+    const el2=document.getElementById('map-hit-cnt');
+    if(el2)el2.textContent=`${dots.length} IPs`;
+  }
+}
+
+async function loadTopRules(){
+  const data=await G('/api/stats/top-rules'); const el=document.getElementById('d-rules');
+  if(!data?.length){el.innerHTML=empty('No data');return;}
+  el.innerHTML=`<div style="display:flex;flex-direction:column;gap:6px">${data.slice(0,7).map((r,i)=>`<div style="display:flex;align-items:center;gap:7px"><span style="font-size:9px;color:var(--txt4);font-family:var(--fm);min-width:12px">${i+1}</span><span class="badge ${sbadge(r.severity)}" style="font-size:8px;flex-shrink:0">${r.level}</span><span style="flex:1;font-size:10px;font-family:var(--fm);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.desc)}</span><span style="font-size:9px;color:#8ab0d0;font-family:var(--fm)">${r.count}</span></div>`).join('')}</div>`;
+}
+
+async function loadMitre(){
+  const data=await G('/api/stats/mitre'); const el=document.getElementById('d-mitre');
+  if(!data?.tactics?.length){el.innerHTML=empty('No MITRE data');return;}
+  el.innerHTML=`<div style="margin-bottom:8px"><div style="font-size:9px;color:#8ab0d0;font-family:var(--fm);margin-bottom:5px;letter-spacing:1px">TACTICS</div><div style="display:flex;flex-wrap:wrap;gap:4px">${data.tactics.slice(0,8).map(t=>`<span class="badge medium" style="font-size:8px">${esc(t.name)} <span style="color:#8ab0d0">${t.count}</span></span>`).join('')}</div></div><div><div style="font-size:9px;color:#8ab0d0;font-family:var(--fm);margin-bottom:5px;letter-spacing:1px">TECHNIQUES</div><div style="display:flex;flex-wrap:wrap;gap:4px">${data.techniques.slice(0,12).map(t=>`<span class="badge low" style="font-size:8px">${esc(t.id)} <span style="color:#8ab0d0">${t.count}</span></span>`).join('')}</div></div>`;
+}
+
+async function loadRecentCritical(){
+  const data=await G('/api/alerts?severity=critical&limit=8&hours=24'); const el=document.getElementById('d-recent');
+  if(!data?.alerts?.length){el.innerHTML=empty('No critical alerts in last 24h');return;}
+  el.innerHTML=`<div style="display:flex;flex-direction:column;gap:6px">${data.alerts.slice(0,8).map(a=>`<div style="padding:7px 9px;background:var(--bg2);border:1px solid var(--b1);border-left:2px solid var(--r);border-radius:3px"><div style="font-size:12px;font-family:var(--fm);margin-bottom:3px;line-height:1.3">${esc(a.description)}</div><div style="display:flex;gap:8px;font-size:9px;color:#8ab0d0;font-family:var(--fm)"><span style="color:var(--c)">${esc(a.agent)}</span><span>${esc(a.srcIp)}</span>${a.mitre?.[0]?`<span class="badge low" style="font-size:7px">${esc(a.mitre[0])}</span>`:''}<span style="margin-left:auto">${fmtDate(a.timestamp)}</span></div></div>`).join('')}</div>`;
+}
+
+// ─── AGENTS ──────────────────────────────────────────────────
+let _agents=[];
+
+async function loadAgentWidgets(){
+  const d=await G('/api/agents');
+  if(!d||d.error)return;
+  const agents=d.agents||[];
+  const active  =agents.filter(a=>a.status==='active').length;
+  const disc    =agents.filter(a=>a.status!=='active').length;
+  const total   =agents.length;
+  const set=(id,v)=>{const el=document.getElementById(id);if(el)el.textContent=v??'—';};
+  set('k-ag-total',  total);
+  set('k-ag-active', active);
+  set('k-ag-disc',   disc);
+  set('k-agents',    active); // topbar KPI
+  document.getElementById('n-agents').textContent=total;
+  // Update disconnected label
+  const discLbl=document.getElementById('k-ag-disc-label');
+  if(discLbl){
+    if(disc===0){discLbl.textContent='ALL ONLINE';discLbl.style.color='var(--g)';discLbl.style.background='var(--gdim)';discLbl.style.borderColor='rgba(0,230,118,.25)';}
+    else{discLbl.textContent='OFFLINE';discLbl.style.color='var(--r)';discLbl.style.background='var(--rdim)';discLbl.style.borderColor='rgba(255,23,68,.25)';}
+  }
+  // IDs of all agents
+  const agEl=document.getElementById('k-ag-total-ids');
+  if(agEl)agEl.textContent=agents.slice(0,3).map(a=>a.id).join(' · ')+(agents.length>3?` +${agents.length-3}`:'');
+}
+
+async function loadAgents(){document.getElementById('ag-body').innerHTML=spin('Loading from SIEM...');const d=await G('/api/agents');if(!d||d.error){document.getElementById('ag-body').innerHTML=errBnr(d?.error||'SIEM unavailable');return;}_agents=d.agents||[];loadAgentWidgets();renderAgents(_agents);}
+function filterAgents(){const q=(document.getElementById('ag-q')?.value||'').toLowerCase();renderAgents(_agents.filter(a=>(a.name||'').toLowerCase().includes(q)||(a.ip||'').includes(q)));}
+function renderAgents(agents){
+  const el=document.getElementById('ag-body');if(!agents.length){el.innerHTML=empty('No agents');return;}
+  el.innerHTML=`<div class="tbl"><table><thead><tr><th>Name</th><th>ID</th><th>IP</th><th>Status</th><th>Alerts</th><th>Last Seen</th></tr></thead><tbody>${
+    agents.map(a=>`<tr><td style="font-weight:600">${esc(a.name)}</td><td style="color:var(--c)">${esc(a.id)}</td><td>${esc(a.ip)}</td><td><span class="badge ${a.status==='active'?'ok':a.status==='disconnected'?'critical':'offline'}">${a.status}</span></td><td style="color:var(--c)">${(a.alertCount||0).toLocaleString()}</td><td style="color:#8ab0d0">${fmtDate(a.lastSeen)}</td></tr>`).join('')
+  }</tbody></table></div>`;
+}
+
+// ─── ALERTS ──────────────────────────────────────────────────
+let _alerts=[],_selAlert=null;
+async function loadAlerts(){
+  document.getElementById('al-body').innerHTML=spin('Loading from SIEM...');
+  refreshInvestigatedKeys();
+  const sev=document.getElementById('al-sev')?.value||'',hrs=document.getElementById('al-hrs')?.value||'24';
+  const agent=(document.getElementById('al-agent')?.value||'').trim();
+  const srcip=(document.getElementById('al-srcip')?.value||'').trim();
+  const p=new URLSearchParams({limit:200});
+  if(sev)p.set('severity',sev);if(hrs&&hrs!=='0')p.set('hours',hrs);if(agent)p.set('agent',agent);if(srcip)p.set('srcip',srcip);
+  const d=await G(`/api/alerts?${p}`);
+  if(!d||d.error){document.getElementById('al-body').innerHTML=errBnr(d?.error||'SIEM unavailable');return;}
+  _alerts=d.alerts||[];
+  document.getElementById('al-total').textContent=`Showing ${_alerts.length} of ${(d.total||_alerts.length).toLocaleString()} alerts`;
+  filterAlerts();
+}
+function filterAlerts(){const q=(document.getElementById('al-q')?.value||'').toLowerCase();renderAlerts(q?_alerts.filter(a=>(a.description||'').toLowerCase().includes(q)||(a.srcIp||'').includes(q)||(a.agent||'').toLowerCase().includes(q)):_alerts);}
+// Investigated alert keys cache (refreshed every 30s)
+let _investigatedKeys = new Set();
+async function refreshInvestigatedKeys(){
+  try {
+    const d = await G('/api/investigations/keys');
+    if (d?.keys) _investigatedKeys = new Set(d.keys);
+  } catch(e){}
+}
+function getAlertKey(a){return `${a.ruleId}_${a.timestamp}_${a.agent}_${a.srcIp||''}`;}
+function isInvestigated(a){return _investigatedKeys.has(getAlertKey(a));}
+
+function renderAlerts(alerts){
+  const el=document.getElementById('al-body');
+  if(!alerts.length){el.innerHTML=empty('No alerts match');return;}
+  // Cache rendered alerts globally for click delegation
+  window._renderedAlerts = alerts.slice(0,200);
+
+  el.innerHTML=`<div class="tbl"><table><thead><tr><th>Time</th><th>Sev</th><th>Rule</th><th>Description</th><th>Agent</th><th>Src IP</th><th>MITRE</th><th>Status</th><th>Action</th></tr></thead><tbody>${
+    window._renderedAlerts.map((a,i)=>{
+      const investigated = isInvestigated(a);
+      const lvl = parseInt(a.level) || 0;
+      const isHighCritical = lvl >= 8;
+      const investigateBtn = isHighCritical
+        ? `<button type="button" class="btn btn-sm alert-action-btn" data-action="investigate" data-idx="${i}" style="padding:5px 8px;background:var(--cdim);border:1px solid var(--c);color:var(--c);margin-right:4px" title="Run AI Investigation">🔍 Investigate</button>`
+        : '';
+      const reportBtn = investigated
+        ? `<button type="button" class="btn btn-h btn-sm alert-action-btn" data-action="report" data-idx="${i}" style="padding:5px 8px" title="View Saved Report">📋 Report</button>`
+        : '';
+      const statusBadge = investigated
+        ? '<span class="badge ok" style="font-size:9px" title="Investigated by AI">🤖 INVESTIGATED</span>'
+        : (isHighCritical ? '<span style="font-size:9px;color:var(--txt3);font-family:var(--fm)">pending</span>' : '');
+      return `<tr ${investigated?'style="background:rgba(0,229,255,.04)"':''}>
+        <td style="color:#8ab0d0;white-space:nowrap">${fmtDate(a.timestamp)}</td>
+        <td><span class="badge ${sbadge(a.severity)}">${a.level}</span></td>
+        <td style="color:var(--c)">${esc(a.ruleId)}</td>
+        <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(a.description)}</td>
+        <td>${esc(a.agent)}</td>
+        <td style="color:var(--txt2)">${esc(a.srcIp)}</td>
+        <td>${(a.mitre||[]).slice(0,1).map(m=>`<span class="badge low" style="font-size:8px">${esc(m)}</span>`).join('')}</td>
+        <td>${statusBadge}</td>
+        <td style="white-space:nowrap;min-width:200px">
+          <button type="button" class="btn btn-p btn-sm alert-action-btn" data-action="view" data-idx="${i}" style="padding:5px 10px;margin-right:4px">View Details</button>${investigateBtn}${reportBtn}
+        </td>
+      </tr>`;
+    }).join('')
+  }</tbody></table></div>`;
+
+  // Attach event delegation handler (fires for any button click in this table)
+  el.onclick = function(e) {
+    const btn = e.target.closest('.alert-action-btn');
+    if (!btn) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const action = btn.getAttribute('data-action');
+    const idx = parseInt(btn.getAttribute('data-idx'));
+    console.log('[Alert action]', action, 'index', idx);
+    if (action === 'view') showAlert(idx);
+    else if (action === 'investigate') investigateFromAlert(idx);
+    else if (action === 'report') viewInvestigation(idx);
+  };
+}
+// View previous AI investigation from DB (cached report)
+async function viewInvestigation(i){
+  const cached = window._renderedAlerts || _alerts;
+  const a = cached[i];
+  const alertKey = getAlertKey(a);
+  document.getElementById('modal-alert-body').innerHTML = '<div class="loading"><div class="spin"></div><p>Loading investigation report...</p></div>';
+  openModal('modal-alert');
+
+  // Fetch from DB
+  const d = await G(`/api/investigations?q=${encodeURIComponent(a.ruleId)}&limit=10`);
+  const inv = (d?.items || []).find(x => x.alert_key === alertKey);
+
+  if (!inv) {
+    document.getElementById('modal-alert-body').innerHTML = `
+      <div class="banner info">
+        <div>📋 No saved investigation found for this alert.</div>
+        <div style="margin-top:6px;font-size:10px">Run a new investigation from the AI Investigation tab.</div>
+      </div>
+    `;
+    return;
+  }
+
+  // Get full report
+  const full = await G(`/api/investigations/${inv.id}`);
+  if (!full) {
+    document.getElementById('modal-alert-body').innerHTML = errBnr('Failed to load report');
+    return;
+  }
+
+  // Render
+  document.getElementById('modal-alert-body').innerHTML = `
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;padding:8px 10px;background:var(--cdim);border-radius:3px">
+      <span class="badge ${sbadge(full.severity)}">L${full.rule_level} ${full.severity}</span>
+      <span style="font-family:var(--fm);font-size:11px;color:var(--c)">Rule ${esc(full.rule_id)}</span>
+      <span style="font-family:var(--fm);font-size:9px;color:var(--txt3);margin-left:auto">
+        ${full.auto_triaged?'🤖 Auto-triaged':'👤 ' + esc(full.created_by)} • ${fmtDate(full.created_at)} • ${full.duration_ms}ms
+      </span>
+    </div>
+    <div style="font-size:11px;color:var(--txt2);margin-bottom:8px;padding:6px 10px;background:var(--bg2);border-radius:3px">
+      <strong>Alert:</strong> ${esc(full.description||'—')} <br>
+      <strong>Agent:</strong> ${esc(full.agent||'—')} | <strong>Src IP:</strong> ${esc(full.src_ip||'—')}
+    </div>
+    <div class="ai-txt" style="max-height:60vh;overflow-y:auto;padding:10px;background:var(--bg);border:1px solid var(--b1);border-radius:3px">
+      ${parseAIMarkdown(full.report || '')}
+    </div>
+  `;
+}
+
+// Trigger AI investigation directly from Alerts table
+async function investigateFromAlert(i){
+  const cached = window._renderedAlerts || _alerts;
+  const a = cached[i];
+  if(!a) return;
+
+  // Find the button that was clicked and update it
+  const btns = document.querySelectorAll(`button[onclick*="investigateFromAlert(${i})"]`);
+  btns.forEach(b => {
+    b.disabled = true;
+    b.innerHTML = '<div class="spin" style="width:10px;height:10px;display:inline-block;vertical-align:middle"></div> Investigating...';
+    b.style.opacity = '0.7';
+  });
+
+  toast('🔍 AI investigation started...', 'info');
+
+  // Build investigation prompt
+  const prompt = `Investigate this alert in detail.
+
+**Alert Data:**
+- Timestamp: ${a.timestamp}
+- Rule ID: ${a.ruleId}
+- Rule Level: ${a.level} (${a.severity})
+- Description: ${a.description}
+- Agent: ${a.agent}
+- Source IP: ${a.srcIp || 'N/A'}
+- MITRE: ${(a.mitre || []).join(', ') || 'None'}
+- Full Log: ${(a.fullLog || '').slice(0, 500)}
+
+Provide structured investigation with:
+1. Executive Summary
+2. Technical Analysis
+3. Risk Assessment
+4. MITRE ATT&CK Mapping
+5. Recommended Actions
+6. IOC Enrichment (if applicable)`;
+
+  try {
+    const d = await P('/api/ai/investigate', {
+      alert: a, prompt: prompt,
+      session_id: `inv_${a.ruleId}_${Date.now()}`,
+    });
+
+    if(!d || d.error || (!d.response && !d.text)){
+      toast('⚠️ Investigation failed: ' + (d?.error || 'No response'), 'err');
+      btns.forEach(b => { b.disabled = false; b.innerHTML = '🔍 Investigate'; b.style.opacity = '1'; });
+      return;
+    }
+
+    toast('✅ Investigation complete — saved to history', 'ok');
+
+    // Refresh investigated keys to update labels
+    await refreshInvestigatedKeys();
+
+    // Re-render alerts to show new label
+    filterAlerts();
+  } catch(e){
+    toast('⚠️ Error: ' + e.message, 'err');
+    btns.forEach(b => { b.disabled = false; b.innerHTML = '🔍 Investigate'; b.style.opacity = '1'; });
+  }
+}
+
+function showAlert(i){
+  // Get alert from rendered cache
+  const cached = window._renderedAlerts || _alerts || [];
+  _selAlert = cached[i];
+  if (!_selAlert) {
+    console.error('[showAlert] No alert at index', i, '- cache has', cached.length, 'alerts');
+    toast('Alert details not available — try refreshing the page', 'warn');
+    return;
+  }
+  const a = _selAlert;
+  console.log('[showAlert] Opening modal for:', a.ruleId, a.timestamp);
+
+  const modalEl = document.getElementById('modal-alert');
+  const bodyEl = document.getElementById('modal-alert-body');
+  if (!modalEl || !bodyEl) {
+    console.error('[showAlert] Modal element missing!');
+    alert('Modal element not found in DOM. Try refreshing the page.');
+    return;
+  }
+  bodyEl.innerHTML=`<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:12px;font-family:var(--fm)"><div><div style="font-size:9px;color:#8ab0d0;letter-spacing:1px">TIMESTAMP</div><div style="margin-top:3px">${esc(a.timestamp)}</div></div><div><div style="font-size:9px;color:#8ab0d0;letter-spacing:1px">SEVERITY</div><div style="margin-top:3px"><span class="badge ${sbadge(a.severity)}">${a.severity} (lvl ${a.level})</span></div></div><div><div style="font-size:9px;color:#8ab0d0;letter-spacing:1px">RULE ID</div><div style="margin-top:3px;color:var(--c)">${esc(a.ruleId)}</div></div><div><div style="font-size:9px;color:#8ab0d0;letter-spacing:1px">AGENT</div><div style="margin-top:3px">${esc(a.agent)}</div></div><div style="grid-column:1/-1"><div style="font-size:9px;color:#8ab0d0;letter-spacing:1px">DESCRIPTION</div><div style="margin-top:3px">${esc(a.description)}</div></div><div><div style="font-size:9px;color:#8ab0d0;letter-spacing:1px">SOURCE IP</div><div style="margin-top:3px;color:var(--r)">${esc(a.srcIp)}</div></div><div><div style="font-size:9px;color:#8ab0d0;letter-spacing:1px">MITRE</div><div style="margin-top:4px;display:flex;gap:4px;flex-wrap:wrap">${(a.mitre||[]).map(m=>`<span class="badge low">${esc(m)}</span>`).join('')}${(a.mitreTactic||[]).map(t=>`<span class="badge medium">${esc(t)}</span>`).join('')}</div></div>${a.fullLog?`<div style="grid-column:1/-1"><div style="font-size:9px;color:#8ab0d0;letter-spacing:1px">FULL LOG</div><div style="margin-top:4px;padding:8px;background:rgba(0,0,0,.5);border-radius:3px;font-size:10px;word-break:break-all;line-height:1.6;color:var(--g)">${esc(a.fullLog)}</div></div>`:''}</div>`;
+  openModal('modal-alert');
+}
+function escalateToCase(){if(!_selAlert)return;closeModal('modal-alert');document.getElementById('cc-title').value=`Alert: ${(_selAlert.description||'').slice(0,80)}`;document.getElementById('cc-desc').value=`Escalated from SIEM\nRule: ${_selAlert.ruleId||''}\nAgent: ${_selAlert.agent||''}\nSrc IP: ${_selAlert.srcIp||''}`;document.getElementById('cc-sev').value=_selAlert.severity||'medium';openModal('modal-case');}
+
+// ─── RULES ───────────────────────────────────────────────────
+let _rules=[];
+async function loadRules(){document.getElementById('rl-body').innerHTML=spin('Loading from SIEM...');const d=await G('/api/rules');if(!d||d.error){document.getElementById('rl-body').innerHTML=errBnr(d?.error||'SIEM unavailable');return;}_rules=d.rules||[];filterRules();}
+function filterRules(){const q=(document.getElementById('rl-q')?.value||'').toLowerCase();renderRules(_rules.filter(r=>`${r.id} ${r.description} ${r.groups}`.toLowerCase().includes(q)));}
+function renderRules(rules){
+  const el=document.getElementById('rl-body');if(!rules.length){el.innerHTML=empty('No rules');return;}
+  el.innerHTML=`<div class="tbl"><table><thead><tr><th>ID</th><th>Level</th><th>Description</th><th>Groups</th><th>MITRE</th><th>Fires</th></tr></thead><tbody>${rules.slice(0,300).map(r=>`<tr><td style="color:var(--c)">${esc(r.id)}</td><td><span class="badge ${sbadge(r.severity)}">${r.level}</span></td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.description)}</td><td style="color:var(--txt2)">${esc((r.groups||'').slice(0,40))}</td><td>${r.mitre?`<span class="badge low" style="font-size:8px">${esc(r.mitre)}</span>`:''}</td><td style="color:var(--c)">${r.count}</td></tr>`).join('')}</tbody></table></div>`;
+}
+
+// ─── INVESTIGATION TABS / AUTO-TRIAGE / HISTORY ─────────────
+function switchInvTab(tab){
+  // Update tab styling
+  document.querySelectorAll('.inv-tab').forEach(b=>{
+    const act = b.getAttribute('data-tab')===tab;
+    b.style.color = act?'var(--c)':'var(--txt3)';
+    b.style.borderBottom = act?'2px solid var(--c)':'2px solid transparent';
+    b.classList.toggle('active', act);
+  });
+
+  // Toggle visibility using element IDs (more reliable than CSS selector)
+  const liveSection = document.getElementById('inv-tab-live');
+  const histSection = document.getElementById('inv-tab-history');
+
+  if(tab === 'history'){
+    if(liveSection) liveSection.style.display = 'none';
+    if(histSection) histSection.style.display = 'block';
+    loadInvHistory();
+  } else {
+    if(liveSection) liveSection.style.display = 'grid';
+    if(histSection) histSection.style.display = 'none';
+    // Don't reload alerts if already loaded — just show
+    if(!_invAlerts.length) loadInvAlerts();
+  }
+}
+
+async function toggleAutoTriage(){
+  const enabled = document.getElementById('auto-triage-toggle').checked;
+  document.getElementById('auto-triage-status').textContent = enabled?'Enabled':'Disabled';
+  document.getElementById('auto-triage-status').style.color = enabled?'var(--g)':'var(--txt2)';
+  await P('/api/settings', { auto_triage_enabled: String(enabled) });
+  toast(enabled?'Auto-triage enabled — AI will investigate new H+C alerts':'Auto-triage disabled', enabled?'ok':'info');
+  if(enabled) updateAutoTriageStatusDetail();
+}
+
+async function updateAutoTriageSettings(){
+  const minLevel = document.getElementById('auto-triage-level').value;
+  const interval = document.getElementById('auto-triage-interval').value;
+  await P('/api/settings', {
+    auto_triage_min_level: minLevel,
+    auto_triage_interval_sec: interval,
+  });
+  toast('Auto-triage settings saved', 'ok');
+}
+
+async function loadAutoTriageSettings(){
+  const s = await G('/api/settings');
+  if(!s||s.error) return;
+  const enabled = s.auto_triage_enabled === 'true';
+  document.getElementById('auto-triage-toggle').checked = enabled;
+  document.getElementById('auto-triage-status').textContent = enabled?'Enabled':'Disabled';
+  document.getElementById('auto-triage-status').style.color = enabled?'var(--g)':'var(--txt2)';
+  if(s.auto_triage_min_level)
+    document.getElementById('auto-triage-level').value = s.auto_triage_min_level;
+  if(s.auto_triage_interval_sec)
+    document.getElementById('auto-triage-interval').value = s.auto_triage_interval_sec;
+  if(enabled) updateAutoTriageStatusDetail();
+}
+
+function updateAutoTriageStatusDetail(){
+  const el=document.getElementById('auto-triage-status-detail');
+  if(el) el.innerHTML='<span style="color:var(--g)">●</span> Running every ' + document.getElementById('auto-triage-interval').value + 's';
+}
+
+async function loadInvHistory(){
+  const q = document.getElementById('hist-q')?.value || '';
+  const sev = document.getElementById('hist-sev')?.value || '';
+  document.getElementById('hist-body').innerHTML = spin('Loading from database...');
+
+  const params = new URLSearchParams({limit: 100});
+  if(q) params.set('q', q);
+  if(sev) params.set('severity', sev);
+
+  const d = await G('/api/investigations?' + params);
+  if(!d || d.error){
+    document.getElementById('hist-body').innerHTML = errBnr(d?.error || 'Failed to load history');
+    return;
+  }
+
+  const items = d.items || [];
+  const stats = d.stats || {};
+
+  // Update KPIs
+  if(stats.total!==undefined) document.getElementById('inv-done').textContent = stats.total;
+  if(stats.auto_triaged!==undefined) document.getElementById('inv-auto').textContent = stats.auto_triaged;
+  if(stats.last_24h!==undefined) document.getElementById('inv-24h').textContent = stats.last_24h;
+
+  if(!items.length){
+    document.getElementById('hist-body').innerHTML = empty('No saved investigations yet');
+    return;
+  }
+
+  document.getElementById('hist-body').innerHTML = `<div class="tbl"><table>
+    <thead><tr>
+      <th>Date</th><th>Severity</th><th>Rule</th><th>Description</th><th>Agent</th>
+      <th>Source IP</th><th>Triage</th><th>Duration</th><th>Action</th>
+    </tr></thead><tbody>${items.map(inv=>`<tr>
+      <td style="color:#8ab0d0;white-space:nowrap;font-size:10px">${fmtDate(inv.created_at)}</td>
+      <td><span class="badge ${sbadge(inv.severity)}">L${inv.rule_level}</span></td>
+      <td style="color:var(--c);font-family:var(--fm)">${esc(inv.rule_id||'—')}</td>
+      <td style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px">${esc((inv.description||'').slice(0,80))}</td>
+      <td>${esc(inv.agent||'—')}</td>
+      <td style="color:var(--txt2);font-size:10px">${esc(inv.src_ip||'—')}</td>
+      <td>${inv.auto_triaged?'<span class="badge ok" style="font-size:9px">🤖 AUTO</span>':'<span class="badge low" style="font-size:9px">👤 MANUAL</span>'}</td>
+      <td style="color:var(--txt3);font-size:10px">${(inv.duration_ms/1000).toFixed(1)}s</td>
+      <td><button class="btn btn-p btn-sm" style="padding:4px 8px" onclick="viewSavedInvestigation(${inv.id})">View</button></td>
+    </tr>`).join('')}</tbody></table></div>`;
+}
+
+async function viewSavedInvestigation(id){
+  const d = await G(`/api/investigations/${id}`);
+  if(!d||d.error){toast('Failed to load','warn'); return;}
+
+  document.getElementById('modal-investigation-body').innerHTML = `
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;padding:8px 12px;background:var(--cdim);border-radius:3px">
+      <span class="badge ${sbadge(d.severity)}">L${d.rule_level} ${d.severity}</span>
+      <span style="font-family:var(--fm);font-size:11px;color:var(--c)">Rule ${esc(d.rule_id)}</span>
+      <span style="font-family:var(--fm);font-size:9px;color:var(--txt3);margin-left:auto">
+        ${d.auto_triaged?'🤖 Auto-triaged':'👤 ' + esc(d.created_by)} • ${fmtDate(d.created_at)} • ${d.duration_ms}ms
+      </span>
+    </div>
+    <div style="font-size:11px;color:var(--txt2);margin-bottom:8px;padding:6px 10px;background:var(--bg2);border-radius:3px">
+      <strong>Alert:</strong> ${esc(d.description||'—')}<br>
+      <strong>Agent:</strong> ${esc(d.agent||'—')} | <strong>Src IP:</strong> ${esc(d.src_ip||'—')}
+    </div>
+    <div class="ai-txt" id="modal-inv-text">${parseAIMarkdown(d.report || '')}</div>
+  `;
+  document.getElementById('modal-investigation-body').setAttribute('data-report', d.report || '');
+  openModal('modal-investigation');
+}
+
+function invCopyFromModal(){
+  const txt = document.getElementById('modal-investigation-body').getAttribute('data-report') || '';
+  if(!txt){toast('Nothing to copy','warn'); return;}
+  navigator.clipboard.writeText(txt);
+  toast('Copied to clipboard','ok');
+}
+
+// ─── CASES ───────────────────────────────────────────────────
+async function loadCases(){
+  ['kb-new','kb-ip','kb-res','kb-cl'].forEach(id=>document.getElementById(id).innerHTML=spin());
+  const status=document.getElementById('case-status')?.value||'';
+  const d=await G(`/api/cases${status?`?status=${status}`:''}`);
+  if(!d||d.error){document.getElementById('kb-new').innerHTML=errBnr(d?.error||'SP-CM unavailable');['kb-ip','kb-res','kb-cl'].forEach(id=>{document.getElementById(id).innerHTML='';});return;}
+  const cases=d.cases||[];
+  const byS={New:[],InProgress:[],Resolved:[],Closed:[]};
+  cases.forEach(c=>{if(c.isClosed)byS.Closed.push(c);else if(c.isInProgress)byS.InProgress.push(c);else byS.New.push(c);});
+  renderKB('kb-new',byS.New,'cnt-new');renderKB('kb-ip',byS.InProgress,'cnt-ip');renderKB('kb-res',byS.Resolved,'cnt-res');renderKB('kb-cl',byS.Closed,'cnt-cl');
+  document.getElementById('n-cases').textContent=byS.New.length;
+}
+function renderKB(colId,cases,cntId){
+  document.getElementById(cntId).textContent=cases.length;
+  document.getElementById(colId).innerHTML=!cases.length?'<div style="padding:10px;text-align:center;font-size:10px;color:#8ab0d0;font-family:var(--fm)">No cases</div>':
+    cases.map(c=>`<div class="kb-card"><div class="kb-ttl">${esc(c.title||'Untitled')}</div><div class="kb-meta"><span class="badge ${sbadge(c.severity)}">${c.severity}</span>${c.statusLabel&&c.statusLabel!=='New'&&c.statusLabel!=='In Progress'?`<span class="badge ${sbadge(c.status)}" style="font-size:7px">${esc(c.statusLabel)}</span>`:''}<span style="font-size:8px;color:#8ab0d0">#${c.number||''}</span><span style="font-size:8px;color:#8ab0d0;margin-left:auto">${fmtDate(c.created)}</span></div>${c.assignee?`<div style="font-size:9px;color:#8ab0d0;margin-top:4px;font-family:var(--fm)">👤 ${esc((c.assignee||'').split('@')[0])}</div>`:''}</div>`).join('');
+}
+async function createCase(){const title=document.getElementById('cc-title').value;if(!title){toast('Title required','warn');return;}closeModal('modal-case');toast('Creating SP-CM case...','info');const d=await P('/api/cases/create',{title,description:document.getElementById('cc-desc').value,severity:document.getElementById('cc-sev').value,tags:document.getElementById('cc-tags').value.split(',').map(t=>t.trim()).filter(Boolean)});if(d?.success){toast('Case created in SP-CM!','ok');loadCases();}else toast(d?.error||'Failed','err');}
+
+// ─── SP-CM ALERTS ─────────────────────────────────────────────
+async function loadHiveAlerts(){
+  document.getElementById('ha-body').innerHTML=spin('Loading from SP-CM...');
+  const status=document.getElementById('ha-status')?.value||'';
+  const d=await G(`/api/hive-alerts${status?`?status=${status}`:''}`);
+  if(!d||d.error){document.getElementById('ha-body').innerHTML=errBnr(d?.error||'SP-CM unavailable');return;}
+  const alerts=d.alerts||[];if(!alerts.length){document.getElementById('ha-body').innerHTML=empty('No alerts');return;}
+  document.getElementById('ha-body').innerHTML=`<div class="tbl"><table><thead><tr><th>Title</th><th>Source</th><th>Severity</th><th>Status</th><th>Tags</th><th>Created</th></tr></thead><tbody>${alerts.map(a=>`<tr><td style="max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(a.title)}</td><td>${esc(a.source||'—')}</td><td><span class="badge ${sbadge(a.severity)}">${a.severity}</span></td><td><span class="badge ${sbadge(a.status)}">${a.status}</span></td><td>${(a.tags||[]).slice(0,3).map(t=>`<span class="badge low" style="font-size:7px;margin-right:2px">${esc(t)}</span>`).join('')}</td><td style="color:#8ab0d0">${fmtDate(a.created)}</td></tr>`).join('')}</tbody></table></div>`;
+}
+
+// ─── HUNT ─────────────────────────────────────────────────────
+async function doHunt(){
+  const type=document.getElementById('hunt-type').value,val=document.getElementById('hunt-val').value.trim();
+  if(!val){toast('Enter indicator','warn');return;}
+  document.getElementById('hunt-os').style.display='block';document.getElementById('hunt-ai').style.display='block';
+  document.getElementById('hunt-os-body').innerHTML=spin('Searching SIEM...');document.getElementById('hunt-ai-body').textContent='Requesting SOCPilots AI analysis...';
+  document.getElementById('hunt-os-ttl').textContent=`SIEM: ${type} = "${val}"`;
+  const d=await P('/api/hunt',{type,value:val});if(!d){document.getElementById('hunt-os-body').innerHTML=errBnr('Hunt failed');return;}
+  const hits=d.osResults||[];
+  if(!hits.length)document.getElementById('hunt-os-body').innerHTML=empty(`No matches for "${val}" in SIEM`);
+  else document.getElementById('hunt-os-body').innerHTML=`<div style="font-size:10px;color:var(--g);font-family:var(--fm);margin-bottom:8px">✓ ${hits.length} matches</div><div class="tbl"><table><thead><tr><th>Time</th><th>Description</th><th>Agent</th><th>Src IP</th><th>Sev</th><th>MITRE</th></tr></thead><tbody>${hits.map(h=>`<tr><td style="color:#8ab0d0">${fmtDate(h.timestamp)}</td><td>${esc(h.description||'—')}</td><td>${esc(h.agent||'—')}</td><td style="color:var(--r)">${esc(h.srcIp||'—')}</td><td><span class="badge ${sbadge(h.severity)}">${h.severity}</span></td><td>${(h.mitre||[]).map(m=>`<span class="badge low" style="font-size:7px">${esc(m)}</span>`).join(' ')}</td></tr>`).join('')}</tbody></table></div>`;
+  document.getElementById('hunt-ai-body').textContent=d.aiAnalysis||'SOCPilots AI unavailable';
+}
+
+// ─── IOC ENRICHMENT ───────────────────────────────────────────
+let _iocMap=null;
+async function loadIOCQuick(){
+  const data=await G('/api/stats/top-ips');const el=document.getElementById('ioc-quick');if(!el||!data?.length)return;
+  el.innerHTML=data.slice(0,8).map(d=>`<button class="btn btn-h btn-sm" onclick="document.getElementById('ioc-val').value='${esc(d.ip)}';document.getElementById('ioc-type').value='ip';" style="font-size:11px">${esc(d.ip)}</button>`).join('');
+}
+async function doIOC(){
+  const type=document.getElementById('ioc-type').value, val=(document.getElementById('ioc-val')?.value||'').trim();
+  if(!val){toast('Enter indicator','warn');return;}
+  document.getElementById('ioc-result').innerHTML=spin('Loading from SOCPilots AI...');
+  if(!_iocMap)_iocMap=drawWorldMap('ioc-canvas');
+  const d=await P('/api/ai/chat',{
+    message:`Perform a complete threat intelligence enrichment on this ${type}: "${val}".\n\nProvide:\n1. **Geolocation**: Country, City, ISP/ASN, Coordinates (lat/lon)\n2. **Threat Intel**: Known malicious? Blacklists? Reputation score.\n3. **Risk Score**: 0-100 with justification.\n4. **Category**: malware C2 / scanner / botnet / legitimate / phishing / unknown\n5. **Recommended Action**: Block / Monitor / Allow\n6. **Threat Actors / Campaigns**: Any known associations\n7. **Related CVEs**: If applicable\n\nRespond with clear sections using ** for headers.`,
+    session_id:'soc-ioc-enrichment',
+  });
+  const text=d?.response||d?.output||d?.text||'No response from SOCPilots AI';
+  const geo=GEO_HEURISTIC(val);
+  document.getElementById('ioc-result').innerHTML=`
+    <div style="padding:10px;background:var(--bg2);border:1px solid var(--b1);border-radius:4px;margin-bottom:12px;display:flex;align-items:center;gap:10px">
+      <span class="badge ${type==='ip'?'high':'medium'}" style="font-size:10px">${type.toUpperCase()}</span>
+      <span style="font-family:var(--fm);font-size:14px;color:var(--c);font-weight:600">${esc(val)}</span>
+      ${geo.c?`<span style="font-size:11px;color:var(--txt2);font-family:var(--fm)">📍 ${esc(geo.c)}</span>`:''}
+    </div>
+    <div class="ai-txt" style="font-size:12px">${fmtAI(text)}</div>`;
+  // Show on IOC map
+  if(_iocMap&&type==='ip'){
+    renderDots([{...geo,ip:val,count:1,c:geo.c}],'ioc-dots',_iocMap.ll2xy,_iocMap.W,_iocMap.H);
+  }
+}
+
+// ─── CORRELATION with GRAPH ───────────────────────────────────
+async function doCorrelate(){
+  const val=document.getElementById('corr-val').value.trim();if(!val){toast('Enter indicator','warn');return;}
+  document.getElementById('corr-results').style.display='block';
+  document.getElementById('corr-siem').innerHTML=spin();document.getElementById('corr-spcm').innerHTML=spin();
+  document.getElementById('corr-ai').textContent='Generating correlation report...';
+  const d=await P('/api/correlate',{indicator:val});if(!d){document.getElementById('corr-ai').textContent='Correlation failed';return;}
+  const wHits=d.wazuhHits||[],hHits=d.hiveHits||[];
+  document.getElementById('corr-siem').innerHTML=!wHits.length?empty('No SIEM matches'):`<div style="display:flex;flex-direction:column;gap:5px">${wHits.map(h=>`<div style="padding:6px 8px;background:var(--bg2);border:1px solid var(--b1);border-radius:3px;font-size:11px;font-family:var(--fm)"><div>${esc(h.desc||'—')}</div><div style="color:#8ab0d0;margin-top:2px">${esc(h.agent||'')} • ${fmtDate(h.ts)}</div></div>`).join('')}</div>`;
+  document.getElementById('corr-spcm').innerHTML=!hHits.length?empty('No SP-CM matches'):`<div style="display:flex;flex-direction:column;gap:5px">${hHits.map(h=>`<div style="padding:6px 8px;background:var(--bg2);border:1px solid var(--b1);border-radius:3px;font-size:11px;font-family:var(--fm)"><div>${esc(h.title)}</div><span class="badge ${sbadge(h.status)}">${h.status}</span></div>`).join('')}</div>`;
+  document.getElementById('corr-ai').textContent=d.aiAnalysis||'SOCPilots AI unavailable';
+  // Build correlation graph
+  buildCorrGraph(val,wHits,hHits);
+}
+
+function buildCorrGraph(indicator,siemHits,hiveHits){
+  const el=document.getElementById('corr-graph'); if(!el)return;
+  const W=el.offsetWidth||800, H=400;
+  el.style.height=H+'px';
+  const svg=document.getElementById('corr-svg');
+  svg.innerHTML='';
+  // Clear old nodes
+  el.querySelectorAll('.cg-node').forEach(n=>n.remove());
+
+  const nodes=[];
+  const addNode=(id,label,type,x,y)=>{nodes.push({id,label,type,x,y});};
+
+  // Central node: the indicator
+  addNode('center',indicator,'indicator',W/2,H/2);
+
+  // SIEM hits as nodes
+  siemHits.slice(0,5).forEach((h,i)=>{
+    const angle=(i/(Math.max(siemHits.length,1)))*Math.PI*2-Math.PI/2;
+    const r=120;
+    addNode(`siem-${i}`,h.agent||h.desc?.slice(0,20)||`Alert ${i+1}`,'siem',W/2+Math.cos(angle)*r,H/2+Math.sin(angle)*r);
+  });
+
+  // SP-CM cases as nodes
+  hiveHits.slice(0,4).forEach((h,i)=>{
+    const angle=(i/(Math.max(hiveHits.length,1)))*Math.PI*2+Math.PI/4;
+    const r=160;
+    addNode(`hive-${i}`,h.title?.slice(0,25)||`Case ${i+1}`,'hive',W/2+Math.cos(angle)*r,H/2+Math.sin(angle)*r+60);
+  });
+
+  // Add static threat intel nodes
+  if(siemHits.length>0||hiveHits.length>0){
+    addNode('mitre','MITRE ATT&CK','mitre',W*0.15,H*0.3);
+    addNode('timeline','Timeline','timeline',W*0.85,H*0.3);
+  }
+
+  // Draw SVG edges
+  const defColor={'indicator':'#00e5ff','siem':'#ff6d00','hive':'#d500f9','mitre':'#ffab00','timeline':'#00e676'};
+  svg.innerHTML=nodes.filter(n=>n.id!=='center').map(n=>{
+    const c=nodes[0];
+    return `<line x1="${c.x}" y1="${c.y}" x2="${n.x}" y2="${n.y}" stroke="${defColor[n.type]||'#1a2f4a'}" stroke-width="1" stroke-opacity=".5" stroke-dasharray="${n.type==='mitre'?'4,3':'0'}"/>`;
+  }).join('');
+
+  // Add node elements
+  nodes.forEach(n=>{
+    const typeConfig={
+      indicator:{size:50,bg:'rgba(0,229,255,.15)',border:'#00e5ff',icon:'⊙',color:'var(--c)'},
+      siem:{size:38,bg:'rgba(255,109,0,.1)',border:'#ff6d00',icon:'⚠',color:'var(--o)'},
+      hive:{size:38,bg:'rgba(213,0,249,.1)',border:'#d500f9',icon:'📋',color:'var(--p)'},
+      mitre:{size:36,bg:'rgba(255,171,0,.1)',border:'#ffab00',icon:'🎯',color:'var(--y)'},
+      timeline:{size:36,bg:'rgba(0,230,118,.1)',border:'#00e676',icon:'⏱',color:'var(--g)'},
+    };
+    const cfg=typeConfig[n.type]||typeConfig.siem;
+    const div=document.createElement('div');
+    div.className='cg-node'; div.style.left=n.x+'px'; div.style.top=n.y+'px';
+    div.innerHTML=`<div class="cg-circle" style="width:${cfg.size}px;height:${cfg.size}px;background:${cfg.bg};border-color:${cfg.border};font-size:${cfg.size>40?16:12}px">${cfg.icon}</div><div class="cg-lbl" style="color:${cfg.color}">${esc(n.label)}</div>`;
+    // Drag support
+    let ox,oy,dragging=false;
+    div.addEventListener('mousedown',e=>{dragging=true;ox=e.clientX-n.x;oy=e.clientY-n.y;});
+    document.addEventListener('mousemove',e=>{if(!dragging)return;n.x=e.clientX-ox;n.y=e.clientY-oy;div.style.left=n.x+'px';div.style.top=n.y+'px';updateEdges();});
+    document.addEventListener('mouseup',()=>{dragging=false;});
+    el.appendChild(div);
+  });
+
+  function updateEdges(){
+    svg.innerHTML=nodes.filter(n=>n.id!=='center').map(n=>{
+      const c=nodes[0];
+      return`<line x1="${c.x}" y1="${c.y}" x2="${n.x}" y2="${n.y}" stroke="${defColor[n.type]||'#1a2f4a'}" stroke-width="1" stroke-opacity=".5" stroke-dasharray="${n.type==='mitre'?'4,3':'0'}"/>`;
+    }).join('');
+  }
+}
+
+// ─── LIVE THREAT MAP ──────────────────────────────────────────
+let _tmMap=null,chTm=null;
+async function loadThreatMap(){
+  if(!_tmMap)_tmMap=drawWorldMap('tm-canvas');
+  const [ipData,ruleData,mitreData,tl]=await Promise.all([G('/api/stats/top-ips'),G('/api/stats/top-rules'),G('/api/stats/mitre'),G('/api/dashboard')]);
+
+  // Map
+  if(_tmMap&&ipData?.length){
+    const dots=ipData.slice(0,40).map(d=>{const g=GEO_HEURISTIC(d.ip);return{...g,ip:d.ip,count:d.count};});
+    renderDots(dots,'tm-dots',_tmMap.ll2xy,_tmMap.W,_tmMap.H);
+    document.getElementById('tm-count').textContent=`${ipData.length} active IPs`;
+  }
+
+  // Top IPs table
+  const el=document.getElementById('tm-top-ips');
+  if(ipData?.length)el.innerHTML=`<div style="display:flex;flex-direction:column;gap:5px">${ipData.slice(0,10).map((d,i)=>{
+    const g=GEO_HEURISTIC(d.ip);
+    return`<div style="display:flex;align-items:center;gap:8px;padding:5px 7px;background:var(--bg2);border-radius:3px"><span style="font-size:9px;color:#8ab0d0;font-family:var(--fm);min-width:14px">${i+1}</span><div style="width:5px;height:5px;background:var(--r);border-radius:50%;flex-shrink:0"></div><span style="flex:1;font-size:11px;font-family:var(--fm)">${esc(d.ip)}</span><span style="font-size:10px;color:var(--txt2);font-family:var(--fm)">${esc(g.c||'?')}</span><span class="badge high" style="font-size:9px">${d.count}</span></div>`;
+  }).join('')}</div>`;
+
+  // Stats
+  const statsEl=document.getElementById('tm-stats');
+  if(tl)statsEl.innerHTML=`<div style="font-family:var(--fm);font-size:11px;line-height:2.3;color:var(--txt2)"><div>Total Alerts: <span style="color:var(--c)">${(tl.totalAlerts||0).toLocaleString()}</span></div><div>Last 24h: <span style="color:var(--y)">${(tl.alerts24h||0).toLocaleString()}</span></div><div>Critical: <span style="color:var(--r)">${(tl.criticalAlerts||0).toLocaleString()}</span></div><div>Unique IPs: <span style="color:var(--g)">${(ipData?.length||0)}</span></div></div>`;
+
+  // MITRE
+  const mitreEl=document.getElementById('tm-mitre');
+  if(mitreData?.tactics?.length)mitreEl.innerHTML=`<div style="display:flex;flex-direction:column;gap:5px">${mitreData.tactics.slice(0,8).map(t=>`<div style="display:flex;align-items:center;gap:8px"><span style="flex:1;font-size:11px;font-family:var(--fm)">${esc(t.name)}</span><span class="badge medium" style="font-size:9px">${t.count}</span></div>`).join('')}</div>`;
+
+  // Top Rules
+  const rulesEl=document.getElementById('tm-rules');
+  if(ruleData?.length)rulesEl.innerHTML=`<div style="display:flex;flex-direction:column;gap:5px">${ruleData.slice(0,8).map(r=>`<div style="display:flex;align-items:center;gap:7px"><span class="badge ${sbadge(r.severity)}" style="font-size:8px;flex-shrink:0">${r.level}</span><span style="flex:1;font-size:10px;font-family:var(--fm);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.desc)}</span><span style="font-size:9px;color:#8ab0d0;font-family:var(--fm)">${r.count}</span></div>`).join('')}</div>`;
+
+  // Timeline chart
+  if(tl?.timeline?.length){
+    const cv=document.getElementById('ch-tm-time');
+    if(cv){if(chTm)chTm.destroy();
+      chTm=new Chart(cv,{type:'bar',data:{labels:tl.timeline.map(t=>new Date(t.time).getUTCHours()+':00'),datasets:[{data:tl.timeline.map(t=>t.count),backgroundColor:'rgba(255,23,68,.7)',borderRadius:2}]},options:{responsive:true,plugins:{legend:{display:false}},scales:{x:{ticks:{color:'#8ab0d0',font:{size:8}},grid:{display:false}},y:{ticks:{color:'#8ab0d0',font:{size:8}},grid:{color:'rgba(40,80,130,.35)'}}}}});}
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  AI INVESTIGATION — Dedicated workflow for high/critical alerts
+// ═══════════════════════════════════════════════════════════════
+let _invAlerts = [];
+let _invSelected = null;
+let _invDoneCount = 0;
+let _invAutoCount = 0;
+
+async function loadInvAlerts(){
+  const sev = document.getElementById('inv-sev')?.value || '';
+  const hrs = document.getElementById('inv-hrs')?.value || '24';
+
+  document.getElementById('inv-list').innerHTML = spin('Loading from SIEM...');
+
+  // Fetch alerts: severity=high OR critical
+  const params = new URLSearchParams({hours: hrs, limit: 100});
+  if(sev) {
+    params.set('severity', sev);
+  }
+  // No severity = get both high and critical
+  const d = await G('/api/alerts?' + params + (sev ? '' : '&minLevel=8'));
+
+  if(!d || d.error){
+    document.getElementById('inv-list').innerHTML = errBnr(d?.error || 'SIEM unavailable');
+    return;
+  }
+
+  _invAlerts = (d.alerts || []).filter(a => {
+    const lvl = parseInt(a.level) || 0;
+    return lvl >= 8;  // High and Critical only
+  });
+
+  // Update KPIs
+  const crit = _invAlerts.filter(a => parseInt(a.level) >= 12).length;
+  const high = _invAlerts.filter(a => {const l=parseInt(a.level); return l >= 8 && l < 12;}).length;
+  document.getElementById('inv-crit').textContent = crit.toLocaleString();
+  document.getElementById('inv-high').textContent = high.toLocaleString();
+
+  const navBadge = document.getElementById('n-investigation');
+  if(navBadge) navBadge.textContent = _invAlerts.length;
+
+  renderInvList();
+}
+
+function renderInvList(){
+  const el = document.getElementById('inv-list');
+  if(!_invAlerts.length){
+    el.innerHTML = empty('No high/critical alerts in selected timeframe');
+    return;
+  }
+  el.innerHTML = _invAlerts.slice(0, 50).map((a, i) => {
+    const sev = parseInt(a.level) >= 12 ? 'critical' : 'high';
+    const isSelected = _invSelected && _invSelected.timestamp === a.timestamp && _invSelected.ruleId === a.ruleId;
+    return `<div class="inv-card" onclick="selectInvAlert(${i})" style="
+      padding:10px 12px;
+      margin:6px 0;
+      background:${isSelected ? 'var(--cdim)' : 'var(--bg2)'};
+      border:1px solid ${isSelected ? 'var(--c)' : 'var(--b1)'};
+      border-left:3px solid var(${sev === 'critical' ? '--r' : '--o'});
+      border-radius:3px;
+      cursor:pointer;
+      transition:all .15s;
+    ">
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+        <span class="badge ${sev}" style="font-size:8px">L${a.level} ${sev}</span>
+        <span style="font-size:10px;color:var(--c);font-family:var(--fm)">${esc(a.ruleId)}</span>
+        <span style="font-size:9px;color:var(--txt3);font-family:var(--fm);margin-left:auto">${fmtDate(a.timestamp)}</span>
+      </div>
+      <div style="font-size:11px;color:var(--txt);font-family:var(--fm);line-height:1.4;margin-bottom:4px">${esc((a.description||'').slice(0,100))}</div>
+      <div style="display:flex;gap:8px;font-size:9px;color:var(--txt3);font-family:var(--fm)">
+        <span>👤 ${esc(a.agent || 'N/A')}</span>
+        ${a.srcIp ? `<span>🌐 ${esc(a.srcIp)}</span>` : ''}
+        ${(a.mitre && a.mitre[0]) ? `<span class="badge low" style="font-size:7px">${esc(a.mitre[0])}</span>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function selectInvAlert(i){
+  _invSelected = _invAlerts[i];
+  renderInvList();
+  await runInvestigation();
+}
+
+async function runInvestigation(){
+  if(!_invSelected) return;
+  const a = _invSelected;
+  const resultEl = document.getElementById('inv-result');
+  const actionsEl = document.getElementById('inv-actions');
+  if(actionsEl) actionsEl.style.display = 'none';
+
+  const startTime = Date.now();
+  resultEl.innerHTML = `
+    <div style="display:flex;flex-direction:column;align-items:center;gap:10px;padding:30px 20px;text-align:center">
+      <div class="spin" style="width:32px;height:32px"></div>
+      <div style="font-family:var(--fw);font-size:14px;color:var(--c);letter-spacing:1px">INVESTIGATING ALERT</div>
+      <div style="font-size:10px;color:var(--txt3);font-family:var(--fm)">Rule ${esc(a.ruleId)} → SOCPilots AI Investigation Engine</div>
+      <div id="inv-timer" style="font-size:11px;color:var(--c);font-family:var(--fm);margin-top:5px">Elapsed: 0s</div>
+    </div>
+  `;
+  const timer = setInterval(() => {
+    const el = document.getElementById('inv-timer');
+    if(!el){clearInterval(timer); return;}
+    const elapsed = Math.floor((Date.now() - startTime) / 1000);
+    el.textContent = `Elapsed: ${elapsed}s`;
+  }, 1000);
+
+  // Build investigation prompt with full alert context
+  const prompt = `Investigate this alert in detail. Provide comprehensive analysis with executive summary, technical details, MITRE mapping, risk assessment, and recommended actions.
+
+**Alert Data:**
+- Timestamp: ${a.timestamp}
+- Rule ID: ${a.ruleId}
+- Rule Level: ${a.level} (${a.severity})
+- Description: ${a.description}
+- Agent: ${a.agent}
+- Source IP: ${a.srcIp || 'N/A'}
+- Destination IP: ${a.dstIp || 'N/A'}
+- MITRE Techniques: ${(a.mitre || []).join(', ') || 'None'}
+- Full Log: ${(a.fullLog || '').slice(0, 500)}
+
+Provide investigation in sections:
+1. Executive Summary
+2. Technical Analysis (rule details, observations, attack behavior)
+3. Risk Assessment (factors and severity scoring)
+4. Recommended Response Actions
+5. IOC Enrichment (if source IP exists, enrich it)
+
+Use markdown tables and structured formatting.`;
+
+  // Call DEDICATED investigation endpoint
+  const d = await P('/api/ai/investigate', {
+    alert: a,
+    prompt: prompt,
+    session_id: `inv_${a.ruleId}_${Date.now()}`,
+  });
+
+  clearInterval(timer);
+
+  if(!d || d.error || (!d.response && !d.output && !d.text)){
+    let errMsg = '⚠️ **Investigation failed**';
+    if(d?._timeout) errMsg += '\n\nThe investigation took too long. Try again or check n8n.';
+    else if(d?.error?.includes('429')) errMsg += '\n\n**Rate limit reached** — wait 60 seconds.';
+    else if(d?.error) errMsg += '\n\n' + d.error;
+    else errMsg += '\n\nSOCPilots AI investigation webhook not responding.\n\nMake sure the **socpilots-investigation** workflow is active in n8n.';
+    resultEl.innerHTML = `<div class="banner err" style="margin:20px">${fmtAI(errMsg)}</div>`;
+    return;
+  }
+
+  const text = d.response || d.output || d.text || '';
+  _invDoneCount++;
+  document.getElementById('inv-done').textContent = _invDoneCount;
+
+  // Show alert summary header + AI investigation
+  const alertHeader = `
+    <div style="padding:10px 12px;background:var(--bg2);border:1px solid var(--b1);border-left:3px solid var(${parseInt(a.level) >= 12 ? '--r' : '--o'});border-radius:3px;margin-bottom:14px;font-family:var(--fm);font-size:11px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        <span class="badge ${parseInt(a.level) >= 12 ? 'critical' : 'high'}">Level ${a.level}</span>
+        <span style="color:var(--c);font-weight:700">Rule ${esc(a.ruleId)}</span>
+        <span style="color:var(--txt3);margin-left:auto">${fmtDate(a.timestamp)}</span>
+      </div>
+      <div style="color:var(--txt);font-size:12px;line-height:1.4;margin-bottom:5px">${esc(a.description)}</div>
+      <div style="display:flex;gap:10px;color:var(--txt3);font-size:10px">
+        <span>👤 ${esc(a.agent)}</span>
+        ${a.srcIp ? `<span>🌐 ${esc(a.srcIp)}</span>` : ''}
+      </div>
+    </div>
+  `;
+
+  resultEl.innerHTML = alertHeader + '<div class="ai-txt" id="inv-ai-text">' + parseAIMarkdown(text) + '</div>';
+  if(actionsEl) actionsEl.style.display = 'flex';
+
+  // Store the report text for copy/escalate
+  resultEl.setAttribute('data-report', text);
+  resultEl.setAttribute('data-alert', JSON.stringify(a));
+}
+
+function invCopyReport(){
+  const txt = document.getElementById('inv-result').getAttribute('data-report') || '';
+  if(!txt){ toast('No report to copy', 'warn'); return; }
+  navigator.clipboard.writeText(txt)
+    .then(() => toast('Report copied to clipboard', 'ok'))
+    .catch(() => toast('Copy failed', 'err'));
+}
+
+async function invEscalateCase(){
+  const a = _invSelected;
+  if(!a){ toast('No alert selected', 'warn'); return; }
+  const report = document.getElementById('inv-result').getAttribute('data-report') || '';
+  document.getElementById('cc-title').value = `[INVESTIGATION] ${(a.description || '').slice(0, 80)}`;
+  document.getElementById('cc-desc').value = `AI INVESTIGATION REPORT\n\nRule: ${a.ruleId} (Level ${a.level})\nAgent: ${a.agent}\nSource IP: ${a.srcIp || 'N/A'}\nTimestamp: ${a.timestamp}\n\n=== AI REPORT ===\n\n${report.slice(0, 3000)}`;
+  document.getElementById('cc-sev').value = parseInt(a.level) >= 12 ? 'critical' : 'high';
+  document.getElementById('cc-tags').value = `soc-pilots,siem,investigation,${a.severity}`;
+  openModal('modal-case');
+}
+
+// ─── AI COPILOT ───────────────────────────────────────────────
+let _hist=[];
+function chatKey(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendChat();}}
+async function sendChat(){
+  const inp=document.getElementById('chat-in'),msg=inp.value.trim();if(!msg)return;
+  inp.value='';addMsg('u',msg);_hist.push({role:'user',content:msg});
+  const btn=document.getElementById('chat-btn');btn.disabled=true;
+  // Show thinking indicator with elapsed timer
+  const _tyStart = Date.now();
+  const _tyTimer = setInterval(()=>{
+    const el=document.getElementById('_ty_txt');
+    if(el){const s=Math.floor((Date.now()-_tyStart)/1000);el.textContent=`Thinking... ${s}s`;}
+    else clearInterval(_tyTimer);
+  },1000);
+  addMsg('ai','<div style="display:flex;align-items:center;gap:8px"><div class="spin" style="width:14px;height:14px;flex-shrink:0"></div><span id="_ty_txt" style="font-size:11px;color:var(--txt3);font-family:var(--fm)">Thinking...</span></div>','_ty',true);
+  const d=await P('/api/ai/chat',{message:msg,session_id:`soc_${CU.username}`,history:_hist.slice(-10)});
+  rmTy();btn.disabled=false;
+  let reply=d?.response||d?.output||d?.text||d?.message||'';
+  // Clean up leaked tool calls (e.g. "get_cases{} }```}```get_cases{}")
+  if(reply){
+    // Remove raw MCP tool call strings that sometimes leak through
+    reply=reply.replace(/^(get_|list_|search_|create_|update_)\w+\s*\{[^}]*\}[\s\S]*$/,'').trim();
+    // Remove code fences wrapping just tool calls
+    reply=reply.replace(/```\s*(get_|list_)\w+[\s\S]*?```/g,'').trim();
+    // If reply is now empty after cleaning, set to error message
+    if(!reply) reply='';
+  }
+  if(d?._timeout){
+    reply='⏱️ **SOCPilots AI is processing...**\n\nThe AI agent is taking longer than expected (>2 minutes).\n\n**This usually means:**\n- The MCP tools are fetching large datasets\n- n8n is running multiple tool iterations\n\n**Try:**\n- Ask a more specific question\n- Check n8n executions to see if it succeeded\n- Refresh and check if a response was generated';
+  } else if(d?.rateLimit||d?._status===429){
+    reply=`⏳ **Rate Limited**\n\n${d?.error||'Max 8 messages/minute.'}\n\nPlease wait 60 seconds.`;
+    setTimeout(()=>{const b=document.getElementById('chat-btn');if(b){b.disabled=false;b.textContent='Send';}},15000);
+  } else if(!reply){
+    const errMsg=d?.error||'';
+    if(errMsg.includes('429')||errMsg.includes('Rate limit')||errMsg.includes('rate_limited')){
+      reply='⚠️ **Mistral AI rate limit (429)**\n\nThe LLM is throttled. Wait 60 seconds and retry.\n\n💡 Fix in n8n: change model to `mistral-small-latest`';
+    } else if(errMsg.includes('timeout')){
+      reply='⚠️ **Timeout** — Try a simpler question or check n8n.';
+    } else {
+      reply='⚠️ **SOCPilots AI not responding**\n\nCheck n8n is running on vmi3254460:5678';
+    }
+  }
+  addMsg('ai',reply,'',false); // false = parse as markdown_hist.push({role:'assistant',content:reply});
+  document.getElementById('ctx-msgs').textContent=`${_hist.length} msgs`;
+}
+function addMsg(role,content,id='',isHTML=false){
+  const w=document.getElementById('chat-msgs'),div=document.createElement('div');
+  div.className=`cmsg ${role}`;if(id)div.id=id;
+  // isHTML=true → content is already HTML (spinner, error) → use as-is
+  // isHTML=false → content is raw AI markdown → always parse
+  const rendered = isHTML ? content : (role==='ai' ? parseAIMarkdown(content) : esc(content));
+  div.innerHTML=`<div class="cav ${role}">${role==='ai'?'SP':CU.username[0].toUpperCase()}</div><div class="cbub" style="max-width:100%">${rendered}</div>`;
+  w.appendChild(div);w.scrollTop=w.scrollHeight;
+}
+function rmTy(){const t=document.getElementById('_ty');if(t)t.remove();clearInterval(window._tyTimer);}
+function quick(msg){document.getElementById('chat-in').value=msg;sendChat();}
+
+// ═══════════════════════════════════════════════════════════════
+// CREATE RULES — Build and deploy Wazuh detection rules via AI
+// ═══════════════════════════════════════════════════════════════
+
+// ─── CREATE RULES MODE SWITCHER ──────────────────────────────
+function setRuleMode(mode){
+  const formEl=document.getElementById('mode-form');
+  const aiEl=document.getElementById('mode-ai');
+  const btnForm=document.getElementById('mode-btn-form');
+  const btnAI=document.getElementById('mode-btn-ai');
+  if(mode==='form'){
+    formEl.style.display='grid';
+    aiEl.style.display='none';
+    btnForm.className='btn btn-p btn-sm';
+    btnAI.className='btn btn-h btn-sm';
+  }else{
+    formEl.style.display='none';
+    aiEl.style.display='block';
+    btnForm.className='btn btn-h btn-sm';
+    btnAI.className='btn btn-p btn-sm';
+    loadCustomRules();
+  }
+}
+
+function toggleSysPrompt(){
+  const el=document.getElementById('rc-sys-prompt');
+  el.style.display=el.style.display==='none'?'block':'none';
+}
+
+// Rule Chat templates
+function rcTemplate(msg){
+  const inp=document.getElementById('rc-chat-in');
+  if(inp)inp.value=msg;
+  inp?.focus();
+}
+
+// Send message in rule chat
+let _rcHist=[];
+function rcChatKey(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendRuleChat();}}
+
+async function sendRuleChat(){
+  const inp=document.getElementById('rc-chat-in');
+  const msg=inp?.value.trim(); if(!msg)return;
+  const sysCtx=document.getElementById('rc-sys-prompt')?.value.trim()||'';
+  inp.value='';
+
+  // Add user message
+  rcAddMsg('u', msg);
+  _rcHist.push({role:'user',content:msg});
+
+  const btn=document.getElementById('rc-send-btn'); btn.disabled=true;
+  rcAddMsg('ai','<div class="spin" style="width:14px;height:14px;margin:3px"></div>','_rc_ty',true);
+
+  // Build system prompt for rule generation
+  const systemContext=`You are a Wazuh detection rule expert.
+The user wants to create a Wazuh OSSEC XML detection rule.
+${sysCtx?'Additional context: '+sysCtx:''}
+
+When generating a rule:
+1. Generate a complete valid Wazuh rule XML with proper attributes
+2. Use rule ID in range 200000-299999 (custom rules range)
+3. Include: <rule id="..."> <match> or <regex>, <description>, <group>, <level>, and MITRE tags if applicable
+4. After the XML, provide a brief explanation of what it detects
+5. Format the XML in a proper code block
+
+Generate the rule now.`;
+
+  const fullMsg=`${systemContext}
+
+User request: ${msg}`;
+
+  const d=await P('/api/ai/chat',{
+    message:fullMsg,
+    session_id:'soc-rule-chat',
+    history:_rcHist.slice(-6),
+  });
+
+  rcRmTy(); btn.disabled=false;
+  const reply=d?.response||d?.output||d?.text||d?.message||'SOCPilots AI unavailable';
+  rcAddMsg('ai',reply,'',false); // parse as markdown
+  _rcHist.push({role:'assistant',content:reply});
+
+  // Auto-extract XML if present
+  rcExtractAndShowXML(reply);
+}
+
+function rcAddMsg(role,content,id='',isHTML=false){
+  const w=document.getElementById('rc-chat-msgs');
+  if(!w)return;
+  const div=document.createElement('div');
+  div.className=`cmsg ${role}`; if(id)div.id=id;
+  // Always parse AI markdown unless it's pre-built HTML (spinner)
+  const rendered = isHTML ? content : (role==='ai' ? parseAIMarkdown(content) : esc(content));
+  div.innerHTML=`<div class="cav ${role}">${role==='ai'?'SP':CU.username[0].toUpperCase()}</div><div class="cbub" style="max-width:100%">${rendered}</div>`;
+  w.appendChild(div); w.scrollTop=w.scrollHeight;
+}
+
+function rcRmTy(){const t=document.getElementById('_rc_ty');if(t)t.remove();}
+
+// Extract XML from AI response and show in preview panel
+let _lastGeneratedXML='';
+
+function rcExtractAndShowXML(text){
+  // Try to find XML rule block
+  const codeIdx=text.indexOf('```xml');
+  let xml='';
+  if(codeIdx>=0){
+    const start=codeIdx+6;
+    const end=text.indexOf('```',start);
+    xml=end>=0?text.slice(start,end).trim():text.slice(start).trim();
+  } else {
+    const ruleIdx=text.indexOf('<rule');
+    if(ruleIdx>=0){
+      const endIdx=text.lastIndexOf('</rule>');
+      if(endIdx>=0)xml=text.slice(ruleIdx,endIdx+7).trim();
+    }
+  }
+
+  if(!xml)return;
+  _lastGeneratedXML=xml;
+
+  const preview=document.getElementById('rc-xml-preview');
+  if(preview){
+    preview.innerHTML=`<pre style="background:rgba(0,0,0,.5);border:1px solid rgba(0,229,255,.15);border-radius:4px;padding:12px;font-size:11px;font-family:var(--fm);color:#00e676;overflow-x:auto;white-space:pre-wrap;line-height:1.6;margin:0">${esc(xml)}</pre>`;
+  }
+
+  // Show action buttons
+  const copyBtn=document.getElementById('rc-copy-btn');
+  const importBtn=document.getElementById('rc-import-btn');
+  if(copyBtn)copyBtn.style.display='flex';
+  if(importBtn)importBtn.style.display='flex';
+}
+
+function rcCopyXML(){
+  if(!_lastGeneratedXML){toast('No XML generated yet','warn');return;}
+  navigator.clipboard.writeText(_lastGeneratedXML)
+    .then(()=>toast('Rule XML copied!','ok'))
+    .catch(()=>toast('Copy failed','err'));
+}
+
+// Parse XML and import into form builder
+function rcImportToForm(){
+  if(!_lastGeneratedXML){toast('No XML to import','warn');return;}
+  const xml=_lastGeneratedXML;
+
+  // Extract fields from XML
+  const getAttr=(tag,attr)=>{const m=xml.match(new RegExp(`<${tag}[^>]*${attr}="([^"]*)"`));return m?m[1]:'';}
+  const getTag=(tag)=>{const m=xml.match(new RegExp(`<${tag}[^>]*>([^<]*)<\/${tag}>`));return m?m[1].trim():'';}
+  const getAttrRule=(attr)=>{const m=xml.match(new RegExp(`<rule[^>]*${attr}="([^"]*)"`));return m?m[1]:'';}
+
+  const ruleId=getAttrRule('id')||'100001';
+  const level=getAttrRule('level')||'10';
+  const desc=getTag('description')||'';
+  const group=getTag('group')||'custom';
+  const match=getTag('match')||getTag('regex')||'';
+  const mitre=getTag('id')||''; // MITRE id
+
+  // Switch to form mode and fill in
+  setRuleMode('form');
+
+  setTimeout(()=>{
+    if(desc)document.getElementById('cr-name').value=desc.slice(0,60);
+    if(level)document.getElementById('cr-level').value=level;
+    const firstGroup=(group.split(',')[0]||'custom').trim();
+    const grpEl=document.getElementById('cr-group');
+    if(grpEl){
+      const opt=[...grpEl.options].find(o=>o.value===firstGroup||firstGroup.includes(o.value));
+      if(opt)grpEl.value=opt.value;
+    }
+    if(desc)document.getElementById('cr-desc').value=desc;
+    if(match)document.getElementById('cr-pattern').value=match;
+    // Store XML in preview
+    document.getElementById('cr-preview').innerHTML=`<pre style="background:rgba(0,0,0,.5);border:1px solid rgba(0,229,255,.15);border-radius:4px;padding:12px;font-size:11px;font-family:var(--fm);color:#00e676;overflow-x:auto;white-space:pre-wrap;line-height:1.6">${esc(_lastGeneratedXML)}</pre>`;
+    document.getElementById('cr-preview').setAttribute('data-xml',_lastGeneratedXML);
+    document.getElementById('copy-rule-btn').style.display='flex';
+    toast('Rule imported from AI! Review and adjust, then deploy.','ok');
+  },200);
+}
+
+const TEMPLATES={
+  ssh_bruteforce:{name:'SSH Brute Force Detection',level:'10',group:'sshd',desc:'Multiple failed SSH login attempts detected from same source IP',pattern:'PAM authentication failure\nFailed password for\nInvalid user\nConnection closed by invalid user',mitre:'T1110',freq:'5',action:'alert_and_case',context:'Threshold: 5+ failures in 60 seconds from same IP'},
+  web_scan:{name:'Web Application Scanner Detection',level:'8',group:'web',desc:'HTTP 404 flood — potential web vulnerability scanner detected',pattern:'HTTP 404\nnot found\nGET /admin\nGET /.env\nsqlmap\nnmap',mitre:'T1190',freq:'20',action:'alert_and_block',context:'Common scanner signatures: sqlmap, nmap, nikto, dirbuster'},
+  priv_escalation:{name:'Privilege Escalation Attempt',level:'12',group:'authentication',desc:'Suspicious sudo or su usage indicating privilege escalation attempt',pattern:'sudo: .* COMMAND\nsu: pam_unix\nsu: authentication failure\nsudo: pam_unix',mitre:'T1068',freq:'3',action:'full_response',context:'Unusual sudo commands especially to root from non-privileged users'},
+  malware_drop:{name:'Malware Dropper Execution',level:'13',group:'malware',desc:'Suspicious file execution pattern consistent with malware dropper',pattern:'chmod +x\nwget .sh\ncurl bash\npython -c\n/tmp/ exec',mitre:'T1204',freq:'1',action:'full_response',context:'Files executed from /tmp, /dev/shm or downloaded and executed'},
+};
+
+function fillTemplate(name){
+  const t=TEMPLATES[name]; if(!t)return;
+  document.getElementById('cr-name').value=t.name;
+  document.getElementById('cr-level').value=t.level;
+  document.getElementById('cr-group').value=t.group;
+  document.getElementById('cr-desc').value=t.desc;
+  document.getElementById('cr-pattern').value=t.pattern;
+  document.getElementById('cr-mitre').value=t.mitre;
+  document.getElementById('cr-freq').value=t.freq;
+  document.getElementById('cr-action').value=t.action;
+  document.getElementById('cr-context').value=t.context;
+  toast('Template loaded: '+t.name,'info');
+}
+
+function getRuleData(){
+  const manualId = parseInt(document.getElementById('cr-id')?.value || '');
+  return{
+    id: (manualId >= 200000 && manualId <= 299999) ? manualId : null,
+    name:document.getElementById('cr-name').value.trim(),
+    level:document.getElementById('cr-level').value,
+    group:document.getElementById('cr-group').value,
+    desc:document.getElementById('cr-desc').value.trim(),
+    pattern:document.getElementById('cr-pattern').value.trim(),
+    mitre:document.getElementById('cr-mitre').value,
+    freq:document.getElementById('cr-freq').value,
+    action:document.getElementById('cr-action').value,
+    context:document.getElementById('cr-context').value.trim(),
+  };
+}
+
+function previewRule(){
+  const d=getRuleData();
+  if(!d.name||!d.desc){toast('Name and description are required','warn');return;}
+  const el=document.getElementById('cr-preview');
+
+  // Build XML LOCALLY — no AI call needed for preview
+  const ruleId = d.id || (200000 + Math.floor(Math.random() * 9000));
+  const groupName = (d.group || 'custom').toLowerCase().replace(/[^a-z0-9_]/g,'_').replace(/_+$/,'') || 'custom';
+  const mitreIds = (d.mitre || '').split(/[,\s]+/).filter(Boolean);
+  const mitreXml = mitreIds.length
+    ? `\n    <mitre>\n${mitreIds.map(id=>`      <id>${id}</id>`).join('\n')}\n    </mitre>`
+    : '';
+  const xmlEsc = s => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+  const cleanXml = `<group name="${xmlEsc(groupName)}">
+  <rule id="${ruleId}" level="${d.level}">
+    <decoded_as>json</decoded_as>
+    <match>${xmlEsc(d.pattern || 'PATTERN_HERE')}</match>
+    <description>${xmlEsc(d.desc)}</description>
+    <group>${xmlEsc(d.group||'custom')}</group>${mitreXml}
+  </rule>
+</group>`;
+
+  el.innerHTML=`<pre style="background:rgba(0,0,0,.5);border:1px solid var(--b1);border-radius:4px;padding:12px;font-size:11px;font-family:var(--fm);color:#00e676;overflow-x:auto;white-space:pre-wrap;line-height:1.6">${esc(cleanXml)}</pre>`;
+  el.setAttribute('data-xml',cleanXml);
+  document.getElementById('copy-rule-btn').style.display='flex';
+  toast(`Preview: ${d.id?'manual':'auto'} ID ${ruleId}`,'ok');
+}
+
+function copyRule(){
+  const xml=document.getElementById('cr-preview').getAttribute('data-xml')||'';
+  if(!xml){toast('No rule to copy','warn');return;}
+  navigator.clipboard.writeText(xml).then(()=>toast('Rule XML copied!','ok')).catch(()=>toast('Copy failed','err'));
+}
+
+// TEST RULE — validate XML and pattern matching before deploy
+async function testRule(){
+  const d=getRuleData();
+  if(!d.name||!d.desc||!d.pattern){
+    toast('Name, description and pattern required','warn');
+    return;
+  }
+  const statusEl=document.getElementById('cr-status');
+  statusEl.innerHTML=spin('🧪 Testing rule (dry-run, no deployment)...');
+
+  const ruleId = d.id || (200000 + Math.floor(Math.random() * 9000));
+  const safeName = d.name.toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'').slice(0,30) || 'custom_rule';
+  const filename = `${safeName}_${ruleId}.xml`;
+  const groupName = (d.group || 'custom').toLowerCase().replace(/[^a-z0-9_]/g,'_').replace(/_+$/,'') || 'custom';
+
+  const mitreIds = (d.mitre || '').split(/[,\s]+/).filter(Boolean);
+  const mitreXml = mitreIds.length
+    ? `\n    <mitre>\n${mitreIds.map(id=>`      <id>${id}</id>`).join('\n')}\n    </mitre>`
+    : '';
+  const xmlEsc = s => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+  const ruleXml = `<group name="${xmlEsc(groupName)}">
+  <rule id="${ruleId}" level="${d.level}">
+    <decoded_as>json</decoded_as>
+    <match>${xmlEsc(d.pattern)}</match>
+    <description>${xmlEsc(d.desc)}</description>
+    <group>${xmlEsc(d.group||'custom')}</group>${mitreXml}
+  </rule>
+</group>`;
+
+  const testPrompt = `Test this Wazuh rule WITHOUT deploying it. Do NOT call the add_wazuh_rule tool.
+
+Proposed file: ${filename}
+Rule XML:
+${ruleXml}
+
+Tasks:
+1. Validate the XML syntax (well-formed, properly nested tags)
+2. Generate 3 sample log entries that WOULD match this rule
+3. Generate 2 sample log entries that should NOT match (false positive check)
+4. Assessment: false positive risk, performance, recommendations
+
+Format response with: ## XML Validation / ## Matching Logs / ## Non-Matching Logs / ## Assessment
+
+Do NOT call add_wazuh_rule. This is validation only.`;
+
+  const resp=await P('/api/ai/chat',{
+    message: testPrompt,
+    session_id: `rule-test-${ruleId}`,
+  });
+
+  const reply=resp?.response||resp?.output||resp?.text||'No response';
+  statusEl.innerHTML=`
+    <div class="banner info">🧪 Test complete — review before deploying</div>
+    <div style="font-size:10px;color:#8ab0d0;margin:8px 0;font-family:var(--fm)">Filename: ${filename} | Rule ID: ${ruleId}${d.id?' (manual)':''}</div>
+    <details open style="margin:8px 0;font-size:11px">
+      <summary style="cursor:pointer;color:var(--c);font-family:var(--fm)">View proposed XML</summary>
+      <pre style="background:#060d1a;padding:10px;border-radius:3px;font-size:10px;color:var(--g);overflow-x:auto;border-left:3px solid var(--c);margin-top:8px">${esc(ruleXml)}</pre>
+    </details>
+    <div class="ai-txt" style="font-size:11px;margin-top:8px;max-height:50vh;overflow-y:auto">${fmtAI(reply)}</div>`;
+  toast('Rule tested — review before deploying','ok');
+}
+
+async function createRule(){
+  const d=getRuleData();
+  if(!d.name||!d.desc||!d.pattern){
+    toast('Name, description and pattern are required','warn');
+    return;
+  }
+
+  const ruleId = d.id || (200000 + Math.floor(Math.random() * 9000));
+  const safeName = d.name.toLowerCase()
+    .replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'').slice(0,30) || 'custom_rule';
+  const filename = `${safeName}_${ruleId}.xml`;
+  const groupName = (d.group || 'custom')
+    .toLowerCase().replace(/[^a-z0-9_]/g,'_').replace(/_+$/,'') || 'custom';
+
+  const mitreIds = (d.mitre || '').split(/[,\s]+/).filter(Boolean);
+  const mitreXml = mitreIds.length
+    ? `\n    <mitre>\n${mitreIds.map(id => `      <id>${id}</id>`).join('\n')}\n    </mitre>`
+    : '';
+  const xmlEsc = s => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+  const ruleContent = `<group name="${xmlEsc(groupName)}">
+  <rule id="${ruleId}" level="${d.level}">
+    <decoded_as>json</decoded_as>
+    <match>${xmlEsc(d.pattern)}</match>
+    <description>${xmlEsc(d.desc)}</description>
+    <group>${xmlEsc(d.group||'custom')}</group>${mitreXml}
+  </rule>
+</group>`;
+
+  if(!confirm(`Deploy rule via add_wazuh_rule MCP tool?\n\n` +
+              `📁 rule_filename: ${filename}\n` +
+              `🆔 Rule ID: ${ruleId}${d.id?' (manual)':' (auto)'}\n` +
+              `📊 Level: ${d.level}\n` +
+              `🎯 Group: ${groupName}\n\n` +
+              `Continue?`)){
+    return;
+  }
+
+  const statusEl=document.getElementById('cr-status');
+  statusEl.innerHTML=spin(`🚀 Calling add_wazuh_rule MCP tool...`);
+
+  // ⚠️ CRITICAL: Make the tool unambiguous so AI doesn't call wrong endpoint
+  // Previous error: AI was calling /active-response (wrong tool — that's for blocking IPs)
+  // The CORRECT tool is "add_wazuh_rule" which calls PUT /rules/files/{filename}
+  const deployPrompt = `Add a custom Wazuh detection rule. You MUST use the tool named "add_wazuh_rule" (NOT "wazuh_block_ip", NOT "wazuh_isolate_host", NOT any active response tool).
+
+⚠️ TOOL TO CALL: add_wazuh_rule
+⚠️ DO NOT call active-response tools — those are for blocking IPs and isolating hosts.
+
+The "add_wazuh_rule" tool sends:
+  PUT /rules/files/{rule_filename}
+  Content-Type: application/octet-stream
+  Body: the XML rule content
+
+Pass these EXACT parameters to add_wazuh_rule:
+
+Parameter 1 — rule_content (string, required):
+${ruleContent}
+
+Parameter 2 — rule_filename (string, optional):
+${filename}
+
+After calling add_wazuh_rule:
+1. Check the response status field
+2. If status is "success", report: filename created, file path, rule ID
+3. If status is "error", report the exact error message
+4. Do NOT call any other tools after add_wazuh_rule succeeds`;
+
+  const resp=await P('/api/ai/chat',{
+    message: deployPrompt,
+    session_id: `rule-deploy-${ruleId}-${Date.now()}`,
+  });
+
+  const reply = resp?.response || resp?.output || resp?.text || '';
+
+  // Detect specific error patterns
+  const wrongTool = /active-response.*400|active_response|wazuh_block_ip|wazuh_isolate/i.test(reply);
+  const isSuccess = /"status"\s*:\s*"success"|created successfully|added successfully/i.test(reply);
+  const isError = /"status"\s*:\s*"error"|invalid xml|exceeds maximum|\bfailed\b/i.test(reply);
+
+  if(wrongTool){
+    statusEl.innerHTML=`
+      <div class="banner err">⚠ Wrong tool was called!</div>
+      <div style="font-size:11px;color:var(--txt2);margin:8px 0">The AI agent called an Active-Response tool (for blocking IPs) instead of <code>add_wazuh_rule</code>.</div>
+      <div style="font-size:11px;color:var(--txt2);margin:8px 0"><b>Fix:</b> Update n8n system prompt to explicitly mention <code>add_wazuh_rule</code> for rule deployment, or test directly with: <code>python3 deploy_rule_200005.py</code></div>
+      <details open style="margin:8px 0;font-size:11px">
+        <summary style="cursor:pointer;color:var(--c);font-family:var(--fm)">View attempted XML</summary>
+        <pre style="background:#060d1a;padding:10px;border-radius:3px;font-size:10px;color:var(--g);overflow-x:auto;border-left:3px solid var(--r);margin-top:8px">${esc(ruleContent)}</pre>
+      </details>
+      <div class="ai-txt" style="font-size:11px;margin-top:8px;max-height:50vh;overflow-y:auto">${fmtAI(reply)}</div>`;
+    toast('⚠️ Wrong tool called — check n8n prompt','err');
+  } else if(!reply){
+    statusEl.innerHTML=`<div class="banner err">⚠ No response from SOCPilots AI</div>`;
+    toast('⚠️ No AI response','err');
+  } else if(isError && !isSuccess){
+    statusEl.innerHTML=`
+      <div class="banner err">⚠ add_wazuh_rule reported an error</div>
+      <div style="font-size:10px;color:#8ab0d0;margin:8px 0;font-family:var(--fm)">rule_filename: ${filename}</div>
+      <details open style="margin:8px 0;font-size:11px">
+        <summary style="cursor:pointer;color:var(--c);font-family:var(--fm)">View attempted XML</summary>
+        <pre style="background:#060d1a;padding:10px;border-radius:3px;font-size:10px;color:var(--g);overflow-x:auto;border-left:3px solid var(--r);margin-top:8px">${esc(ruleContent)}</pre>
+      </details>
+      <div class="ai-txt" style="font-size:11px;margin-top:8px;max-height:50vh;overflow-y:auto">${fmtAI(reply)}</div>`;
+    toast('⚠️ Rule deployment failed','warn');
+  } else {
+    statusEl.innerHTML=`
+      <div class="banner ok">✓ Rule deployed via add_wazuh_rule (ID ${ruleId})</div>
+      <div style="font-size:10px;color:#8ab0d0;margin:8px 0;font-family:var(--fm)">file_name: ${filename} | endpoint: PUT /rules/files/${filename}</div>
+      <details style="margin:8px 0;font-size:11px">
+        <summary style="cursor:pointer;color:var(--c);font-family:var(--fm)">View deployed rule_content</summary>
+        <pre style="background:#060d1a;padding:10px;border-radius:3px;font-size:10px;color:var(--g);overflow-x:auto;border-left:3px solid var(--c);margin-top:8px">${esc(ruleContent)}</pre>
+      </details>
+      <div class="ai-txt" style="font-size:11px;margin-top:8px;max-height:50vh;overflow-y:auto">${fmtAI(reply)}</div>`;
+    toast(`✅ Rule ${ruleId} deployed!`,'ok');
+    setTimeout(()=>loadCustomRules(), 2500);
+  }
+}
+
+async function loadCustomRules(){
+  const el=document.getElementById('cr-list');
+  el.innerHTML=spin('Loading from SIEM...');
+  const d=await G('/api/rules');
+  if(!d||d.error){el.innerHTML=errBnr(d?.error||'SIEM unavailable');return;}
+  const rules=d.rules||[];
+  // Show custom rules (ID >= 200000 — our custom range)
+  const custom=rules.filter(r=>{
+    const id = parseInt(r.id);
+    return id >= 200000 && id < 300000;
+  });
+  const recent=rules.slice(0,15);
+  const display=custom.length>0?custom:recent;
+  const label=custom.length>0?`${custom.length} custom rules (ID 200000+)`:`Showing ${display.length} most recent rules`;
+  el.innerHTML=`<div style="font-size:10px;color:#8ab0d0;font-family:var(--fm);margin-bottom:8px">${label}</div>
+    <div class="tbl"><table><thead><tr><th>Rule ID</th><th>Level</th><th>Description</th><th>Groups</th><th>MITRE</th><th>Fires (24h)</th></tr></thead><tbody>${
+    display.map(r=>`<tr>
+      <td style="color:var(--c)">${esc(r.id)}</td>
+      <td><span class="badge ${sbadge(r.severity)}">${r.level}</span></td>
+      <td style="max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.description||'—')}</td>
+      <td style="color:#8ab0d0;font-size:10px">${esc((r.groups||'').slice(0,35))}</td>
+      <td>${r.mitre?`<span class="badge low" style="font-size:8px">${esc(r.mitre)}</span>`:''}</td>
+      <td style="color:var(--c)">${r.count||0}</td>
+    </tr>`).join('')
+  }</tbody></table></div>`;
+}
+
+// Add to nav loadPage map
+const _origGo=go;
+
+// ─── REPORTS ─────────────────────────────────────────────────
+async function loadReportMetrics(){
+  const d=await G('/api/dashboard');if(d){document.getElementById('rpt-cases').textContent=d.openCases||'—';document.getElementById('rpt-crit').textContent=d.criticalAlerts||'—';}
+}
+async function genReport(){
+  document.getElementById('rpt-body').innerHTML=spin('Loading from SOCPilots AI...');
+  const d=await G('/api/reports/summary');
+  if(!d||!d.text){document.getElementById('rpt-body').textContent='Report generation failed.';return;}
+  document.getElementById('rpt-body').innerHTML=`<div class="ai-txt">${fmtAI(d.text)}</div>`;
+}
+
+// ─── SETTINGS ─────────────────────────────────────────────────
+async function testConn(){
+  document.getElementById('conn-res').innerHTML=spin('Testing...');
+  const d=await G('/api/status');if(!d){document.getElementById('conn-res').innerHTML=errBnr('Backend unreachable');return;}
+  document.getElementById('conn-res').innerHTML=`<div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">${[
+    {name:'SIEM (OpenSearch)',info:d.opensearch,fix:'ufw allow 9200 on SIEM server'},
+    {name:'SP-CM (TheHive)',  info:d.thehive,   fix:'Check API key in .env'},
+    {name:'SOCPilots AI (n8n)',info:d.n8n,      fix:'ufw allow 5678 on AI server'},
+  ].map(({name,info,fix})=>`<div style="padding:9px 11px;background:var(--bg2);border:1px solid ${info?.ok?'rgba(0,230,118,.2)':'rgba(255,23,68,.2)'};border-radius:3px"><div style="display:flex;align-items:center;gap:8px;font-size:12px;font-family:var(--fm)"><div class="led ${info?.ok?'g':'r'}"></div><span style="flex:1;font-weight:600">${name}</span><span style="color:${info?.ok?'var(--g)':'var(--r)'}">${info?.ok?'ONLINE':'OFFLINE'}</span>${info?.latency?`<span style="color:#8ab0d0;font-size:10px">${info.latency}ms</span>`:''}</div>${!info?.ok?`<div style="font-size:10px;color:var(--y);margin-top:5px;font-family:var(--fm)">Fix: ${fix}</div>`:''}</div>`).join('')}</div>`;
+}
+
+// ─── MODALS ───────────────────────────────────────────────────
+function openModal(id){document.getElementById(id)?.classList.add('show');}
+function closeModal(id){document.getElementById(id)?.classList.remove('show');}
+document.querySelectorAll('.modal-ov').forEach(m=>m.addEventListener('click',e=>{if(e.target===m)m.classList.remove('show');}));
+
+// ─── TOAST ────────────────────────────────────────────────────
+function toast(msg,type='info'){
+  const a=document.getElementById('toasts'),t=document.createElement('div');t.className=`toast ${type}`;
+  const icons={ok:'✓',err:'✗',warn:'⚠',info:'ℹ'};
+  t.innerHTML=`<span>${icons[type]||'ℹ'}</span><span>${esc(msg)}</span>`;
+  a.appendChild(t);setTimeout(()=>{t.style.opacity='0';t.style.transition='opacity .3s';setTimeout(()=>t.remove(),300);},4000);
+}
+
+// ─── STARTUP ──────────────────────────────────────────────────
+checkStatus();
+loadDashboard();
+setInterval(()=>{checkStatus();if(CUR==='dashboard')loadDashboard();if(CUR==='threatmap')loadThreatMap();},90000);
+</script>
+</body>
+</html>

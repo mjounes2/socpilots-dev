@@ -1,0 +1,133 @@
+{
+  "name": "SOC Pilots - Enrichment",
+  "nodes": [
+    {
+      "parameters": {
+        "url": "={{ 'https://www.virustotal.com/api/v3/' + $fromAI('endpoint', 'API endpoint type: ip_addresses, domains, urls, files (use files for hashes)', 'string') + '/' + $fromAI('indicator', 'The IP, domain, URL or hash to analyze', 'string') }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-apikey",
+              "value": "0880243c155d758ea8f3073f3071ab2fa76157d29c913428ddc73d656a97c17d"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        },
+        "toolDescription": "Query VirusTotal threat intelligence for IPs, domains, URLs, or file hashes. The endpoint parameter must be one of: ip_addresses (for IPs), domains (for domain names), urls (for URLs - URL must be base64-encoded), files (for MD5/SHA1/SHA256 hashes). The indicator parameter is the actual value to query."
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.4,
+      "position": [
+        864,
+        48
+      ],
+      "id": "2d95591d-584f-4843-b2e0-de127eab58bd",
+      "name": "Virustotal"
+    },
+    {
+      "parameters": {
+        "url": "https://api.abuseipdb.com/api/v2/check",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "ipAddress",
+              "value": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('parameters0_Value', ``, 'string') }}"
+            },
+            {
+              "name": "maxAgeInDays",
+              "value": "90"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Key",
+              "value": "802f4ac4ffce3c0e76b584aa2260709556e7e7f9db0e41e192c600face6682a3850f83d18a9ffdf3"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {},
+        "toolDescription": "Check an IP address reputation on AbuseIPDB. Returns abuse confidence score, reports, ISP, country, and usage type. Only works for IP addresses, not domains or hashes."
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.4,
+      "position": [
+        544,
+        48
+      ],
+      "id": "0afe9347-8dbe-45c1-9565-2d5015e0baa3",
+      "name": "abuseipdb"
+    },
+    {
+      "parameters": {
+        "path": "enricment"
+      },
+      "type": "@n8n/n8n-nodes-langchain.mcpTrigger",
+      "typeVersion": 2,
+      "position": [
+        560,
+        -176
+      ],
+      "id": "15dfe610-361e-4798-a0de-14ae7ccb1d67",
+      "name": "MCP Server Trigger",
+      "webhookId": "67240d0a-be3b-4a30-a30a-0c2ee7ed4056"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Virustotal": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "abuseipdb": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": true,
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "cf13e188-dd34-48fd-af7f-4c9b477e3e67",
+  "meta": {
+    "instanceId": "4c988b5ffcb1e689ce7238b8c992189e2d9311b7593f384d1ccbab001524574d"
+  },
+  "id": "Ur0Hm3KDRI5QyDPX",
+  "tags": []
+}

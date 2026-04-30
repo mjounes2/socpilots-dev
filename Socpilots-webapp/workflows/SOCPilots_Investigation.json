@@ -1,0 +1,249 @@
+{
+  "name": "SOC Pilots - Investigation",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "socpilots-investigation",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -200,
+        0
+      ],
+      "id": "webhook-inv",
+      "name": "Webhook",
+      "webhookId": "socpilots-investigation-webhook"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $('Webhook').item.json.body.prompt || $('Webhook').item.json.body.message }}",
+        "options": {
+          "systemMessage": "You are SOCPilots Investigation AI \u2014 a senior SOC analyst conducting deep alert investigation.\n\nROLE: Investigate ONLY high (level 8-11) and critical (level 12+) Wazuh alerts.\n\nTOOLS AVAILABLE:\n- MCP Wazuh: search related alerts, agent status, rule details\n- MCP thehive: check existing cases, alert correlation\n- MCP Enrichment: VirusTotal + AbuseIPDB for IP/hash/domain enrichment\n\nINVESTIGATION PROCESS (mandatory):\n1. Parse the provided alert context (timestamp, agent, rule, source IP, etc.)\n2. ENRICH source IPs/hashes using MCP Enrichment\n3. SEARCH related alerts from same agent or source IP in last 24h via MCP Wazuh\n4. CHECK if a case already exists via MCP thehive\n5. GENERATE comprehensive investigation report\n\nREPORT FORMAT (always use this structure):\n\n## Executive Summary\nBrief 2-3 sentence overview for management\n\n## Technical Analysis\n- Attack vector / classification\n- Affected assets\n- Indicators of compromise (IOCs)\n- Timeline of events\n\n## Risk Assessment\n- Severity: critical/high\n- Confidence: %\n- Business impact: low/medium/high\n- True positive likelihood: %\n\n## MITRE ATT&CK Mapping\n- Tactics: list applicable tactics\n- Techniques: list with IDs (T1110.001, etc.)\n\n## Recommended Actions\n1. Immediate (next 5 minutes)\n2. Short-term (within 1 hour)\n3. Investigation/Hunt (within 24 hours)\n\n## IOC Enrichment Results\nShow VirusTotal + AbuseIPDB findings if IPs/hashes found\n\n## Related Events\nOther alerts from same source/agent in last 24h\n\nCRITICAL RULES:\n- Call each MCP tool MAXIMUM ONCE \u2014 do not retry\n- Use real newlines between sections\n- Each table row on its own line\n- Be specific with technical details\n- Provide actionable recommendations\n\nOperator: {{ $('Webhook').item.json.body._user || 'analyst' }}",
+          "maxIterations": 8,
+          "returnIntermediateSteps": false
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        80,
+        0
+      ],
+      "id": "agent-inv",
+      "name": "Investigation Agent"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4o-mini"
+        },
+        "options": {
+          "temperature": 0.4,
+          "maxTokens": 2000
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        -80,
+        200
+      ],
+      "id": "llm-inv",
+      "name": "GPT-4o-mini",
+      "credentials": {
+        "openAiApi": {
+          "id": "aZi7HyBvkCMhMUWt",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ 'inv_' + ($('Webhook').item.json.body.session_id || 'default') }}",
+        "contextWindowLength": 4
+      },
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [
+        80,
+        200
+      ],
+      "id": "mem-inv",
+      "name": "Simple Memory"
+    },
+    {
+      "parameters": {
+        "endpointUrl": "http://vmi3247591.contaboserver.net:3000/mcp",
+        "authentication": "bearerAuth",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.mcpClientTool",
+      "typeVersion": 1.2,
+      "position": [
+        400,
+        200
+      ],
+      "id": "mcp-wazuh-inv",
+      "name": "MCP Wazuh",
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "0c5vjw7XGKClhEQj",
+          "name": "Wazuh-MCP"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "endpointUrl": "http://vmi3254460.contaboserver.net:8080/mcp",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.mcpClientTool",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        200
+      ],
+      "id": "mcp-hive-inv",
+      "name": "MCP thehive"
+    },
+    {
+      "parameters": {
+        "endpointUrl": "http://vmi3254460.contaboserver.net:5678/mcp/enricment",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.mcpClientTool",
+      "typeVersion": 1.2,
+      "position": [
+        560,
+        200
+      ],
+      "id": "mcp-enrich-inv",
+      "name": "MCP Enrichment"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ \"response\": $json.output, \"type\": \"investigation\" }) }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "*"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        400,
+        0
+      ],
+      "id": "respond-inv",
+      "name": "Respond to Webhook"
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Investigation Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GPT-4o-mini": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Investigation Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simple Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "Investigation Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MCP Wazuh": {
+      "ai_tool": [
+        [
+          {
+            "node": "Investigation Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MCP thehive": {
+      "ai_tool": [
+        [
+          {
+            "node": "Investigation Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MCP Enrichment": {
+      "ai_tool": [
+        [
+          {
+            "node": "Investigation Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Investigation Agent": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "meta": {
+    "instanceId": "4c988b5ffcb1e689ce7238b8c992189e2d9311b7593f384d1ccbab001524574d"
+  },
+  "tags": []
+}

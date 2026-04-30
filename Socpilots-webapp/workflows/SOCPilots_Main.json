@@ -1,0 +1,247 @@
+{
+  "name": "SOC Pilots - WEBAPP-PRD",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "socpilots",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "webhook-main",
+      "name": "Webhook",
+      "webhookId": "97fbe0dd-424e-4bc9-9d52-95f7adf80962"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $('Webhook').item.json.body.message }}",
+        "options": {
+          "systemMessage": "You are SOCPilots AI \u2014 Security Operations Analyst.\n\nTOOLS AVAILABLE (MCP Wazuh has 48 tools \u2014 be careful which one you pick):\n- MCP thehive \u2014 SP-CM cases (TheHive)\n- MCP Enrichment \u2014 VirusTotal + AbuseIPDB IOC enrichment\n\nCRITICAL RULES:\n- Call each MCP tool MAXIMUM ONCE per request\n- Do not retry tool calls\n\n\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n  \u26a0\ufe0f TOOL SELECTION FOR RULE DEPLOYMENT \u2014 READ CAREFULLY\n\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n\nWhen user wants to ADD/CREATE/DEPLOY a Wazuh DETECTION RULE:\n  \u2705 USE: add_wazuh_rule\n  \u2705 Endpoint: PUT /rules/files/{filename}\n  \u2705 Purpose: Saves XML rule to /var/ossec/etc/rules/\n\nDO NOT confuse with these similar-sounding tools (THEY DO DIFFERENT THINGS):\n  \u274c wazuh_block_ip          \u2014 for BLOCKING attacker IPs (uses /active-response)\n  \u274c wazuh_isolate_host      \u2014 for ISOLATING compromised hosts (uses /active-response)\n  \u274c wazuh_kill_process      \u2014 for KILLING running processes (uses /active-response)\n  \u274c wazuh_disable_user      \u2014 for DISABLING user accounts (uses /active-response)\n  \u274c wazuh_quarantine_file   \u2014 for QUARANTINING files (uses /active-response)\n\nALL the active response tools above hit the /active-response endpoint\nwhich RETURNS HTTP 400 if you try to send rule XML to it.\n\n\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n  add_wazuh_rule \u2014 VERIFIED SPEC FROM SOC-AI-NG\n\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n\nTool name: add_wazuh_rule\nDescription: [ACTION] Add a new Wazuh detection rule in XML format. Risk: MEDIUM, Reversible.\n\nBackend behavior (wazuh_client.add_rule):\n  PUT /rules/files/{rule_filename}\n  Content-Type: application/octet-stream\n  Body: rule_content (XML string)\n\nPARAMETERS:\n  \u2705 rule_content (string, REQUIRED) \u2014 pure XML string, max 1MB\n  \u2705 rule_filename (string, optional) \u2014 defaults to \"custom_rules.xml\"\n\nRESPONSE:\n  Success: {\"status\": \"success\", \"message\": \"Rule file '...' created successfully\", \"file_name\": \"...\"}\n  Error:   {\"status\": \"error\", \"error\": \"...\"}\n\n\u26a0\ufe0f RULE XML SCHEMA \u2014 exact format:\n\n<group name=\"GROUP_NAME\">\n  <rule id=\"RULE_ID\" level=\"LEVEL\">\n    <decoded_as>json</decoded_as>\n    <match>PATTERN</match>\n    <description>DESCRIPTION</description>\n    <group>SUBGROUP</group>\n    <mitre>\n      <id>T1078</id>\n      <id>T1110</id>\n    </mitre>\n  </rule>\n</group>\n\n\u26a0\ufe0f STRICT RULES:\n- Rule ID: 200000-299999 (custom range)\n- group name attribute: NO trailing comma\n- MITRE: ONLY <id> tags. NEVER <tactic> or <technique>\n- decoded_as: usually \"json\"\n- Pass rule_content as raw XML string\n\nEXAMPLE CORRECT CALL:\n  add_wazuh_rule(\n    rule_content = \"<group name=\\\"wazuh_admin_login\\\">\\n  <rule id=\\\"200005\\\" level=\\\"6\\\">\\n    <decoded_as>json</decoded_as>\\n    <match>successful login</match>\\n    <description>Detect admin login</description>\\n    <group>authentication</group>\\n    <mitre>\\n      <id>T1078</id>\\n    </mitre>\\n  </rule>\\n</group>\",\n    rule_filename = \"admin_login_200005.xml\"\n  )\n\n\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n  OTHER COMMON TOOLS\n\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n\nFor READING data:\n  - get_wazuh_alerts, get_wazuh_alert_summary \u2014 query alerts\n  - get_wazuh_agents \u2014 list agents\n  - get_wazuh_rules_summary \u2014 list rules\n  - get_wazuh_vulnerabilities \u2014 query CVEs\n\nFor TheHive: use MCP thehive tools\nFor IOC enrichment: use MCP Enrichment\n\n\u2550\u2550\u2550 FORMATTING \u2550\u2550\u2550\n- Real newlines between paragraphs\n- Each table row on its own line\n- Blank line before/after tables and headers\n- Each list item on its own line\n\nOperator: {{ $('Webhook').item.json.body._user || 'analyst' }}",
+          "maxIterations": 20,
+          "returnIntermediateSteps": false
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        400,
+        0
+      ],
+      "id": "agent-main",
+      "name": "AI Agent"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4o-mini"
+        },
+        "options": {
+          "temperature": 0.4
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        240,
+        240
+      ],
+      "id": "llm-main",
+      "name": "OpenAI Chat Model",
+      "credentials": {
+        "openAiApi": {
+          "id": "aZi7HyBvkCMhMUWt",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $('Webhook').item.json.body.session_id || $('Webhook').item.json.body._user || 'soc-default' }}",
+        "contextWindowLength": 8
+      },
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [
+        400,
+        240
+      ],
+      "id": "mem-main",
+      "name": "Simple Memory"
+    },
+    {
+      "parameters": {
+        "endpointUrl": "http://vmi3247591.contaboserver.net:3000/mcp",
+        "authentication": "bearerAuth",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.mcpClientTool",
+      "typeVersion": 1.2,
+      "position": [
+        720,
+        240
+      ],
+      "id": "mcp-wazuh-main",
+      "name": "MCP Wazuh",
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "0c5vjw7XGKClhEQj",
+          "name": "Wazuh-MCP"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "endpointUrl": "http://vmi3254460.contaboserver.net:8080/mcp",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.mcpClientTool",
+      "typeVersion": 1.2,
+      "position": [
+        560,
+        240
+      ],
+      "id": "mcp-hive-main",
+      "name": "MCP thehive"
+    },
+    {
+      "parameters": {
+        "endpointUrl": "http://vmi3245118.contaboserver.net:5678/mcp/enricment",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.mcpClientTool",
+      "typeVersion": 1.2,
+      "position": [
+        880,
+        240
+      ],
+      "id": "mcp-enrich-main",
+      "name": "MCP Enrichment"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ \"response\": $json.output }) }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "*"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        880,
+        0
+      ],
+      "id": "respond-main",
+      "name": "Respond to Webhook"
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simple Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MCP Wazuh": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MCP thehive": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MCP Enrichment": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "meta": {
+    "instanceId": "4c988b5ffcb1e689ce7238b8c992189e2d9311b7593f384d1ccbab001524574d"
+  },
+  "tags": []
+}
