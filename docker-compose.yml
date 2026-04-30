@@ -109,8 +109,6 @@ services:
     networks:
       - soc
     # No host port — n8n reaches it via internal network: http://mcp-wazuh:3001
-    extra_hosts:
-      - "host.docker.internal:host-gateway"   # lets container reach host's Wazuh
     env_file:
       - ./MCP-WAZUH/.env
     environment:
@@ -118,11 +116,11 @@ services:
       MCP_PORT: 3001
       ENVIRONMENT: production
       AUTH_MODE: ${WAZUH_MCP_AUTH_MODE:-bearer}
-      # Point at host's Wazuh (not localhost — that would be the container itself)
-      WAZUH_HOST: host.docker.internal
+      # Wazuh Manager and Indexer run on a separate server — set WAZUH_HOST in .env
+      WAZUH_HOST: ${WAZUH_HOST:-vmi3247591.contaboserver.net}
       WAZUH_PORT: ${WAZUH_PORT:-55000}
       WAZUH_VERIFY_SSL: "false"
-      WAZUH_INDEXER_HOST: host.docker.internal
+      WAZUH_INDEXER_HOST: ${WAZUH_INDEXER_HOST:-vmi3247591.contaboserver.net}
       WAZUH_INDEXER_PORT: ${WAZUH_INDEXER_PORT:-9200}
       WAZUH_INDEXER_VERIFY_SSL: "false"
     tmpfs:
