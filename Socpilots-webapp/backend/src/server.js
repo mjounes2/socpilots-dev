@@ -20,8 +20,8 @@ const OS_USER  = process.env.OPENSEARCH_USER  || 'admin';
 const OS_PASS  = process.env.OPENSEARCH_PASS  || 'SecretPassword';
 const HIVE_URL = (process.env.THEHIVE_URL     || 'https://app.socpilots.com').replace(/\/$/,'');
 const HIVE_KEY = process.env.THEHIVE_API_KEY  || 'S0+5fYWCnpiFkp1ndicOJuZkpEpOIWtB';
-const N8N_URL  = process.env.N8N_WEBHOOK_URL  || 'http://vmi3254460.contaboserver.net:5678/webhook/socpilots';
-const N8N_INV  = process.env.N8N_INVESTIGATION_URL || 'http://vmi3254460.contaboserver.net:5678/webhook/socpilots-investigation';
+const N8N_URL  = process.env.N8N_WEBHOOK_URL  || 'http://n8n:5678/webhook/socpilots';
+const N8N_INV  = process.env.N8N_INVESTIGATION_URL || 'http://n8n:5678/webhook/socpilots-investigation';
 const IDX      = process.env.WAZUH_INDEX      || 'wazuh-alerts-*';
 
 // Skip SSL verify (Wazuh self-signed cert)

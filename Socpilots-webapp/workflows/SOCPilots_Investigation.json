@@ -102,7 +102,7 @@
     },
     {
       "parameters": {
-        "endpointUrl": "http://vmi3254460.contaboserver.net:8080/mcp",
+        "endpointUrl": "http://79.143.190.97:8080/mcp",
         "options": {}
       },
       "type": "@n8n/n8n-nodes-langchain.mcpClientTool",
@@ -116,7 +116,7 @@
     },
     {
       "parameters": {
-        "endpointUrl": "http://vmi3254460.contaboserver.net:5678/mcp/enricment",
+        "endpointUrl": "http://79.143.190.97:5678/mcp/enricment",
         "options": {}
       },
       "type": "@n8n/n8n-nodes-langchain.mcpClientTool",
@@ -236,7 +236,7 @@
       ]
     }
   },
-  "active": false,
+  "active": true,
   "settings": {
     "executionOrder": "v1",
     "binaryMode": "separate",

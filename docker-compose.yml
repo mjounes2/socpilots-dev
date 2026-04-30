@@ -1,6 +1,6 @@
 # ═══════════════════════════════════════════════════════════════════
 #  SOCPilots — Unified Stack
-#  All services on one server, one network, no port conflicts
+#  All services on one server, one network, one .env file at root.
 #
 #  External ports:
 #    80    → Nginx → SOCPilots webapp
@@ -8,7 +8,7 @@
 #    8080  → TheHive MCP (direct access for n8n)
 #
 #  Internal only (no host binding):
-#    webapp:3000   — behind nginx
+#    webapp:3000    — behind nginx
 #    mcp-wazuh:3001 — accessed by n8n via service name
 #    postgres:5432  — accessed by webapp only
 #
@@ -57,10 +57,28 @@ services:
     networks:
       - soc
     # No host port — nginx handles all external traffic on port 80
-    volumes:
-      - ./Socpilots-webapp/.env:/app/.env:ro
     environment:
-      - NODE_ENV=production
+      NODE_ENV: production
+      PORT: 3000
+      # PostgreSQL
+      PG_HOST: postgres
+      PG_PORT: 5432
+      PG_DATABASE: ${PG_DATABASE:-socpilots}
+      PG_USER: ${PG_USER:-socpilots}
+      PG_PASSWORD: ${PG_PASSWORD}
+      # OpenSearch / Wazuh Indexer
+      OPENSEARCH_URL: ${OPENSEARCH_URL}
+      OPENSEARCH_USER: ${OPENSEARCH_USER:-admin}
+      OPENSEARCH_PASS: ${OPENSEARCH_PASS}
+      WAZUH_INDEX: ${WAZUH_INDEX:-wazuh-alerts-*}
+      # TheHive
+      THEHIVE_URL: ${THEHIVE_URL}
+      THEHIVE_API_KEY: ${THEHIVE_API_KEY}
+      # n8n webhooks — use internal Docker service name
+      N8N_WEBHOOK_URL: ${N8N_WEBHOOK_URL:-http://n8n:5678/webhook/socpilots}
+      N8N_INVESTIGATION_URL: ${N8N_INVESTIGATION_URL:-http://n8n:5678/webhook/socpilots-investigation}
+      # Auth users
+      SOC_USERS: ${SOC_USERS}
     depends_on:
       postgres:
         condition: service_healthy
@@ -93,7 +111,7 @@ services:
 
   # ── Wazuh MCP Server ───────────────────────────────────────────
   # Accessed internally by n8n via http://mcp-wazuh:3001
-  # Connects to Wazuh Manager on the host via host.docker.internal
+  # Connects to Wazuh Manager on a separate server (WAZUH_HOST in .env)
   mcp-wazuh:
     build:
       context: ./MCP-WAZUH
@@ -109,20 +127,27 @@ services:
     networks:
       - soc
     # No host port — n8n reaches it via internal network: http://mcp-wazuh:3001
-    env_file:
-      - ./MCP-WAZUH/.env
     environment:
       MCP_HOST: 0.0.0.0
       MCP_PORT: 3001
       ENVIRONMENT: production
+      # Auth
       AUTH_MODE: ${WAZUH_MCP_AUTH_MODE:-bearer}
-      # Wazuh Manager and Indexer run on a separate server — set WAZUH_HOST in .env
-      WAZUH_HOST: ${WAZUH_HOST:-vmi3247591.contaboserver.net}
+      AUTH_SECRET_KEY: ${AUTH_SECRET_KEY}
+      MCP_API_KEY: ${MCP_API_KEY:-}
+      # Wazuh Manager
+      WAZUH_HOST: ${WAZUH_HOST}
       WAZUH_PORT: ${WAZUH_PORT:-55000}
+      WAZUH_USER: ${WAZUH_USER}
+      WAZUH_PASS: ${WAZUH_PASS}
       WAZUH_VERIFY_SSL: "false"
-      WAZUH_INDEXER_HOST: ${WAZUH_INDEXER_HOST:-vmi3247591.contaboserver.net}
+      # Wazuh Indexer
+      WAZUH_INDEXER_HOST: ${WAZUH_INDEXER_HOST}
       WAZUH_INDEXER_PORT: ${WAZUH_INDEXER_PORT:-9200}
+      WAZUH_INDEXER_USER: ${WAZUH_INDEXER_USER:-admin}
+      WAZUH_INDEXER_PASS: ${WAZUH_INDEXER_PASS}
       WAZUH_INDEXER_VERIFY_SSL: "false"
+      LOG_LEVEL: INFO
     tmpfs:
       - /tmp:noexec,nosuid,size=64m
       - /app/logs:noexec,nosuid,size=128m
@@ -158,7 +183,7 @@ services:
     networks:
       - soc
     ports:
-      - "8080:8080"   # also exposed externally so n8n can reach it directly if needed
+      - "8080:8080"
     environment:
       THEHIVE_URL: ${THEHIVE_URL}
       THEHIVE_API_KEY: ${THEHIVE_API_KEY}
