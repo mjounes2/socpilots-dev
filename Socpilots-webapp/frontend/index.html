@@ -1011,6 +1011,7 @@ sshd: Failed" style="min-height:80px"></textarea></div>
     </div>
     <div class="modal-ft"><button class="btn btn-h" onclick="closeModal('modal-case')">Cancel</button><button class="btn btn-p" onclick="createCase()">Create Case</button></div>
   </div>
+</div>
 
 <!-- ALERT DETAIL MODAL -->
 <div class="modal-ov" id="modal-alert">
@@ -1982,25 +1983,21 @@ Provide structured investigation with:
 }
 
 function showAlert(i){
-  // Get alert from rendered cache
   const cached = window._renderedAlerts || _alerts || [];
   _selAlert = cached[i];
   if (!_selAlert) {
-    console.error('[showAlert] No alert at index', i, '- cache has', cached.length, 'alerts');
-    toast('Alert details not available — try refreshing the page', 'warn');
+    toast('Alert not found — try refreshing', 'warn');
     return;
   }
   const a = _selAlert;
-  console.log('[showAlert] Opening modal for:', a.ruleId, a.timestamp);
-
   const modalEl = document.getElementById('modal-alert');
   const bodyEl = document.getElementById('modal-alert-body');
-  if (!modalEl || !bodyEl) {
-    console.error('[showAlert] Modal element missing!');
-    alert('Modal element not found in DOM. Try refreshing the page.');
-    return;
+  if (!modalEl || !bodyEl) { toast('Modal not found — reload page', 'err'); return; }
+  try {
+    bodyEl.innerHTML=`<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:12px;font-family:var(--fm)"><div><div style="font-size:9px;color:#8ab0d0;letter-spacing:1px">TIMESTAMP</div><div style="margin-top:3px">${esc(a.timestamp)}</div></div><div><div style="font-size:9px;color:#8ab0d0;letter-spacing:1px">SEVERITY</div><div style="margin-top:3px"><span class="badge ${sbadge(a.severity)}">${a.severity} (lvl ${a.level})</span></div></div><div><div style="font-size:9px;color:#8ab0d0;letter-spacing:1px">RULE ID</div><div style="margin-top:3px;color:var(--c)">${esc(a.ruleId)}</div></div><div><div style="font-size:9px;color:#8ab0d0;letter-spacing:1px">AGENT</div><div style="margin-top:3px">${esc(a.agent)}</div></div><div style="grid-column:1/-1"><div style="font-size:9px;color:#8ab0d0;letter-spacing:1px">DESCRIPTION</div><div style="margin-top:3px">${esc(a.description)}</div></div><div><div style="font-size:9px;color:#8ab0d0;letter-spacing:1px">SOURCE IP</div><div style="margin-top:3px;color:var(--r)">${esc(a.srcIp)}</div></div><div><div style="font-size:9px;color:#8ab0d0;letter-spacing:1px">MITRE</div><div style="margin-top:4px;display:flex;gap:4px;flex-wrap:wrap">${(a.mitre||[]).map(m=>`<span class="badge low">${esc(m)}</span>`).join('')}${(a.mitreTactic||[]).map(t=>`<span class="badge medium">${esc(t)}</span>`).join('')}</div></div>${a.fullLog?`<div style="grid-column:1/-1"><div style="font-size:9px;color:#8ab0d0;letter-spacing:1px">FULL LOG</div><div style="margin-top:4px;padding:8px;background:rgba(0,0,0,.5);border-radius:3px;font-size:10px;word-break:break-all;line-height:1.6;color:var(--g)">${esc(a.fullLog)}</div></div>`:''}</div>`;
+  } catch(e) {
+    bodyEl.innerHTML=`<div style="padding:12px;color:var(--r)">Error rendering alert: ${esc(String(e))}</div>`;
   }
-  bodyEl.innerHTML=`<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:12px;font-family:var(--fm)"><div><div style="font-size:9px;color:#8ab0d0;letter-spacing:1px">TIMESTAMP</div><div style="margin-top:3px">${esc(a.timestamp)}</div></div><div><div style="font-size:9px;color:#8ab0d0;letter-spacing:1px">SEVERITY</div><div style="margin-top:3px"><span class="badge ${sbadge(a.severity)}">${a.severity} (lvl ${a.level})</span></div></div><div><div style="font-size:9px;color:#8ab0d0;letter-spacing:1px">RULE ID</div><div style="margin-top:3px;color:var(--c)">${esc(a.ruleId)}</div></div><div><div style="font-size:9px;color:#8ab0d0;letter-spacing:1px">AGENT</div><div style="margin-top:3px">${esc(a.agent)}</div></div><div style="grid-column:1/-1"><div style="font-size:9px;color:#8ab0d0;letter-spacing:1px">DESCRIPTION</div><div style="margin-top:3px">${esc(a.description)}</div></div><div><div style="font-size:9px;color:#8ab0d0;letter-spacing:1px">SOURCE IP</div><div style="margin-top:3px;color:var(--r)">${esc(a.srcIp)}</div></div><div><div style="font-size:9px;color:#8ab0d0;letter-spacing:1px">MITRE</div><div style="margin-top:4px;display:flex;gap:4px;flex-wrap:wrap">${(a.mitre||[]).map(m=>`<span class="badge low">${esc(m)}</span>`).join('')}${(a.mitreTactic||[]).map(t=>`<span class="badge medium">${esc(t)}</span>`).join('')}</div></div>${a.fullLog?`<div style="grid-column:1/-1"><div style="font-size:9px;color:#8ab0d0;letter-spacing:1px">FULL LOG</div><div style="margin-top:4px;padding:8px;background:rgba(0,0,0,.5);border-radius:3px;font-size:10px;word-break:break-all;line-height:1.6;color:var(--g)">${esc(a.fullLog)}</div></div>`:''}</div>`;
   openModal('modal-alert');
 }
 function escalateToCase(){if(!_selAlert)return;closeModal('modal-alert');document.getElementById('cc-title').value=`Alert: ${(_selAlert.description||'').slice(0,80)}`;document.getElementById('cc-desc').value=`Escalated from SIEM\nRule: ${_selAlert.ruleId||''}\nAgent: ${_selAlert.agent||''}\nSrc IP: ${_selAlert.srcIp||''}`;document.getElementById('cc-sev').value=_selAlert.severity||'medium';openModal('modal-case');}
@@ -3089,9 +3086,9 @@ async function testConn(){
 }
 
 // ─── MODALS ───────────────────────────────────────────────────
-function openModal(id){document.getElementById(id)?.classList.add('show');}
-function closeModal(id){document.getElementById(id)?.classList.remove('show');}
-document.querySelectorAll('.modal-ov').forEach(m=>m.addEventListener('click',e=>{if(e.target===m)m.classList.remove('show');}));
+function openModal(id){const el=document.getElementById(id);if(!el)return;el.classList.add('show');el.style.display='flex';}
+function closeModal(id){const el=document.getElementById(id);if(!el)return;el.classList.remove('show');el.style.display='';}
+document.querySelectorAll('.modal-ov').forEach(m=>m.addEventListener('click',e=>{if(e.target===m){m.classList.remove('show');m.style.display='';}  }));
 
 // ─── TOAST ────────────────────────────────────────────────────
 function toast(msg,type='info'){
