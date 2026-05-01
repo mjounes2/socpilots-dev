@@ -9,7 +9,7 @@
           "parameters": [
             {
               "name": "x-apikey",
-              "value": "0880243c155d758ea8f3073f3071ab2fa76157d29c913428ddc73d656a97c17d"
+              "value": "={{ $env.VIRUSTOTAL_API_KEY }}"
             },
             {
               "name": "Accept",
@@ -28,10 +28,7 @@
       },
       "type": "n8n-nodes-base.httpRequestTool",
       "typeVersion": 4.4,
-      "position": [
-        864,
-        48
-      ],
+      "position": [864, 48],
       "id": "2d95591d-584f-4843-b2e0-de127eab58bd",
       "name": "Virustotal"
     },
@@ -56,7 +53,7 @@
           "parameters": [
             {
               "name": "Key",
-              "value": "802f4ac4ffce3c0e76b584aa2260709556e7e7f9db0e41e192c600face6682a3850f83d18a9ffdf3"
+              "value": "={{ $env.ABUSEIPDB_API_KEY }}"
             },
             {
               "name": "Accept",
@@ -69,10 +66,7 @@
       },
       "type": "n8n-nodes-base.httpRequestTool",
       "typeVersion": 4.4,
-      "position": [
-        544,
-        48
-      ],
+      "position": [544, 48],
       "id": "0afe9347-8dbe-45c1-9565-2d5015e0baa3",
       "name": "abuseipdb"
     },
@@ -82,10 +76,7 @@
       },
       "type": "@n8n/n8n-nodes-langchain.mcpTrigger",
       "typeVersion": 2,
-      "position": [
-        560,
-        -176
-      ],
+      "position": [560, -176],
       "id": "15dfe610-361e-4798-a0de-14ae7ccb1d67",
       "name": "MCP Server Trigger",
       "webhookId": "67240d0a-be3b-4a30-a30a-0c2ee7ed4056"
@@ -124,10 +115,9 @@
     "timeSavedMode": "fixed",
     "callerPolicy": "workflowsFromSameOwner"
   },
-  "versionId": "cf13e188-dd34-48fd-af7f-4c9b477e3e67",
   "meta": {
     "instanceId": "4c988b5ffcb1e689ce7238b8c992189e2d9311b7593f384d1ccbab001524574d"
   },
-  "id": "Ur0Hm3KDRI5QyDPX",
+  "id": "BbuBpP3hOjKJmmqI",
   "tags": []
 }

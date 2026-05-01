@@ -217,9 +217,18 @@ services:
       - N8N_BASIC_AUTH_USER=${N8N_USER:-admin}
       - N8N_BASIC_AUTH_PASSWORD=${N8N_PASSWORD}
       - N8N_SECURE_COOKIE=false
-      # Internal MCP endpoints — n8n uses these service names directly
-      - MCP_WAZUH_URL=http://mcp-wazuh:3001
-      - MCP_THEHIVE_URL=http://thehive-mcp:8080
+      # MCP service coordinates — consumed by workflow $env expressions
+      - MCP_WAZUH_HOST=mcp-wazuh
+      - MCP_WAZUH_PORT=3001
+      - MCP_THEHIVE_HOST=thehive-mcp
+      - MCP_THEHIVE_PORT=8080
+      - N8N_INTERNAL_HOST=n8n
+      - N8N_INTERNAL_PORT=5678
+      # Threat intel API keys — consumed by Enrichment workflow $env expressions
+      - VIRUSTOTAL_API_KEY=${VIRUSTOTAL_API_KEY}
+      - ABUSEIPDB_API_KEY=${ABUSEIPDB_API_KEY}
+      # Allowlist env vars accessible in workflow expressions
+      - N8N_SECURITY_ALLOWED_EXTERNAL_ENV_VARS=MCP_WAZUH_HOST,MCP_WAZUH_PORT,MCP_THEHIVE_HOST,MCP_THEHIVE_PORT,N8N_INTERNAL_HOST,N8N_INTERNAL_PORT,VIRUSTOTAL_API_KEY,ABUSEIPDB_API_KEY
     volumes:
       - n8n_data:/home/node/.n8n
     depends_on:

@@ -14,7 +14,7 @@
         0,
         0
       ],
-      "id": "webhook-main",
+      "id": "20a8813c-a34a-4c1e-8bb5-23cccb748431",
       "name": "Webhook",
       "webhookId": "97fbe0dd-424e-4bc9-9d52-95f7adf80962"
     },
@@ -34,7 +34,7 @@
         400,
         0
       ],
-      "id": "agent-main",
+      "id": "e9fbb440-afdc-46d2-bff8-435bd96f40ae",
       "name": "AI Agent"
     },
     {
@@ -54,11 +54,11 @@
         240,
         240
       ],
-      "id": "llm-main",
+      "id": "aff72ce3-2c89-49be-8c3d-74488fe09c0b",
       "name": "OpenAI Chat Model",
       "credentials": {
         "openAiApi": {
-          "id": "aZi7HyBvkCMhMUWt",
+          "id": "fI9av9KJVps0MM0G",
           "name": "OpenAI account"
         }
       }
@@ -75,14 +75,15 @@
         400,
         240
       ],
-      "id": "mem-main",
+      "id": "50023a5e-ed48-4817-9ada-2c91a2c6a8d9",
       "name": "Simple Memory"
     },
     {
       "parameters": {
         "endpointUrl": "http://mcp-wazuh:3001/mcp",
         "authentication": "bearerAuth",
-        "options": {}
+        "options": {},
+        "serverTransport": "httpStreamable"
       },
       "type": "@n8n/n8n-nodes-langchain.mcpClientTool",
       "typeVersion": 1.2,
@@ -90,12 +91,12 @@
         720,
         240
       ],
-      "id": "mcp-wazuh-main",
+      "id": "3e43b6dd-23e6-4234-8072-0dbb17e27434",
       "name": "MCP Wazuh",
       "credentials": {
         "httpBearerAuth": {
-          "id": "0c5vjw7XGKClhEQj",
-          "name": "Wazuh-MCP"
+          "id": "8suTVq8GbBrVtOIh",
+          "name": "Bearer Auth account"
         }
       }
     },
@@ -110,12 +111,12 @@
         560,
         240
       ],
-      "id": "mcp-hive-main",
+      "id": "cddbabb3-a28c-4434-a3aa-362e456602d0",
       "name": "MCP thehive"
     },
     {
       "parameters": {
-        "endpointUrl": "http://79.143.190.97:5678/mcp/enricment",
+        "endpointUrl": "http://n8n:5678/mcp/enricment",
         "options": {}
       },
       "type": "@n8n/n8n-nodes-langchain.mcpClientTool",
@@ -124,7 +125,7 @@
         880,
         240
       ],
-      "id": "mcp-enrich-main",
+      "id": "bc65a8d3-2be6-4c34-b51a-5d52b95b820c",
       "name": "MCP Enrichment"
     },
     {
@@ -152,7 +153,7 @@
         880,
         0
       ],
-      "id": "respond-main",
+      "id": "a2874f45-c13c-401d-9a90-c131751bcdbc",
       "name": "Respond to Webhook"
     }
   ],
@@ -243,5 +244,6 @@
   "meta": {
     "instanceId": "4c988b5ffcb1e689ce7238b8c992189e2d9311b7593f384d1ccbab001524574d"
   },
-  "tags": []
+  "tags": [],
+  "id": "jXI278MucaooQW1l"
 }
