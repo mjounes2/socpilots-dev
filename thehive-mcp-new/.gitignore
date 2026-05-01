@@ -1,4 +1,5 @@
 # Ignore built binaries and local secrets
 main
+thehive-mcp
+thehive-mcp-server
 .env
-thehive-mcp-new/.env

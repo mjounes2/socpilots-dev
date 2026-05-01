@@ -24,8 +24,10 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# Go
-thehive-mcp-new/thehive-mcp-new/thehive-mcp-new
+# Go binaries
+thehive-mcp-new/thehive-mcp
+thehive-mcp-new/thehive-mcp-server
+thehive-mcp-new/main
 
 # OS
 .DS_Store

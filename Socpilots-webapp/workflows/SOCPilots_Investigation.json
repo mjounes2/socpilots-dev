@@ -81,7 +81,7 @@
     },
     {
       "parameters": {
-        "endpointUrl": "http://vmi3247591.contaboserver.net:3000/mcp",
+        "endpointUrl": "http://mcp-wazuh:3001/mcp",
         "authentication": "bearerAuth",
         "options": {}
       },
