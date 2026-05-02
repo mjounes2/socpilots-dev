@@ -3,8 +3,10 @@ services:
     build: .
     ports:
       - "8080:8080"
+    env_file:
+      - ../.env
     environment:
-      - THEHIVE_URL=https://app.socpilots.com/api
-      - THEHIVE_API_KEY=S0+5fYWCnpiFkp1ndicOJuZkpEpOIWtB
+      - THEHIVE_URL=${THEHIVE_URL}/api
+      - THEHIVE_API_KEY=${THEHIVE_API_KEY}
       - PORT=8080
     restart: unless-stopped

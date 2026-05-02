@@ -40,6 +40,9 @@ desktop.ini
 *.swp
 *.swo
 
+# Claude Code local settings (may contain credentials)
+.claude/settings.local.json
+
 # Logs
 *.log
 logs/

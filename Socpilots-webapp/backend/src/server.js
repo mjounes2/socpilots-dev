@@ -15,11 +15,11 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json({ limit: '10mb' }));
 
 // ─── CONFIG ────────────────────────────────────────────────
-const OS_URL   = (process.env.OPENSEARCH_URL  || 'https://vmi3247591.contaboserver.net:9200').replace(/\/$/,'');
+const OS_URL   = (process.env.OPENSEARCH_URL  || '').replace(/\/$/,'');
 const OS_USER  = process.env.OPENSEARCH_USER  || 'admin';
-const OS_PASS  = process.env.OPENSEARCH_PASS  || 'SecretPassword';
-const HIVE_URL = (process.env.THEHIVE_URL     || 'https://app.socpilots.com').replace(/\/$/,'');
-const HIVE_KEY = process.env.THEHIVE_API_KEY  || 'S0+5fYWCnpiFkp1ndicOJuZkpEpOIWtB';
+const OS_PASS  = process.env.OPENSEARCH_PASS  || '';
+const HIVE_URL = (process.env.THEHIVE_URL     || '').replace(/\/$/,'');
+const HIVE_KEY = process.env.THEHIVE_API_KEY  || '';
 const N8N_URL  = process.env.N8N_WEBHOOK_URL  || 'http://n8n:5678/webhook/socpilots';
 const N8N_INV  = process.env.N8N_INVESTIGATION_URL || 'http://n8n:5678/webhook/socpilots-investigation';
 const IDX      = process.env.WAZUH_INDEX      || 'wazuh-alerts-*';
@@ -28,7 +28,7 @@ const IDX      = process.env.WAZUH_INDEX      || 'wazuh-alerts-*';
 const httpsAgent = new https.Agent({ rejectUnauthorized: false });
 
 // ─── AUTH ──────────────────────────────────────────────────
-const USERS = (process.env.SOC_USERS || 'admin:socpilots2024:admin,younes:younes123:analyst')
+const USERS = (process.env.SOC_USERS || '')
   .split(',').map(u => {
     const [username, password, role = 'analyst'] = u.trim().split(':');
     return { username, password, role };
@@ -124,7 +124,7 @@ async function n8nAsk(message, sessionId, user, extra = {}, _retry = 0) {
     const isNoHost  = e.code === 'ENOTFOUND' || e.code === 'EAI_AGAIN';
     let msg = e.message;
     if (isTimeout) msg = 'n8n_timeout'; // special code — handled by frontend
-    if (isRefused) msg = 'n8n refused — check: docker ps on vmi3254460';
+    if (isRefused) msg = 'n8n refused — check: docker ps, ensure n8n container is running';
     if (isNoHost)  msg = 'Cannot resolve n8n host — check N8N_WEBHOOK_URL in .env';
     return { ok: false, error: msg };
   }
