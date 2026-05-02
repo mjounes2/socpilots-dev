@@ -1060,6 +1060,101 @@ setInterval(() => { autoTriageWorker(); }, 60000);
 // Run once at startup after 30s
 setTimeout(() => { autoTriageWorker(); }, 30000);
 
+// ── UEBA AUTO-INGEST from Wazuh/OpenSearch ─────────────────────────
+// Polls OpenSearch every 2 min, maps alert fields → UEBA events
+let _uebaLastRun = 0;
+let _uebaRunning = false;
+
+async function uebaIngestWorker() {
+  if (_uebaRunning) return;
+  if (Date.now() - _uebaLastRun < 110_000) return;
+  _uebaRunning = true;
+  _uebaLastRun = Date.now();
+  try {
+    const since = new Date(Date.now() - 130_000).toISOString(); // 130s ago (overlap)
+    const body = {
+      size: 100,
+      sort: [{ '@timestamp': { order: 'asc' } }],
+      query: {
+        bool: {
+          filter: [
+            { range: { '@timestamp': { gte: since } } },
+            { range: { 'rule.level': { gte: 3 } } },
+          ],
+        },
+      },
+      _source: [
+        '@timestamp', 'agent.name', 'agent.ip',
+        'data.srcip', 'data.dstip', 'data.dstuser', 'data.srcuser',
+        'rule.id', 'rule.level', 'rule.description', 'rule.mitre',
+        'full_log', 'data.win.system.computer', 'data.win.eventdata.targetUserName',
+        'data.win.eventdata.subjectUserName', 'data.command',
+      ],
+    };
+
+    const r = await osSearch(body, IDX);
+    const hits = r.hits?.hits || [];
+    if (hits.length === 0) return;
+
+    let ingested = 0;
+    for (const h of hits) {
+      const s = h._source;
+      const ts = s['@timestamp'];
+
+      // Extract user — try multiple Wazuh field locations
+      const user =
+        s.data?.dstuser ||
+        s.data?.srcuser ||
+        s.data?.win?.eventdata?.targetUserName ||
+        s.data?.win?.eventdata?.subjectUserName ||
+        null;
+
+      // Extract host
+      const host =
+        s.agent?.name ||
+        s.data?.win?.system?.computer ||
+        null;
+
+      const src_ip  = s.data?.srcip  || s.data?.dstip || s.agent?.ip || null;
+      const proc    = s.data?.command || null;
+      const rule_id = String(s.rule?.id || '');
+      const level   = s.rule?.level || 0;
+      const severity = level >= 12 ? 'critical' : level >= 7 ? 'high' : level >= 4 ? 'medium' : 'low';
+
+      // Skip if no user AND no host — nothing to graph
+      if (!user && !host) continue;
+
+      try {
+        await ueba.ingestEvent({
+          user:      user || host,  // fall back to host as actor if no user field
+          host:      host,
+          src_ip:    src_ip,
+          process:   proc,
+          action:    s.rule?.description || 'alert',
+          timestamp: ts,
+          alert_id:  h._id,
+          rule_id:   rule_id,
+          severity:  severity,
+          success:   true,
+        });
+        ingested++;
+      } catch (e) {
+        // skip single-event errors silently
+      }
+    }
+    if (ingested > 0) console.log(`[UEBA] Auto-ingested ${ingested}/${hits.length} events`);
+  } catch (e) {
+    if (!e.message?.includes('connect ECONNREFUSED')) {
+      console.warn('[UEBA] Auto-ingest error:', e.message);
+    }
+  } finally {
+    _uebaRunning = false;
+  }
+}
+
+setInterval(() => { uebaIngestWorker(); }, 120_000);
+setTimeout(() => { uebaIngestWorker(); }, 15_000); // first run 15s after boot
+
 // ── DETECTION RULES via n8n ──
 app.get('/api/detection-rules', authMW, async (req, res) => {
   const r = await n8nAsk(
@@ -1272,6 +1367,15 @@ app.get('/api/ueba/stats', authMW, async (req, res) => {
 // ═══════════════════════════════════════════════════════════════
 // ─── LANGCHAIN AGENT PROXY ─────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════
+
+app.get('/api/langchain/health', authMW, async (req, res) => {
+  try {
+    const r = await axios.get(`${LANGCHAIN_URL}/health`, { timeout: 5_000 });
+    res.json(r.data);
+  } catch(e) {
+    res.status(502).json({ status: 'offline', error: e.message });
+  }
+});
 
 app.post('/api/langchain/investigate', authMW, async (req, res) => {
   try {

@@ -1,0 +1,140 @@
+{
+  "name": "SOCPilots – Daily Asset Scan",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "cronExpression", "expression": "0 2 * * *" }]
+        }
+      },
+      "id": "node-cron",
+      "name": "Daily at 02:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.ASSET_SCAN_URL }}/scan/start",
+        "sendBody": true,
+        "contentType": "json",
+        "body": {
+          "triggered_by": "n8n_daily"
+        },
+        "options": {}
+      },
+      "id": "node-start-scan",
+      "name": "Start Scan",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "amount": 60,
+        "unit": "seconds"
+      },
+      "id": "node-wait",
+      "name": "Wait 60s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [680, 300],
+      "webhookId": "wait-scan-60s"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.ASSET_SCAN_URL }}/scan/status/{{ $('Start Scan').item.json.job_id }}",
+        "options": {}
+      },
+      "id": "node-check-status",
+      "name": "Check Scan Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": false },
+          "conditions": [
+            {
+              "id": "cond-done",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "completed",
+              "operator": { "type": "string", "operation": "equals" }
+            }
+          ]
+        }
+      },
+      "id": "node-is-done",
+      "name": "Scan Done?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.ASSET_SCAN_URL }}/metrics",
+        "options": {}
+      },
+      "id": "node-get-metrics",
+      "name": "Get Coverage Metrics",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1340, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_WEBHOOK_BASE }}/webhook/notify-slack",
+        "sendBody": true,
+        "contentType": "json",
+        "body": {
+          "text": ":white_check_mark: *Daily Asset Scan Complete*\n• Total assets: {{ $json.total_assets }}\n• Coverage: {{ $json.coverage_percentage }}%\n• Critical gaps: {{ $json.critical_gaps }}\n• High gaps: {{ $json.high_gaps }}\n• Pending deployments: {{ $json.pending_deployments }}"
+        },
+        "options": {}
+      },
+      "id": "node-report",
+      "name": "Report to Slack",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1560, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_WEBHOOK_BASE }}/webhook/notify-slack",
+        "sendBody": true,
+        "contentType": "json",
+        "body": {
+          "text": ":x: *Daily Asset Scan Failed or Timed Out*\nJob ID: {{ $('Start Scan').item.json.job_id }}\nStatus: {{ $json.status }}\nError: {{ $json.error }}"
+        },
+        "options": {}
+      },
+      "id": "node-fail-notify",
+      "name": "Notify Failure",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1340, 400]
+    }
+  ],
+  "connections": {
+    "Daily at 02:00": { "main": [[{ "node": "Start Scan", "type": "main", "index": 0 }]] },
+    "Start Scan": { "main": [[{ "node": "Wait 60s", "type": "main", "index": 0 }]] },
+    "Wait 60s": { "main": [[{ "node": "Check Scan Status", "type": "main", "index": 0 }]] },
+    "Check Scan Status": { "main": [[{ "node": "Scan Done?", "type": "main", "index": 0 }]] },
+    "Scan Done?": {
+      "main": [
+        [{ "node": "Get Coverage Metrics", "type": "main", "index": 0 }],
+        [{ "node": "Notify Failure", "type": "main", "index": 0 }]
+      ]
+    },
+    "Get Coverage Metrics": { "main": [[{ "node": "Report to Slack", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "staticData": null,
+  "tags": [{ "name": "asset-scan" }, { "name": "daily-schedule" }]
+}

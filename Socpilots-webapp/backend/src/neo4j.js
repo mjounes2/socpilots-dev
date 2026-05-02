@@ -26,12 +26,21 @@ function getDriver() {
   return driver;
 }
 
+function toNeo4jParams(params) {
+  const neo4j = require('neo4j-driver');
+  const out = {};
+  for (const [k, v] of Object.entries(params)) {
+    out[k] = Number.isInteger(v) ? neo4j.int(v) : v;
+  }
+  return out;
+}
+
 async function run(cypher, params = {}) {
   const d = getDriver();
   if (!d) return [];
   const session = d.session();
   try {
-    const result = await session.run(cypher, params);
+    const result = await session.run(cypher, toNeo4jParams(params));
     return result.records;
   } finally {
     await session.close();
@@ -254,20 +263,18 @@ async function ingestEvent(ev) {
     if (deviationScore > 30 && user) {
       await session.run(
         `MATCH (u:User {name: $user})
-         SET u.risk_score = toInteger(min([100,
-           coalesce(u.risk_score, 0) * 0.85 + $dev * 0.15
-         ])),
-         u.last_anomaly = $ts,
-         u.anomaly_count = coalesce(u.anomaly_count, 0) + 1`,
+         WITH u, coalesce(u.risk_score, 0) * 0.85 + $dev * 0.15 AS newScore
+         SET u.risk_score = toInteger(CASE WHEN newScore > 100 THEN 100 ELSE newScore END),
+             u.last_anomaly = $ts,
+             u.anomaly_count = coalesce(u.anomaly_count, 0) + 1`,
         { user, dev: deviationScore, ts }
       );
     }
     if (deviationScore > 30 && host) {
       await session.run(
         `MATCH (h:Host {name: $host})
-         SET h.risk_score = toInteger(min([100,
-           coalesce(h.risk_score, 0) * 0.85 + $dev * 0.15
-         ]))`,
+         WITH h, coalesce(h.risk_score, 0) * 0.85 + $dev * 0.15 AS newScore
+         SET h.risk_score = toInteger(CASE WHEN newScore > 100 THEN 100 ELSE newScore END)`,
         { host, dev: deviationScore }
       );
     }
@@ -281,14 +288,16 @@ async function ingestEvent(ev) {
 async function getRiskLeaderboard(limit = 20) {
   const records = await run(
     `MATCH (u:User)
-     WHERE u.risk_score > 0
+     WHERE u.total_events > 0
      OPTIONAL MATCH (u)-[r:LOGGED_IN]->(h:Host)
-     WHERE datetime(r.time) > datetime() - duration({hours: 24})
+     WHERE r.time >= toString(datetime() - duration({hours: 24}))
      WITH u, count(r) AS events_24h, collect(DISTINCT h.name)[..5] AS recent_hosts
-     RETURN u.name AS user, u.risk_score AS risk_score,
-            u.anomaly_count AS anomaly_count, u.last_anomaly AS last_anomaly,
+     RETURN u.name AS user,
+            coalesce(u.risk_score, 0) AS risk_score,
+            coalesce(u.anomaly_count, 0) AS anomaly_count,
+            u.last_anomaly AS last_anomaly,
             events_24h, recent_hosts
-     ORDER BY u.risk_score DESC LIMIT $limit`,
+     ORDER BY risk_score DESC, u.total_events DESC LIMIT $limit`,
     { limit }
   );
   return records.map(r => ({

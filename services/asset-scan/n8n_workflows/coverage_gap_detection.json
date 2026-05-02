@@ -1,0 +1,172 @@
+{
+  "name": "SOCPilots – Coverage Gap Detection & TheHive Case",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "minutes", "minutesInterval": 30 }]
+        }
+      },
+      "id": "node-trigger",
+      "name": "Every 30 min",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.ASSET_SCAN_URL }}/gaps",
+        "options": {}
+      },
+      "id": "node-get-gaps",
+      "name": "Get Open Gaps",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": false },
+          "conditions": [
+            {
+              "id": "cond-gaps",
+              "leftValue": "={{ $json.gaps.length }}",
+              "rightValue": 0,
+              "operator": { "type": "number", "operation": "gt" }
+            }
+          ]
+        }
+      },
+      "id": "node-has-gaps",
+      "name": "Any gaps?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "gaps",
+        "options": {}
+      },
+      "id": "node-split",
+      "name": "Split Gaps",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [900, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": false },
+          "conditions": [
+            {
+              "id": "cond-critical",
+              "leftValue": "={{ $json.thehive_case_id }}",
+              "rightValue": "",
+              "operator": { "type": "string", "operation": "equals" }
+            },
+            {
+              "id": "cond-sev",
+              "leftValue": "={{ $json.severity }}",
+              "rightValue": "low",
+              "operator": { "type": "string", "operation": "notEquals" }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "node-no-case-yet",
+      "name": "No case yet & not low?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1120, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.THEHIVE_URL }}/api/v1/case",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.THEHIVE_API_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": {
+          "title": "Wazuh Coverage Gap – {{ $json.asset_ip }}",
+          "description": "Asset {{ $json.asset_ip }} ({{ $json.asset_hostname }}) has no active Wazuh agent.\n\nGap type: {{ $json.gap_type }}\nSeverity: {{ $json.severity }}\nRisk score: {{ $json.risk_score }}\nOpen ports: {{ JSON.stringify($json.open_ports) }}\nOS guess: {{ $json.os_guess }}\nDetected at: {{ $json.detected_at }}",
+          "severity": "={{ $json.severity === 'critical' ? 3 : $json.severity === 'high' ? 2 : 1 }}",
+          "tags": ["asset-scan", "wazuh-gap", "{{ $json.gap_type }}"],
+          "flag": false
+        },
+        "options": {}
+      },
+      "id": "node-create-case",
+      "name": "Create TheHive Case",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1340, 120]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.ASSET_SCAN_URL }}/gaps/{{ $('Split Gaps').item.json.id }}/resolve",
+        "sendBody": true,
+        "contentType": "json",
+        "body": {
+          "notes": "TheHive case created: {{ $json._id }}"
+        },
+        "options": {}
+      },
+      "id": "node-tag-gap",
+      "name": "Tag gap with case ID",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1560, 120]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_WEBHOOK_BASE }}/webhook/notify-slack",
+        "sendBody": true,
+        "contentType": "json",
+        "body": {
+          "text": ":warning: *Coverage Gap Detected*\nIP: {{ $('Split Gaps').item.json.asset_ip }}\nSeverity: {{ $('Split Gaps').item.json.severity }}\nRisk: {{ $('Split Gaps').item.json.risk_score }}\nGap: {{ $('Split Gaps').item.json.gap_type }}"
+        },
+        "options": {}
+      },
+      "id": "node-notify",
+      "name": "Notify Slack",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1560, 300]
+    }
+  ],
+  "connections": {
+    "Every 30 min": { "main": [[{ "node": "Get Open Gaps", "type": "main", "index": 0 }]] },
+    "Get Open Gaps": { "main": [[{ "node": "Any gaps?", "type": "main", "index": 0 }]] },
+    "Any gaps?": {
+      "main": [
+        [{ "node": "Split Gaps", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Split Gaps": { "main": [[{ "node": "No case yet & not low?", "type": "main", "index": 0 }]] },
+    "No case yet & not low?": {
+      "main": [
+        [{ "node": "Create TheHive Case", "type": "main", "index": 0 }],
+        [{ "node": "Notify Slack", "type": "main", "index": 0 }]
+      ]
+    },
+    "Create TheHive Case": { "main": [[{ "node": "Tag gap with case ID", "type": "main", "index": 0 }, { "node": "Notify Slack", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "staticData": null,
+  "tags": [{ "name": "asset-scan" }, { "name": "coverage-gaps" }]
+}

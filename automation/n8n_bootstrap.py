@@ -29,10 +29,14 @@ PROJECT_DIR = SCRIPT_DIR.parent
 WF_DIR      = PROJECT_DIR / "Socpilots-webapp" / "workflows"
 DB_PATH     = Path("/var/lib/docker/volumes/socpilots_n8n_data/_data/database.sqlite")
 
+ASSET_WF_DIR = PROJECT_DIR / "services" / "asset-scan" / "n8n_workflows"
+
 WORKFLOW_FILES = {
     "jXI278MucaooQW1l": WF_DIR / "SOCPilots_Main.json",
     "67z9w0HklVCA5Y5E": WF_DIR / "SOCPilots_Investigation.json",
     "BbuBpP3hOjKJmmqI": WF_DIR / "SOCPilots_Enrichment.json",
+    "EA76898BAB6E5913": ASSET_WF_DIR / "coverage_gap_detection.json",
+    "0C3794AF3CE037B7": ASSET_WF_DIR / "daily_asset_scan.json",
 }
 
 STATIC_ENDPOINTS = {

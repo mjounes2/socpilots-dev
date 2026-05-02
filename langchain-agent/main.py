@@ -16,7 +16,6 @@ Endpoints:
 """
 
 import os, json, re, time, logging
-from typing import Any
 import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -46,9 +45,10 @@ OPENAI_API_KEY   = os.getenv("OPENAI_API_KEY", "")
 MISTRAL_API_KEY  = os.getenv("MISTRAL_API_KEY", "")
 INTERNAL_TOKEN   = os.getenv("LANGCHAIN_INTERNAL_TOKEN", "")
 
-http_client = httpx.AsyncClient(verify=False, timeout=30.0)
+# Synchronous client — used by @tool functions (called from thread pool, no event loop)
+_sync_client = httpx.Client(verify=False, timeout=30.0)
 
-# ── LangChain Tools ──────────────────────────────────────────
+# ── LangChain Tools (all synchronous) ───────────────────────
 
 @tool
 def search_alerts(query: str) -> str:
@@ -57,10 +57,8 @@ def search_alerts(query: str) -> str:
     Input: a search string like '192.168.1.5' or 'failed login root' or 'agent_name:webserver'.
     Returns: list of recent matching alerts with timestamp, rule, severity, agent.
     """
-    import asyncio
-    return asyncio.get_event_loop().run_until_complete(_search_alerts(query))
-
-async def _search_alerts(query: str) -> str:
+    if not OPENSEARCH_URL:
+        return "OpenSearch not configured"
     try:
         body = {
             "size": 10,
@@ -78,7 +76,7 @@ async def _search_alerts(query: str) -> str:
                 }
             }
         }
-        r = await http_client.post(
+        r = _sync_client.post(
             f"{OPENSEARCH_URL}/{WAZUH_INDEX}/_search",
             json=body,
             auth=(OPENSEARCH_USER, OPENSEARCH_PASS)
@@ -100,6 +98,7 @@ async def _search_alerts(query: str) -> str:
     except Exception as e:
         return f"Error searching alerts: {e}"
 
+
 @tool
 def enrich_ip(ip_address: str) -> str:
     """
@@ -107,18 +106,15 @@ def enrich_ip(ip_address: str) -> str:
     Input: an IPv4 address like '1.2.3.4'.
     Returns: reputation score, malicious votes, country, ISP, categories.
     """
-    import asyncio
-    return asyncio.get_event_loop().run_until_complete(_enrich_ip(ip_address))
-
-async def _enrich_ip(ip: str) -> str:
-    ip = ip.strip()
+    ip = ip_address.strip()
     if not re.match(r'^\d{1,3}(\.\d{1,3}){3}$', ip):
         return f"Invalid IP format: {ip}"
     results = []
+
     vt_key = os.getenv("VIRUSTOTAL_API_KEY", "")
     if vt_key:
         try:
-            r = await http_client.get(
+            r = _sync_client.get(
                 f"https://www.virustotal.com/api/v3/ip_addresses/{ip}",
                 headers={"x-apikey": vt_key}
             )
@@ -138,7 +134,7 @@ async def _enrich_ip(ip: str) -> str:
     ab_key = os.getenv("ABUSEIPDB_API_KEY", "")
     if ab_key:
         try:
-            r = await http_client.get(
+            r = _sync_client.get(
                 "https://api.abuseipdb.com/api/v2/check",
                 params={"ipAddress": ip, "maxAgeInDays": 90, "verbose": True},
                 headers={"Key": ab_key, "Accept": "application/json"}
@@ -155,7 +151,8 @@ async def _enrich_ip(ip: str) -> str:
         except Exception as e:
             results.append(f"AbuseIPDB error: {e}")
 
-    return "\n".join(results) if results else f"No API keys configured for {ip}"
+    return "\n".join(results) if results else f"No threat intel API keys configured — cannot enrich {ip}"
+
 
 @tool
 def check_cases(search_term: str) -> str:
@@ -164,25 +161,21 @@ def check_cases(search_term: str) -> str:
     Input: search term like '192.168.1.5' or 'ransomware'.
     Returns: list of matching cases with title, severity, status, creation date.
     """
-    import asyncio
-    return asyncio.get_event_loop().run_until_complete(_check_cases(search_term))
-
-async def _check_cases(term: str) -> str:
     if not THEHIVE_URL or not THEHIVE_API_KEY:
         return "TheHive not configured"
     try:
-        r = await http_client.post(
+        r = _sync_client.post(
             f"{THEHIVE_URL}/api/v1/query",
             json=[
                 {"_name": "listCase"},
-                {"_name": "filter", "_field": "_string", "_value": term},
+                {"_name": "filter", "_field": "_string", "_value": search_term},
                 {"_name": "page", "from": 0, "to": 5}
             ],
             headers={"Authorization": f"Bearer {THEHIVE_API_KEY}"}
         )
         cases = r.json() if isinstance(r.json(), list) else []
         if not cases:
-            return f"No cases found for: {term}"
+            return f"No cases found for: {search_term}"
         results = []
         for c in cases[:5]:
             results.append(
@@ -194,6 +187,7 @@ async def _check_cases(term: str) -> str:
     except Exception as e:
         return f"TheHive error: {e}"
 
+
 @tool
 def query_ueba(entity_name: str) -> str:
     """
@@ -201,21 +195,20 @@ def query_ueba(entity_name: str) -> str:
     Input: entity name like 'john.doe', '192.168.1.10', or 'workstation-01'.
     Returns: risk score, recent behavior, detected anomalies.
     """
-    import asyncio
-    return asyncio.get_event_loop().run_until_complete(_query_ueba(entity_name))
-
-async def _query_ueba(name: str) -> str:
     try:
-        r = await http_client.get(
-            f"{WEBAPP_URL}/api/ueba/graph/{name}",
-            headers={"Authorization": f"Bearer {INTERNAL_TOKEN}"}
+        headers = {}
+        if INTERNAL_TOKEN:
+            headers["Authorization"] = f"Bearer {INTERNAL_TOKEN}"
+        r = _sync_client.get(
+            f"{WEBAPP_URL}/api/ueba/graph/{entity_name}",
+            headers=headers
         )
         if r.status_code != 200:
             return f"UEBA lookup failed: {r.status_code}"
         edges = r.json().get("edges", [])
         if not edges:
-            return f"No UEBA data found for entity: {name}"
-        summary = f"Found {len(edges)} graph relationships for {name}:\n"
+            return f"No UEBA data found for entity: {entity_name}"
+        summary = f"Found {len(edges)} graph relationships for {entity_name}:\n"
         for e in edges[:10]:
             dev = e.get('deviation', 0)
             flag = f" ⚠ {','.join(e.get('flags',[]))}" if e.get('flags') else ""
@@ -226,34 +219,35 @@ async def _query_ueba(name: str) -> str:
     except Exception as e:
         return f"UEBA error: {e}"
 
+
 @tool
 def query_assets(ip_or_hostname: str) -> str:
     """
     Check if an IP address or hostname is in the asset inventory.
     Returns asset details: OS, open ports, Wazuh agent status, risk score.
     """
-    import asyncio
-    return asyncio.get_event_loop().run_until_complete(_query_assets(ip_or_hostname))
-
-async def _query_assets(q: str) -> str:
     try:
-        r = await http_client.get(
-            f"{WEBAPP_URL}/api/assets?q={q}",
-            headers={"Authorization": f"Bearer {INTERNAL_TOKEN}"}
+        headers = {}
+        if INTERNAL_TOKEN:
+            headers["Authorization"] = f"Bearer {INTERNAL_TOKEN}"
+        r = _sync_client.get(
+            f"{WEBAPP_URL}/api/assets?q={ip_or_hostname}",
+            headers=headers
         )
         if r.status_code != 200:
             return f"Asset lookup failed: {r.status_code}"
         assets = r.json().get("assets", [])
         if not assets:
-            return f"Asset '{q}' not found in inventory"
+            return f"Asset '{ip_or_hostname}' not found in inventory"
         a = assets[0]
         ports = ", ".join([f"{p['port']}/{p['service']}" for p in (a.get('open_ports') or [])[:8]])
         return (f"Asset: {a['ip']} | Hostname: {a.get('hostname','—')} | "
-                f"OS: {a.get('os_guess','—')} | Open ports: {ports or 'none'} | "
+                f"OS: {a.get('os','—')} | Open ports: {ports or 'none'} | "
                 f"Wazuh agent: {a.get('wazuh_agent_name','none')} ({a.get('wazuh_agent_status','—')}) | "
                 f"Risk score: {a.get('risk_score', 0)} | Last seen: {a.get('last_seen','—')}")
     except Exception as e:
         return f"Asset query error: {e}"
+
 
 # ── LLM Selection ─────────────────────────────────────────────
 def get_llm(model_preference: str = "auto"):
@@ -277,35 +271,32 @@ def get_llm(model_preference: str = "auto"):
         )
     raise ValueError("No LLM API key configured (OPENAI_API_KEY or MISTRAL_API_KEY)")
 
-# ── ReAct Agent ───────────────────────────────────────────────
-REACT_PROMPT = PromptTemplate.from_template("""You are an expert SOC analyst performing a security investigation.
-Use the available tools to gather evidence, then provide a structured analysis.
 
-Tools available:
+# ── ReAct Prompt ──────────────────────────────────────────────
+REACT_PROMPT = PromptTemplate.from_template("""You are an expert SOC analyst. Use tools to investigate the input, then write a Final Answer.
+
+IMPORTANT: After 3-5 tool calls, stop gathering data and write your Final Answer. Do not loop endlessly.
+
+Tools:
 {tools}
 
 Tool names: {tool_names}
 
-Alert to investigate:
-{input}
+Input: {input}
 
-Investigation instructions:
-1. Start by searching for related alerts around the same time and IP/host
-2. If there's an IP address, enrich it with threat intelligence
-3. Check if there are existing TheHive cases related to this incident
-4. Query UEBA for behavioral anomalies for involved users/hosts
-5. Check the asset inventory for involved IPs/hosts
-6. Synthesize all findings into a structured report
+Rules:
+- Call each tool at most once per investigation
+- After gathering key evidence, write Final Answer immediately
+- Final Answer must be a structured report with: Summary, Key Findings, Risk Level, Recommended Actions
 
-Format your response as:
-Thought: [your reasoning]
-Action: [tool name]
-Action Input: [input to the tool]
-Observation: [tool result]
-... (repeat as needed)
-Final Answer: [structured investigation report]
+Format:
+Thought: reasoning
+Action: tool_name
+Action Input: input
+Observation: result
+(repeat 3-5 times max)
+Final Answer: [your structured report]
 
-Begin:
 {agent_scratchpad}""")
 
 TOOLS = [search_alerts, enrich_ip, check_cases, query_ueba, query_assets]
@@ -314,11 +305,11 @@ TOOLS = [search_alerts, enrich_ip, check_cases, query_ueba, query_assets]
 class InvestigateRequest(BaseModel):
     alert: dict | None = None
     message: str | None = None
-    model: str = "auto"   # "auto", "openai", "mistral"
+    model: str = "auto"
 
 class TriageRequest(BaseModel):
     alert: dict
-    model: str = "mistral"  # Use Mistral for fast/cheap triage
+    model: str = "mistral"
 
 # ── Endpoints ─────────────────────────────────────────────────
 
@@ -330,21 +321,18 @@ def health():
         "mistral": bool(MISTRAL_API_KEY),
         "opensearch": bool(OPENSEARCH_URL),
         "thehive": bool(THEHIVE_URL),
+        "model": "gpt-4o-mini" if OPENAI_API_KEY else ("mistral-small-latest" if MISTRAL_API_KEY else "none"),
     }
+
 
 @app.post("/investigate")
 async def investigate(req: InvestigateRequest):
-    """
-    Deep multi-step investigation using ReAct agent.
-    Agent will use 5 tools iteratively to gather evidence.
-    """
     start = time.time()
     try:
         llm = get_llm(req.model)
     except ValueError as e:
         raise HTTPException(status_code=503, detail=str(e))
 
-    # Build alert context string
     if req.alert:
         a = req.alert
         context = (
@@ -363,28 +351,26 @@ async def investigate(req: InvestigateRequest):
         agent = create_react_agent(llm, TOOLS, REACT_PROMPT)
         executor = AgentExecutor(
             agent=agent, tools=TOOLS,
-            verbose=True, max_iterations=8,
+            verbose=True, max_iterations=12,
+            max_execution_time=120,
+            early_stopping_method="generate",
             handle_parsing_errors=True,
             return_intermediate_steps=True,
         )
         result = await executor.ainvoke({"input": context})
-        duration_ms = int((time.time() - start) * 1000)
         return {
-            "report":       result.get("output", ""),
-            "steps":        len(result.get("intermediate_steps", [])),
-            "duration_ms":  duration_ms,
-            "model":        req.model,
+            "report":      result.get("output", ""),
+            "steps":       len(result.get("intermediate_steps", [])),
+            "duration_ms": int((time.time() - start) * 1000),
+            "model":       req.model,
         }
     except Exception as e:
         log.error(f"Investigation error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @app.post("/triage")
 async def triage(req: TriageRequest):
-    """
-    Fast single-step triage: classify severity, false-positive score, MITRE mapping.
-    Uses Mistral (cheap, fast) by default.
-    """
     start = time.time()
     try:
         llm = get_llm(req.model)
@@ -410,7 +396,6 @@ Return ONLY valid JSON with these fields:
     try:
         response = await llm.ainvoke(prompt)
         text = response.content.strip()
-        # Extract JSON even if LLM adds surrounding text
         match = re.search(r'\{[\s\S]*\}', text)
         result = json.loads(match.group()) if match else {"raw": text}
         result["duration_ms"] = int((time.time() - start) * 1000)
@@ -418,6 +403,7 @@ Return ONLY valid JSON with these fields:
     except Exception as e:
         log.error(f"Triage error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 if __name__ == "__main__":
     import uvicorn

@@ -87,6 +87,8 @@ services:
       NEO4J_PASSWORD: ${NEO4J_PASSWORD}
       # Network Scanner
       SCANNER_URL:    http://scanner:7777
+      # Asset Scan microservice
+      ASSET_SCAN_URL: http://asset-scan:5003
       # LangChain Investigation Agent
       LANGCHAIN_URL:  http://langchain-agent:8001
       LANGCHAIN_INTERNAL_TOKEN: ${LANGCHAIN_INTERNAL_TOKEN:-}
@@ -288,6 +290,51 @@ services:
       retries: 3
       start_period: 30s
 
+  # ── Asset Scan Microservice ────────────────────────────────────
+  # Python/Flask — nmap discovery + Wazuh gap detection + Neo4j
+  # Internal only: webapp calls http://asset-scan:5003
+  asset-scan:
+    build:
+      context: ./services/asset-scan
+      dockerfile: Dockerfile
+    container_name: socpilots-asset-scan
+    restart: unless-stopped
+    networks:
+      - soc
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+    environment:
+      PORT: 5003
+      # PostgreSQL
+      PG_HOST:     postgres
+      PG_PORT:     5432
+      PG_DB:       ${PG_DATABASE:-socpilots}
+      PG_USER:     ${PG_USER:-socpilots}
+      PG_PASSWORD: ${PG_PASSWORD}
+      # Wazuh Manager REST API
+      WAZUH_HOST:  ${WAZUH_HOST}
+      WAZUH_PORT:  ${WAZUH_PORT:-55000}
+      WAZUH_USER:  ${WAZUH_USER}
+      WAZUH_PASS:  ${WAZUH_PASS}
+      # OpenSearch fallback for agent list
+      OPENSEARCH_URL:  ${OPENSEARCH_URL}
+      OPENSEARCH_USER: ${OPENSEARCH_USER:-admin}
+      OPENSEARCH_PASS: ${OPENSEARCH_PASS}
+      # Neo4j UEBA graph
+      NEO4J_URI:      bolt://neo4j:7687
+      NEO4J_USER:     neo4j
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:5003/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
   # ── n8n Automation ─────────────────────────────────────────────
   # AI agent that connects SOCPilots → MCP-Wazuh → TheHive
   n8n:
@@ -318,8 +365,12 @@ services:
       # Threat intel API keys — consumed by Enrichment workflow $env expressions
       - VIRUSTOTAL_API_KEY=${VIRUSTOTAL_API_KEY}
       - ABUSEIPDB_API_KEY=${ABUSEIPDB_API_KEY}
+      - ASSET_SCAN_URL=http://asset-scan:5003
+      - THEHIVE_URL=${THEHIVE_URL}
+      - THEHIVE_API_KEY=${THEHIVE_API_KEY}
+      - N8N_WEBHOOK_BASE=http://n8n:5678
       # Allowlist env vars accessible in workflow expressions
-      - N8N_SECURITY_ALLOWED_EXTERNAL_ENV_VARS=MCP_WAZUH_HOST,MCP_WAZUH_PORT,MCP_THEHIVE_HOST,MCP_THEHIVE_PORT,N8N_INTERNAL_HOST,N8N_INTERNAL_PORT,VIRUSTOTAL_API_KEY,ABUSEIPDB_API_KEY
+      - N8N_SECURITY_ALLOWED_EXTERNAL_ENV_VARS=MCP_WAZUH_HOST,MCP_WAZUH_PORT,MCP_THEHIVE_HOST,MCP_THEHIVE_PORT,N8N_INTERNAL_HOST,N8N_INTERNAL_PORT,VIRUSTOTAL_API_KEY,ABUSEIPDB_API_KEY,ASSET_SCAN_URL,THEHIVE_URL,THEHIVE_API_KEY,N8N_WEBHOOK_BASE
     volumes:
       - n8n_data:/home/node/.n8n
     depends_on:
