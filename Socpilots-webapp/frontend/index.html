@@ -3594,22 +3594,47 @@ async function loadEntityGraph(){
 
   if(profileD?.profile){
     const p=profileD.profile;
+    const typeIcon=p.entity_type==='ip'?'🌐':p.entity_type==='host'?'🖥':'👤';
+    const typeLabel=p.entity_type||'user';
+    const knownLabel=p.entity_type==='host'?'Users: '+(p.all_users||[]).join(', '):'Hosts: '+(p.all_hosts||[]).join(', ');
     html+=`<div style="padding:10px;background:var(--bg2);border-radius:4px;margin-bottom:10px;font-size:12px">
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+        <span style="font-size:10px;color:#8ab0d0">${typeIcon} ${typeLabel.toUpperCase()}</span>
         <span style="font-weight:700;color:var(--c)">${p.name}</span>
-        ${riskBadge(p.risk_score)}
-        <span style="color:#8ab0d0;font-size:10px">${p.total_events} total events · ${p.anomaly_count} anomalies</span>
+        ${riskBadge(p.risk_score||0)}
+        ${p.total_events?`<span style="color:#8ab0d0;font-size:10px">${p.total_events} events · ${p.anomaly_count||0} anomalies</span>`:''}
+        ${p.entity_type==='ip'&&p.is_internal!==undefined?`<span style="font-size:9px;padding:2px 6px;border-radius:3px;background:${p.is_internal?'rgba(76,175,80,.2)':'rgba(244,67,54,.2)'};color:${p.is_internal?'var(--g)':'var(--r)'}">${p.is_internal?'INTERNAL':'EXTERNAL'}</span>`:''}
       </div>
       <div style="font-size:10px;color:var(--txt2)">
-        Known hosts: ${(p.all_hosts||[]).join(', ')||'none'} ·
-        Last seen: ${p.last_seen?new Date(p.last_seen).toLocaleString():'—'}
+        ${knownLabel||'none'} ·
+        ${p.first_seen?'First seen: '+new Date(p.first_seen).toLocaleString()+' · ':''}
+        Last seen: ${(p.last_seen||p.last_seen)?new Date(p.last_seen||p.last_seen).toLocaleString():'—'}
         ${p.last_anomaly?` · Last anomaly: ${new Date(p.last_anomaly).toLocaleString()}`:''}
       </div>
+      ${(p.connections||[]).length?`<div style="margin-top:6px;font-size:10px;color:#8ab0d0">Connected to: ${p.connections.filter(c=>c.host).slice(0,5).map(c=>c.host).join(', ')}</div>`:''}
     </div>`;
+
+    // For IPs: show login rows from profile directly if no graph edges
+    if(p.entity_type==='ip'&&(p.recent_logins||[]).length&&!graphD?.edges?.length){
+      html+=`<table class="tbl"><thead><tr><th>USER</th><th>HOST</th><th>DEVIATION</th><th>FLAGS</th><th>TIME</th></tr></thead><tbody>`+
+        p.recent_logins.map(l=>{
+          const dev=l.deviation||0;
+          const devColor=dev>=70?'var(--r)':dev>=40?'#ff9800':dev>=15?'var(--y)':'var(--g)';
+          const flags=(l.flags||[]).map(f=>`<span style="background:rgba(255,152,0,.15);color:#ff9800;padding:1px 4px;border-radius:3px;font-size:9px">${f}</span>`).join(' ');
+          return`<tr>
+            <td style="color:var(--c);cursor:pointer" onclick="uebaLookup('${esc(l.user||'')}')">${l.user||'—'}</td>
+            <td style="font-family:var(--fm);font-size:11px">${l.host||'—'}</td>
+            <td style="color:${devColor};font-family:var(--fm)">${dev}</td>
+            <td>${flags||'—'}</td>
+            <td style="color:#8ab0d0;font-size:10px">${l.time?new Date(l.time).toLocaleString():'—'}</td>
+          </tr>`;
+        }).join('')+'</tbody></table>';
+      el.innerHTML=html;return;
+    }
   }
 
   if(!graphD?.edges?.length){
-    html+='<div style="color:#8ab0d0;font-size:11px">No graph relationships found for this entity</div>';
+    html+='<div style="color:#8ab0d0;font-size:11px;padding:6px 0">No graph relationships found for this entity</div>';
     el.innerHTML=html;return;
   }
   html+=`<table class="tbl"><thead><tr><th>RELATIONSHIP</th><th>SOURCE</th><th>TARGET</th><th>DEVIATION</th><th>FLAGS</th><th>TIME</th></tr></thead><tbody>`+

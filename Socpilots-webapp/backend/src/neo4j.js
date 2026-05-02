@@ -310,35 +310,106 @@ async function getRiskLeaderboard(limit = 20) {
   }));
 }
 
-// ── Behavioral Profile per User ──────────────────────────────
-async function getUserProfile(username) {
+// ── Behavioral Profile per User / Host / IP ──────────────────
+async function getUserProfile(entity) {
+  const isIp = /^\d{1,3}(\.\d{1,3}){3}$/.test(entity);
+
+  // IP address — look up IP node and its connections
+  if (isIp) {
+    const records = await run(
+      `MATCH (i:IP {address: $addr})
+       OPTIONAL MATCH (i)-[r:CONNECTED_TO]->(h:Host)
+       OPTIONAL MATCH (u:User)-[l:LOGGED_IN]->(h2:Host)
+       WHERE l.src_ip = $addr
+       WITH i,
+            collect(DISTINCT {host: h.name, time: r.time, dev: r.deviation_score, rule: r.rule_id}) AS connections,
+            collect(DISTINCT {user: u.name, host: h2.name, time: l.time, dev: l.deviation_score, flags: l.flags}) AS user_logins
+       RETURN i, connections[..30] AS connections, user_logins[..30] AS user_logins`,
+      { addr: entity }
+    );
+    if (!records.length) return null;
+    const props = records[0].get('i').properties;
+    const connections = records[0].get('connections') || [];
+    const userLogins  = records[0].get('user_logins') || [];
+    return {
+      name:         entity,
+      entity_type:  'ip',
+      is_internal:  props.is_internal ?? false,
+      first_seen:   props.first_seen,
+      last_seen:    props.last_seen,
+      risk_score:   0,
+      connections:  connections.filter(c => c.host),
+      recent_logins: userLogins.filter(l => l.user).map(l => ({
+        host:      l.host,
+        user:      l.user,
+        time:      l.time,
+        deviation: l.dev?.toNumber?.() ?? l.dev ?? 0,
+        flags:     l.flags || [],
+      })),
+      all_hosts: [...new Set(connections.map(c => c.host).filter(Boolean))],
+    };
+  }
+
+  // User or Host — try User first, then Host
   const rec = await runSingle(
     `MATCH (u:User {name: $name})
      OPTIONAL MATCH (u)-[r:LOGGED_IN]->(h:Host)
      WITH u, collect(DISTINCT h.name) AS all_hosts,
-          collect({host: h.name, time: r.time, dev: r.deviation_score, flags: r.flags}) AS logins
+          collect({host: h.name, time: r.time, dev: r.deviation_score, flags: r.flags, src_ip: r.src_ip}) AS logins
      RETURN u, all_hosts, logins[..50] AS recent_logins`,
-    { name: username }
+    { name: entity }
   );
-  if (!rec) return null;
 
-  const u = rec.get('u').properties;
-  return {
-    name:          u.name,
-    risk_score:    u.risk_score?.toNumber?.() ?? u.risk_score ?? 0,
-    anomaly_count: u.anomaly_count?.toNumber?.() ?? 0,
-    total_events:  u.total_events?.toNumber?.() ?? 0,
-    typical_hours: u.typical_hours || [],
-    last_seen:     u.last_seen,
-    last_anomaly:  u.last_anomaly,
-    all_hosts:     rec.get('all_hosts') || [],
-    recent_logins: (rec.get('recent_logins') || []).map(l => ({
-      host: l.host,
-      time: l.time,
-      deviation: l.dev?.toNumber?.() ?? l.dev ?? 0,
-      flags: l.flags || [],
-    })),
-  };
+  if (rec) {
+    const u = rec.get('u').properties;
+    return {
+      name:          u.name,
+      entity_type:   'user',
+      risk_score:    u.risk_score?.toNumber?.() ?? u.risk_score ?? 0,
+      anomaly_count: u.anomaly_count?.toNumber?.() ?? 0,
+      total_events:  u.total_events?.toNumber?.() ?? 0,
+      typical_hours: u.typical_hours || [],
+      last_seen:     u.last_seen,
+      last_anomaly:  u.last_anomaly,
+      all_hosts:     rec.get('all_hosts') || [],
+      recent_logins: (rec.get('recent_logins') || []).map(l => ({
+        host:      l.host,
+        time:      l.time,
+        src_ip:    l.src_ip,
+        deviation: l.dev?.toNumber?.() ?? l.dev ?? 0,
+        flags:     l.flags || [],
+      })),
+    };
+  }
+
+  // Try Host node
+  const hrec = await runSingle(
+    `MATCH (h:Host {name: $name})
+     OPTIONAL MATCH (u:User)-[r:LOGGED_IN]->(h)
+     WITH h, collect(DISTINCT u.name) AS users,
+          collect({user: u.name, time: r.time, dev: r.deviation_score, flags: r.flags}) AS logins
+     RETURN h, users, logins[..50] AS recent_logins`,
+    { name: entity }
+  );
+  if (hrec) {
+    const h = hrec.get('h').properties;
+    return {
+      name:          h.name,
+      entity_type:   'host',
+      risk_score:    h.risk_score?.toNumber?.() ?? h.risk_score ?? 0,
+      first_seen:    h.first_seen,
+      last_seen:     h.last_seen,
+      all_users:     hrec.get('users') || [],
+      recent_logins: (hrec.get('recent_logins') || []).map(l => ({
+        user:      l.user,
+        time:      l.time,
+        deviation: l.dev?.toNumber?.() ?? l.dev ?? 0,
+        flags:     l.flags || [],
+      })),
+    };
+  }
+
+  return null;
 }
 
 // ── Anomaly Detections ───────────────────────────────────────
