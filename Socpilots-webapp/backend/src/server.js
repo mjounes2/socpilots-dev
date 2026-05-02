@@ -8,7 +8,8 @@ const https   = require('https');
 const crypto  = require('crypto');
 const path    = require('path');
 require('dotenv').config({ path: path.join(__dirname, '../../.env') });
-const db = require('./db');
+const db    = require('./db');
+const ueba  = require('./neo4j');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -22,7 +23,8 @@ const HIVE_URL = (process.env.THEHIVE_URL     || '').replace(/\/$/,'');
 const HIVE_KEY = process.env.THEHIVE_API_KEY  || '';
 const N8N_URL  = process.env.N8N_WEBHOOK_URL  || 'http://n8n:5678/webhook/socpilots';
 const N8N_INV  = process.env.N8N_INVESTIGATION_URL || 'http://n8n:5678/webhook/socpilots-investigation';
-const IDX      = process.env.WAZUH_INDEX      || 'wazuh-alerts-*';
+const IDX          = process.env.WAZUH_INDEX      || 'wazuh-alerts-*';
+const SCANNER_URL  = process.env.SCANNER_URL      || 'http://scanner:7777';
 
 // Skip SSL verify (Wazuh self-signed cert)
 const httpsAgent = new https.Agent({ rejectUnauthorized: false });
@@ -213,6 +215,11 @@ app.get('/api/status', authMW, async (req, res) => {
     results.n8n = { ok: false, error: e.code === 'ECONNABORTED' ? 'Timeout — open port 5678 on n8n server' : e.message };
   }
 
+  results.config = {
+    opensearch_url: OS_URL || '(not configured)',
+    thehive_url:    HIVE_URL || '(not configured)',
+    n8n_url:        N8N_URL,
+  };
   res.json(results);
 });
 
@@ -1080,12 +1087,141 @@ app.get('/api/reports/summary', authMW, async (req, res) => {
   res.json({ text: r.text, ok: r.ok });
 });
 
+// ═══════════════════════════════════════════════════════════════
+// ─── ASSET DISCOVERY ───────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════
+
+app.get('/api/subnets', authMW, async (req, res) => {
+  try {
+    const subnets = await db.listSubnets();
+    res.json({ subnets });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/subnets', authMW, async (req, res) => {
+  const { cidr, label } = req.body;
+  if (!cidr) return res.status(400).json({ error: 'cidr required' });
+  // Basic CIDR validation
+  if (!/^[\d.:/]+$/.test(cidr.trim())) return res.status(400).json({ error: 'invalid cidr format' });
+  try {
+    const subnet = await db.addSubnet(cidr, label || '');
+    res.json({ subnet });
+  } catch(e) {
+    if (e.code === '23505') return res.status(409).json({ error: 'subnet already exists' });
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.delete('/api/subnets/:id', authMW, async (req, res) => {
+  try {
+    await db.deleteSubnet(req.params.id);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/assets', authMW, async (req, res) => {
+  try {
+    const { status, q } = req.query;
+    const [assets, stats] = await Promise.all([
+      db.listAssets({ status, q }),
+      db.getAssetStats(),
+    ]);
+    res.json({ assets, stats });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/assets/scan/status', authMW, async (req, res) => {
+  try {
+    const job = await db.getLatestScanJob();
+    res.json({ job });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/assets/scan', authMW, async (req, res) => {
+  try {
+    const subnets = await db.listSubnets();
+    const enabled = subnets.filter(s => s.enabled).map(s => s.cidr);
+    if (!enabled.length) return res.status(400).json({ error: 'No enabled subnets configured' });
+
+    const existing = await db.getLatestScanJob();
+    if (existing?.status === 'running') return res.status(409).json({ error: 'Scan already in progress' });
+
+    const job = await db.createScanJob(enabled, req.user.username);
+    res.json({ job });
+
+    // Run scan async — don't await in request handler
+    (async () => {
+      try {
+        console.log(`[SCAN] Starting job ${job.id} on subnets: ${enabled.join(', ')}`);
+        const resp = await axios.post(`${SCANNER_URL}/scan`, { subnets: enabled }, { timeout: 310_000 });
+        const hosts = resp.data?.hosts || [];
+
+        for (const host of hosts) {
+          // Find which subnet this IP belongs to
+          const matchedSubnet = subnets.find(s => ipInSubnet(host.ip, s.cidr));
+          await db.upsertAsset({ ...host, subnet_id: matchedSubnet?.id || null });
+        }
+        await db.finishScanJob(job.id, hosts.length, null);
+        console.log(`[SCAN] Job ${job.id} complete — ${hosts.length} hosts`);
+      } catch(e) {
+        console.error(`[SCAN] Job ${job.id} failed:`, e.message);
+        await db.finishScanJob(job.id, 0, e.message);
+      }
+    })();
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Simple IP-in-subnet check (supports /8 to /32)
+function ipInSubnet(ip, cidr) {
+  try {
+    if (!cidr.includes('/')) return ip === cidr;
+    const [base, bits] = cidr.split('/');
+    const mask = ~0 << (32 - parseInt(bits));
+    const ipNum  = ip.split('.').reduce((a, o) => (a << 8) | parseInt(o), 0);
+    const baseNum = base.split('.').reduce((a, o) => (a << 8) | parseInt(o), 0);
+    return (ipNum & mask) === (baseNum & mask);
+  } catch { return false; }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ─── UEBA (Neo4j Graph Analytics) ──────────────────────────────
+// ═══════════════════════════════════════════════════════════════
+
+app.post('/api/ueba/event', authMW, async (req, res) => {
+  try {
+    await ueba.ingestEvent(req.body);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/ueba/anomalies', authMW, async (req, res) => {
+  try {
+    const data = await ueba.getAllAnomalies();
+    res.json(data);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/ueba/graph/:entity', authMW, async (req, res) => {
+  try {
+    const edges = await ueba.getEntityGraph(req.params.entity);
+    res.json({ edges });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/ueba/stats', authMW, async (req, res) => {
+  try {
+    const stats = await ueba.getUebaStats();
+    res.json({ stats });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 // ─── STATIC (last) ─────────────────────────────────────────
 app.use(express.static(path.join(__dirname, '../../frontend')));
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, '../../frontend/index.html')));
 
 // Initialize DB schema on startup (non-blocking)
 db.initSchema().catch(e => console.error('[DB] init failed:', e.message));
+ueba.initSchema().catch(e => console.error('[NEO4J] init failed:', e.message));
 
 app.listen(PORT, '0.0.0.0', () => {
   const envFile = require('fs').existsSync(require('path').join(__dirname,'../../.env')) ? '✅ .env loaded' : '⚠ .env NOT found';

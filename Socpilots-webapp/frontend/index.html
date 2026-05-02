@@ -280,6 +280,8 @@ const CU=_U?JSON.parse(_U):{username:"Admin",role:"admin"};
     <div class="sbi" onclick="go('create-rules')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/><circle cx="12" cy="12" r="10"/></svg><span class="sbi-lbl">Create Rules</span></div>
     <div class="sbi" onclick="go('investigation')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><path d="M11 8v3M11 14v.01"/></svg><span class="sbi-lbl">AI Investigation</span><span class="sbi-n" id="n-investigation">—</span></div>
     <div class="sbi" onclick="go('copilot')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a10 10 0 1010 10"/><path d="M12 6v6l4 2"/><circle cx="19" cy="5" r="3" fill="#00e5ff" stroke="none"/></svg><span class="sbi-lbl">SOCPilots AI</span></div>
+    <div class="sbi" onclick="go('assets')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/><circle cx="12" cy="10" r="3"/></svg><span class="sbi-lbl">Assets</span><span class="sbi-n" id="n-assets">—</span></div>
+    <div class="sbi" onclick="go('ueba')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="12" r="2"/><circle cx="19" cy="5" r="2"/><circle cx="19" cy="19" r="2"/><path d="M7 12h10M17 7l-2 3M17 17l-2-3"/></svg><span class="sbi-lbl">UEBA</span><span class="sbi-n" id="n-ueba">—</span></div>
     <div class="sbi" onclick="go('reports')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg><span class="sbi-lbl">Reports</span></div>
   </div>
   <div class="sb-bot">
@@ -986,12 +988,110 @@ sshd: Failed" style="min-height:80px"></textarea></div>
   <div class="g2">
     <div class="card"><div class="card-hd"><div class="card-ttl">DIAGNOSTICS</div><button class="btn btn-p btn-sm" onclick="testConn()">▶ Run Tests</button></div><div id="conn-res" style="font-size:11px;color:#8ab0d0;font-family:var(--fm)">Click "Run Tests"...</div></div>
     <div class="card"><div class="card-hd"><div class="card-ttl">SYSTEM CONFIG</div></div>
-      <div style="font-size:11px;font-family:var(--fm);line-height:2.4;color:var(--txt2)">
-        <div style="color:#8ab0d0;font-size:9px;letter-spacing:1px">SIEM</div><div style="color:var(--c)">https://vmi3247591.contaboserver.net:9200</div>
-        <div style="color:#8ab0d0;font-size:9px;letter-spacing:1px;margin-top:8px">SP-CM</div><div>https://app.socpilots.com</div>
-        <div style="color:#8ab0d0;font-size:9px;letter-spacing:1px;margin-top:8px">SOCPilots AI</div><div>http://vmi3254460.contaboserver.net:5678</div>
+      <div style="font-size:11px;font-family:var(--fm);line-height:2.4;color:var(--txt2)" id="cfg-vals">
+        <div style="color:#8ab0d0;font-size:9px;letter-spacing:1px">SIEM</div><div style="color:var(--c)" id="cfg-siem">—</div>
+        <div style="color:#8ab0d0;font-size:9px;letter-spacing:1px;margin-top:8px">SP-CM</div><div id="cfg-spcm">—</div>
+        <div style="color:#8ab0d0;font-size:9px;letter-spacing:1px;margin-top:8px">SOCPilots AI</div><div id="cfg-ai">—</div>
       </div>
     </div>
+  </div>
+</div>
+
+
+<!-- ASSETS -->
+<div class="page" id="page-assets">
+  <div class="ph"><h1>ASSETS</h1><p>Network asset discovery &amp; inventory</p></div>
+  <div class="g4 mb" id="asset-kpis">
+    <div class="kpi cl"><div class="kpi-lbl">TOTAL</div><div class="kpi-val" id="ak-total">—</div><div class="kpi-sub">discovered</div></div>
+    <div class="kpi cg"><div class="kpi-lbl">ONLINE</div><div class="kpi-val" id="ak-online">—</div><div class="kpi-sub">responding</div></div>
+    <div class="kpi cr"><div class="kpi-lbl">OFFLINE</div><div class="kpi-val" id="ak-offline">—</div><div class="kpi-sub">not seen</div></div>
+    <div class="kpi cp"><div class="kpi-lbl">NEW TODAY</div><div class="kpi-val" id="ak-new">—</div><div class="kpi-sub">first seen 24h</div></div>
+  </div>
+  <div class="g2">
+    <div class="card">
+      <div class="card-hd">
+        <div class="card-ttl">SUBNETS</div>
+        <button class="btn btn-p btn-sm" onclick="openAddSubnet()">+ Add Subnet</button>
+      </div>
+      <div id="subnet-list" style="font-size:12px;color:#8ab0d0;font-family:var(--fm)">Loading...</div>
+      <div style="margin-top:14px;display:flex;align-items:center;gap:10px">
+        <button class="btn btn-p" id="scan-btn" onclick="startScan()">▶ Scan Network</button>
+        <span id="scan-status" style="font-size:11px;font-family:var(--fm);color:#8ab0d0"></span>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-hd">
+        <div class="card-ttl">FILTERS</div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <input class="fi" id="asset-q" placeholder="Search IP / hostname / OS..." style="flex:1;min-width:160px" oninput="loadAssets()">
+        <select class="fs" id="asset-status" onchange="loadAssets()" style="width:120px">
+          <option value="">All Status</option>
+          <option value="online">Online</option>
+          <option value="offline">Offline</option>
+        </select>
+      </div>
+    </div>
+  </div>
+  <div class="card" style="margin-top:14px">
+    <div class="card-hd"><div class="card-ttl">ASSET INVENTORY</div><button class="btn btn-h btn-sm" onclick="loadAssets()">⟳ Refresh</button></div>
+    <div style="overflow-x:auto">
+      <table class="tbl" id="asset-tbl">
+        <thead><tr><th>IP</th><th>HOSTNAME</th><th>OS</th><th>OPEN PORTS</th><th>SUBNET</th><th>LAST SEEN</th><th>STATUS</th></tr></thead>
+        <tbody id="asset-tbody"><tr><td colspan="7" style="text-align:center;color:#8ab0d0">Run a scan to discover assets</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ADD SUBNET MODAL -->
+<div class="modal-ov" id="modal-subnet">
+  <div class="modal" style="width:420px">
+    <div class="modal-hd"><div class="modal-ttl">Add Subnet</div><button class="modal-x" onclick="closeModal('modal-subnet')">✕</button></div>
+    <div class="modal-body">
+      <div class="fg"><label class="fl">CIDR *</label><input class="fi" id="sn-cidr" placeholder="e.g. 192.168.1.0/24"></div>
+      <div class="fg"><label class="fl">Label</label><input class="fi" id="sn-label" placeholder="e.g. Office LAN"></div>
+    </div>
+    <div class="modal-ft"><button class="btn btn-h" onclick="closeModal('modal-subnet')">Cancel</button><button class="btn btn-p" onclick="saveSubnet()">Add</button></div>
+  </div>
+</div>
+
+<!-- UEBA -->
+<div class="page" id="page-ueba">
+  <div class="ph"><h1>UEBA</h1><p>User &amp; Entity Behavior Analytics — Neo4j Graph Engine</p></div>
+  <div class="g4 mb">
+    <div class="kpi cl"><div class="kpi-lbl">USERS</div><div class="kpi-val" id="ub-users">—</div><div class="kpi-sub">tracked</div></div>
+    <div class="kpi cg"><div class="kpi-lbl">HOSTS</div><div class="kpi-val" id="ub-hosts">—</div><div class="kpi-sub">in graph</div></div>
+    <div class="kpi cp"><div class="kpi-lbl">PROCESSES</div><div class="kpi-val" id="ub-procs">—</div><div class="kpi-sub">observed</div></div>
+    <div class="kpi cr"><div class="kpi-lbl">RELATIONSHIPS</div><div class="kpi-val" id="ub-rels">—</div><div class="kpi-sub">graph edges</div></div>
+  </div>
+  <div class="g2">
+    <div class="card">
+      <div class="card-hd"><div class="card-ttl">LATERAL MOVEMENT</div></div>
+      <div id="ueba-lateral" style="font-size:12px;color:#8ab0d0;font-family:var(--fm)"><div class="loading"><div class="spin"></div></div></div>
+    </div>
+    <div class="card">
+      <div class="card-hd"><div class="card-ttl">HIGH FREQUENCY LOGINS</div></div>
+      <div id="ueba-hf" style="font-size:12px;color:#8ab0d0;font-family:var(--fm)"><div class="loading"><div class="spin"></div></div></div>
+    </div>
+  </div>
+  <div class="g2" style="margin-top:14px">
+    <div class="card">
+      <div class="card-hd"><div class="card-ttl">RARE PROCESSES</div></div>
+      <div id="ueba-rare" style="font-size:12px;color:#8ab0d0;font-family:var(--fm)"><div class="loading"><div class="spin"></div></div></div>
+    </div>
+    <div class="card">
+      <div class="card-hd"><div class="card-ttl">NEW CONNECTIONS</div></div>
+      <div id="ueba-conn" style="font-size:12px;color:#8ab0d0;font-family:var(--fm)"><div class="loading"><div class="spin"></div></div></div>
+    </div>
+  </div>
+  <div class="card" style="margin-top:14px">
+    <div class="card-hd"><div class="card-ttl">ENTITY GRAPH LOOKUP</div></div>
+    <div style="display:flex;gap:10px;margin-bottom:14px">
+      <input class="fi" id="ueba-entity" placeholder="Enter username, hostname or IP..." style="flex:1">
+      <button class="btn btn-p" onclick="loadEntityGraph()">Lookup</button>
+    </div>
+    <div id="ueba-graph-result" style="font-size:12px;color:#8ab0d0;font-family:var(--fm)"></div>
   </div>
 </div>
 
@@ -1391,7 +1491,9 @@ function errBnr(t){return`<div class="banner err">${esc(t)}</div>`;}
 let CUR='dashboard';
 const LOAD_MAP={dashboard:loadDashboard,agents:loadAgents,alerts:loadAlerts,rules:loadRules,'create-rules':loadCustomRules,investigation:()=>{loadInvAlerts();loadAutoTriageSettings();loadInvHistory();},
   cases:loadCases,'hive-alerts':loadHiveAlerts,threatmap:loadThreatMap,
-  ioc:loadIOCQuick,reports:loadReportMetrics};
+  ioc:loadIOCQuick,reports:loadReportMetrics,
+  assets:()=>{loadSubnets();loadAssets();loadScanStatus();},
+  ueba:()=>{loadUebaStats();loadUebaAnomalies();}};
 
 function go(p){
   document.querySelectorAll('.page').forEach(x=>x.classList.remove('active'));
@@ -3083,6 +3185,12 @@ async function testConn(){
     {name:'SP-CM (TheHive)',  info:d.thehive,   fix:'Check API key in .env'},
     {name:'SOCPilots AI (n8n)',info:d.n8n,      fix:'ufw allow 5678 on AI server'},
   ].map(({name,info,fix})=>`<div style="padding:9px 11px;background:var(--bg2);border:1px solid ${info?.ok?'rgba(0,230,118,.2)':'rgba(255,23,68,.2)'};border-radius:3px"><div style="display:flex;align-items:center;gap:8px;font-size:12px;font-family:var(--fm)"><div class="led ${info?.ok?'g':'r'}"></div><span style="flex:1;font-weight:600">${name}</span><span style="color:${info?.ok?'var(--g)':'var(--r)'}">${info?.ok?'ONLINE':'OFFLINE'}</span>${info?.latency?`<span style="color:#8ab0d0;font-size:10px">${info.latency}ms</span>`:''}</div>${!info?.ok?`<div style="font-size:10px;color:var(--y);margin-top:5px;font-family:var(--fm)">Fix: ${fix}</div>`:''}</div>`).join('')}</div>`;
+  if(d.config){
+    const e=id=>document.getElementById(id);
+    if(e('cfg-siem'))e('cfg-siem').textContent=d.config.opensearch_url||'—';
+    if(e('cfg-spcm'))e('cfg-spcm').textContent=d.config.thehive_url||'—';
+    if(e('cfg-ai'))  e('cfg-ai').textContent=d.config.n8n_url||'—';
+  }
 }
 
 // ─── MODALS ───────────────────────────────────────────────────
@@ -3096,6 +3204,180 @@ function toast(msg,type='info'){
   const icons={ok:'✓',err:'✗',warn:'⚠',info:'ℹ'};
   t.innerHTML=`<span>${icons[type]||'ℹ'}</span><span>${esc(msg)}</span>`;
   a.appendChild(t);setTimeout(()=>{t.style.opacity='0';t.style.transition='opacity .3s';setTimeout(()=>t.remove(),300);},4000);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ─── ASSET DISCOVERY ──────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════
+
+let _scanPoll=null;
+
+async function loadSubnets(){
+  const d=await G('/api/subnets');
+  const el=document.getElementById('subnet-list');
+  if(!d||!el)return;
+  if(!d.subnets?.length){el.innerHTML='<div style="color:#8ab0d0;padding:8px 0">No subnets yet. Add one to start scanning.</div>';return;}
+  el.innerHTML=`<table class="tbl" style="margin-top:6px"><thead><tr><th>CIDR</th><th>LABEL</th><th>ADDED</th><th></th></tr></thead><tbody>`+
+    d.subnets.map(s=>`<tr>
+      <td style="font-family:var(--fm);color:var(--c)">${s.cidr}</td>
+      <td>${s.label||'—'}</td>
+      <td style="color:#8ab0d0">${new Date(s.created_at).toLocaleDateString()}</td>
+      <td><button class="btn btn-h btn-sm" onclick="deleteSubnet(${s.id})">✕</button></td>
+    </tr>`).join('')+'</tbody></table>';
+}
+
+async function loadAssets(){
+  const q=document.getElementById('asset-q')?.value||'';
+  const status=document.getElementById('asset-status')?.value||'';
+  const url='/api/assets'+(q||status?`?q=${encodeURIComponent(q)}&status=${status}`:'');
+  const d=await G(url);
+  if(!d)return;
+  const s=d.stats||{};
+  ['total','online','offline','new'].forEach(k=>{const el=document.getElementById(`ak-${k}`);if(el)el.textContent=s[k]??'0';});
+  document.getElementById('n-assets').textContent=s.online||'0';
+  const tbody=document.getElementById('asset-tbody');
+  if(!tbody)return;
+  if(!d.assets?.length){tbody.innerHTML='<tr><td colspan="7" style="text-align:center;color:#8ab0d0">No assets found</td></tr>';return;}
+  tbody.innerHTML=d.assets.map(a=>{
+    const ports=(a.open_ports||[]).slice(0,6).map(p=>`<span style="background:rgba(0,229,255,.1);color:var(--c);padding:1px 5px;border-radius:3px;font-size:10px">${p.port}/${p.proto}</span>`).join(' ');
+    const morePorts=(a.open_ports||[]).length>6?`<span style="color:#8ab0d0;font-size:10px">+${(a.open_ports||[]).length-6}</span>`:'';
+    const statusColor=a.status==='online'?'var(--g)':'var(--r)';
+    return`<tr>
+      <td style="font-family:var(--fm);color:var(--c);cursor:pointer" onclick="uebaLookup('${a.ip}')">${a.ip}</td>
+      <td>${a.hostname||'—'}</td>
+      <td style="color:#8ab0d0;font-size:11px">${a.os_guess||'—'}</td>
+      <td>${ports}${morePorts}</td>
+      <td style="color:#8ab0d0;font-size:11px">${a.subnet_cidr||'—'}</td>
+      <td style="color:#8ab0d0;font-size:11px">${a.last_seen?new Date(a.last_seen).toLocaleString():'—'}</td>
+      <td><span style="color:${statusColor};font-size:11px;font-family:var(--fm)">${(a.status||'').toUpperCase()}</span></td>
+    </tr>`;
+  }).join('');
+}
+
+async function loadScanStatus(){
+  const d=await G('/api/assets/scan/status');
+  if(!d)return;
+  const job=d.job;
+  const btn=document.getElementById('scan-btn');
+  const st=document.getElementById('scan-status');
+  if(!job){if(st)st.textContent='No scans yet';return;}
+  if(job.status==='running'){
+    if(btn)btn.disabled=true;
+    if(st)st.textContent=`⟳ Scanning ${(job.subnets_scanned||[]).join(', ')}...`;
+    if(!_scanPoll)_scanPoll=setInterval(()=>loadScanStatus(),5000);
+  } else {
+    if(btn)btn.disabled=false;
+    if(_scanPoll){clearInterval(_scanPoll);_scanPoll=null;}
+    const when=new Date(job.finished_at||job.started_at).toLocaleTimeString();
+    if(job.status==='done') st.textContent=`Last scan: ${job.hosts_found} hosts found at ${when}`;
+    else if(job.status==='error') st.textContent=`Last scan failed: ${job.error}`;
+  }
+}
+
+async function startScan(){
+  const btn=document.getElementById('scan-btn');
+  const st=document.getElementById('scan-status');
+  if(btn)btn.disabled=true;
+  if(st)st.textContent='Starting scan...';
+  const d=await P('/api/assets/scan',{});
+  if(d?.error){toast(d.error,'error');if(btn)btn.disabled=false;return;}
+  if(st)st.textContent='Scan started...';
+  if(_scanPoll)clearInterval(_scanPoll);
+  _scanPoll=setInterval(()=>{loadScanStatus();loadAssets();},5000);
+}
+
+function openAddSubnet(){document.getElementById('sn-cidr').value='';document.getElementById('sn-label').value='';document.getElementById('modal-subnet').classList.add('show');}
+
+async function saveSubnet(){
+  const cidr=document.getElementById('sn-cidr').value.trim();
+  const label=document.getElementById('sn-label').value.trim();
+  if(!cidr)return;
+  const d=await P('/api/subnets',{cidr,label});
+  if(d?.error){toast(d.error,'error');return;}
+  closeModal('modal-subnet');
+  loadSubnets();
+  toast('Subnet added');
+}
+
+async function deleteSubnet(id){
+  if(!confirm('Remove this subnet?'))return;
+  await fetch(`/api/subnets/${id}`,{method:'DELETE',headers:{Authorization:`Bearer ${TK}`}});
+  loadSubnets();
+  toast('Subnet removed');
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ─── UEBA (Neo4j Graph Analytics) ─────────────────────────────
+// ═══════════════════════════════════════════════════════════════
+
+async function loadUebaStats(){
+  const d=await G('/api/ueba/stats');
+  if(!d?.stats)return;
+  const s=d.stats;
+  document.getElementById('ub-users').textContent=s.users??'—';
+  document.getElementById('ub-hosts').textContent=s.hosts??'—';
+  document.getElementById('ub-procs').textContent=s.processes??'—';
+  document.getElementById('ub-rels').textContent=s.relationships??'—';
+}
+
+async function loadUebaAnomalies(){
+  const d=await G('/api/ueba/anomalies');
+  if(!d)return;
+  renderUebaSection('ueba-lateral',d.lateral_movement,r=>`
+    <div style="padding:6px 0;border-bottom:1px solid var(--b1)">
+      <span style="color:var(--r);font-weight:600">${r.user}</span>
+      <span style="color:#8ab0d0"> moved across ${(r.hops||[]).length} host pair(s)</span>
+      <div style="font-size:10px;color:var(--txt2);margin-top:2px">${(r.hops||[]).join(' | ')}</div>
+    </div>`,'No lateral movement detected in last 24h');
+  renderUebaSection('ueba-hf',d.high_frequency_logins,r=>`
+    <div style="padding:6px 0;border-bottom:1px solid var(--b1)">
+      <span style="color:var(--r);font-weight:600">${r.user}</span>
+      <span style="color:#8ab0d0"> → ${r.host}</span>
+      <span style="background:rgba(255,23,68,.12);color:var(--r);padding:2px 6px;border-radius:8px;font-size:10px;margin-left:6px">${r.count}x in 1h</span>
+    </div>`,'No high-frequency logins detected');
+  renderUebaSection('ueba-rare',d.rare_processes,r=>`
+    <div style="padding:6px 0;border-bottom:1px solid var(--b1)">
+      <span style="color:var(--c);font-family:var(--fm)">${r.process}</span>
+      <span style="color:#8ab0d0"> on ${r.host_count} host(s): ${(r.hosts||[]).join(', ')}</span>
+    </div>`,'No rare processes detected');
+  renderUebaSection('ueba-conn',d.new_connections,r=>`
+    <div style="padding:6px 0;border-bottom:1px solid var(--b1)">
+      <span style="color:var(--c);font-family:var(--fm)">${r.ip}</span>
+      <span style="color:#8ab0d0"> → ${r.host}</span>
+      <span style="font-size:10px;color:var(--txt2);margin-left:6px">${r.count} conn · ${r.first_seen?new Date(r.first_seen).toLocaleString():''}</span>
+    </div>`,'No new connection sources');
+  const total=(d.lateral_movement?.length||0)+(d.high_frequency_logins?.length||0)+(d.rare_processes?.length||0);
+  document.getElementById('n-ueba').textContent=total||'0';
+}
+
+function renderUebaSection(elId,items,rowFn,emptyMsg){
+  const el=document.getElementById(elId);
+  if(!el)return;
+  if(!items?.length){el.innerHTML=`<div style="color:#8ab0d0;padding:8px 0">${emptyMsg}</div>`;return;}
+  el.innerHTML=items.map(rowFn).join('');
+}
+
+async function loadEntityGraph(){
+  const name=document.getElementById('ueba-entity')?.value?.trim();
+  if(!name)return;
+  const el=document.getElementById('ueba-graph-result');
+  if(el)el.innerHTML='<div class="loading"><div class="spin"></div></div>';
+  const d=await G(`/api/ueba/graph/${encodeURIComponent(name)}`);
+  if(!el)return;
+  if(!d?.edges?.length){el.innerHTML='<div style="color:#8ab0d0">No graph data found for this entity</div>';return;}
+  el.innerHTML=`<table class="tbl"><thead><tr><th>RELATIONSHIP</th><th>SOURCE</th><th>TARGET</th><th>TIME</th></tr></thead><tbody>`+
+    d.edges.map(e=>`<tr>
+      <td><span style="background:rgba(0,229,255,.1);color:var(--c);padding:2px 7px;border-radius:4px;font-size:10px">${e.rel}</span></td>
+      <td style="font-family:var(--fm)">${e.src} <span style="color:#8ab0d0;font-size:10px">[${e.src_type}]</span></td>
+      <td style="font-family:var(--fm)">${e.dst} <span style="color:#8ab0d0;font-size:10px">[${e.dst_type}]</span></td>
+      <td style="color:#8ab0d0;font-size:11px">${e.time?new Date(e.time).toLocaleString():'—'}</td>
+    </tr>`).join('')+'</tbody></table>';
+}
+
+function uebaLookup(entity){
+  document.getElementById('ueba-entity').value=entity;
+  go('ueba');
+  loadEntityGraph();
 }
 
 // ─── STARTUP ──────────────────────────────────────────────────

@@ -75,6 +75,43 @@ async function initSchema() {
       ('auto_triage_min_level','12','system'),
       ('auto_triage_interval_sec','60','system')
      ON CONFLICT(key) DO NOTHING`,
+
+    // Asset Discovery — subnets
+    `CREATE TABLE IF NOT EXISTS subnets (
+      id         SERIAL PRIMARY KEY,
+      cidr       VARCHAR(50) NOT NULL UNIQUE,
+      label      VARCHAR(100),
+      enabled    BOOLEAN DEFAULT true,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )`,
+
+    // Asset Discovery — discovered hosts
+    `CREATE TABLE IF NOT EXISTS assets (
+      id         SERIAL PRIMARY KEY,
+      ip         VARCHAR(50) NOT NULL UNIQUE,
+      hostname   VARCHAR(255),
+      mac        VARCHAR(20),
+      os_guess   VARCHAR(255),
+      status     VARCHAR(10) DEFAULT 'online',
+      open_ports JSONB DEFAULT '[]',
+      subnet_id  INTEGER REFERENCES subnets(id) ON DELETE SET NULL,
+      first_seen TIMESTAMPTZ DEFAULT NOW(),
+      last_seen  TIMESTAMPTZ DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_assets_ip     ON assets(ip)`,
+    `CREATE INDEX IF NOT EXISTS idx_assets_status ON assets(status)`,
+
+    // Asset Discovery — scan job history
+    `CREATE TABLE IF NOT EXISTS scan_jobs (
+      id             SERIAL PRIMARY KEY,
+      status         VARCHAR(20) DEFAULT 'running',
+      started_at     TIMESTAMPTZ DEFAULT NOW(),
+      finished_at    TIMESTAMPTZ,
+      subnets_scanned TEXT[],
+      hosts_found    INTEGER DEFAULT 0,
+      started_by     VARCHAR(50),
+      error          TEXT
+    )`,
   ];
 
   for (const q of queries) {
@@ -208,6 +245,83 @@ async function saveArtifacts(investigationId, artifacts) {
   }
 }
 
+// ── Asset Discovery — Subnets ────────────────────────────
+async function listSubnets() {
+  const r = await pool.query(`SELECT * FROM subnets ORDER BY id`);
+  return r.rows;
+}
+async function addSubnet(cidr, label) {
+  const r = await pool.query(
+    `INSERT INTO subnets(cidr, label) VALUES($1,$2) RETURNING *`,
+    [cidr.trim(), (label||'').trim()]
+  );
+  return r.rows[0];
+}
+async function deleteSubnet(id) {
+  await pool.query(`DELETE FROM subnets WHERE id=$1`, [id]);
+}
+
+// ── Asset Discovery — Assets ─────────────────────────────
+async function listAssets({ status, q, limit=500 } = {}) {
+  let where = ['1=1'], params = [];
+  if (status) { params.push(status); where.push(`status=$${params.length}`); }
+  if (q) { params.push(`%${q}%`); where.push(`(ip ILIKE $${params.length} OR hostname ILIKE $${params.length} OR os_guess ILIKE $${params.length})`); }
+  params.push(limit);
+  const r = await pool.query(
+    `SELECT a.*, s.cidr as subnet_cidr, s.label as subnet_label
+     FROM assets a LEFT JOIN subnets s ON a.subnet_id=s.id
+     WHERE ${where.join(' AND ')} ORDER BY a.ip LIMIT $${params.length}`,
+    params
+  );
+  return r.rows;
+}
+async function upsertAsset({ ip, hostname, mac, os_guess, open_ports, subnet_id }) {
+  const r = await pool.query(
+    `INSERT INTO assets(ip, hostname, mac, os_guess, open_ports, subnet_id, status, last_seen)
+     VALUES($1,$2,$3,$4,$5,$6,'online',NOW())
+     ON CONFLICT(ip) DO UPDATE SET
+       hostname=EXCLUDED.hostname, mac=COALESCE(EXCLUDED.mac, assets.mac),
+       os_guess=COALESCE(EXCLUDED.os_guess, assets.os_guess),
+       open_ports=EXCLUDED.open_ports, status='online',
+       last_seen=NOW(), subnet_id=COALESCE(EXCLUDED.subnet_id, assets.subnet_id)
+     RETURNING *`,
+    [ip, hostname||null, mac||null, os_guess||null, JSON.stringify(open_ports||[]), subnet_id||null]
+  );
+  return r.rows[0];
+}
+async function getAssetStats() {
+  const r = await pool.query(`
+    SELECT
+      COUNT(*) AS total,
+      COUNT(*) FILTER (WHERE status='online')  AS online,
+      COUNT(*) FILTER (WHERE status='offline') AS offline,
+      COUNT(*) FILTER (WHERE first_seen > NOW() - INTERVAL '24 hours') AS new_today
+    FROM assets
+  `);
+  return r.rows[0];
+}
+
+// ── Asset Discovery — Scan Jobs ──────────────────────────
+async function createScanJob(subnets, user) {
+  const r = await pool.query(
+    `INSERT INTO scan_jobs(subnets_scanned, started_by) VALUES($1,$2) RETURNING *`,
+    [subnets, user]
+  );
+  return r.rows[0];
+}
+async function finishScanJob(id, hostsFound, error) {
+  const r = await pool.query(
+    `UPDATE scan_jobs SET status=$1, finished_at=NOW(), hosts_found=$2, error=$3
+     WHERE id=$4 RETURNING *`,
+    [error ? 'error' : 'done', hostsFound||0, error||null, id]
+  );
+  return r.rows[0];
+}
+async function getLatestScanJob() {
+  const r = await pool.query(`SELECT * FROM scan_jobs ORDER BY started_at DESC LIMIT 1`);
+  return r.rows[0] || null;
+}
+
 // ── Health check ─────────────────────────────────────────
 async function ping() {
   try {
@@ -230,4 +344,13 @@ module.exports = {
   getAllSettings,
   saveArtifacts,
   ping,
+  listSubnets,
+  addSubnet,
+  deleteSubnet,
+  listAssets,
+  upsertAsset,
+  getAssetStats,
+  createScanJob,
+  finishScanJob,
+  getLatestScanJob,
 };

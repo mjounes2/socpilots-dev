@@ -24,6 +24,8 @@ networks:
 volumes:
   postgres_data:
   n8n_data:
+  neo4j_data:
+  neo4j_logs:
 
 services:
 
@@ -79,6 +81,12 @@ services:
       N8N_INVESTIGATION_URL: ${N8N_INVESTIGATION_URL:-http://n8n:5678/webhook/socpilots-investigation}
       # Auth users
       SOC_USERS: ${SOC_USERS}
+      # Neo4j UEBA
+      NEO4J_URI:      bolt://neo4j:7687
+      NEO4J_USER:     neo4j
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD}
+      # Network Scanner
+      SCANNER_URL:    http://scanner:7777
     depends_on:
       postgres:
         condition: service_healthy
@@ -196,6 +204,53 @@ services:
       timeout: 10s
       retries: 3
       start_period: 20s
+
+  # ── Neo4j UEBA Graph Database ──────────────────────────────
+  # Community Edition — free forever
+  # Browser UI: http://YOUR_SERVER_IP:7474  (login: neo4j / NEO4J_PASSWORD)
+  neo4j:
+    image: neo4j:5-community
+    container_name: socpilots-neo4j
+    restart: unless-stopped
+    networks:
+      - soc
+    ports:
+      - "7474:7474"   # Browser UI
+      - "7687:7687"   # Bolt (used by webapp)
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD}
+      NEO4J_PLUGINS: '["apoc"]'
+      NEO4J_dbms_security_procedures_unrestricted: apoc.*
+      NEO4J_dbms_memory_heap_initial__size: 256m
+      NEO4J_dbms_memory_heap_max__size: 512m
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # ── Network Asset Scanner ───────────────────────────────────
+  # Runs nmap as root in isolated container, called by webapp
+  scanner:
+    build:
+      context: ./scanner
+      dockerfile: Dockerfile
+    container_name: socpilots-scanner
+    restart: unless-stopped
+    networks:
+      - soc
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7777/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   # ── n8n Automation ─────────────────────────────────────────────
   # AI agent that connects SOCPilots → MCP-Wazuh → TheHive
