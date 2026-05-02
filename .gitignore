@@ -1,9 +1,9 @@
 # Environment files — copy .env.template and fill values on the server
 .env
 *.env
+.env.*
 !.env.template
 !.env.example
-!.env.socpilots
 
 # Python
 __pycache__/
