@@ -87,6 +87,9 @@ services:
       NEO4J_PASSWORD: ${NEO4J_PASSWORD}
       # Network Scanner
       SCANNER_URL:    http://scanner:7777
+      # LangChain Investigation Agent
+      LANGCHAIN_URL:  http://langchain-agent:8001
+      LANGCHAIN_INTERNAL_TOKEN: ${LANGCHAIN_INTERNAL_TOKEN:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -251,6 +254,39 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+
+  # ── LangChain Multi-Step Investigation Agent ───────────────
+  # ReAct agent: Reason → Act → Observe loop
+  # POST /investigate — deep analysis  POST /triage — fast classify
+  langchain-agent:
+    build:
+      context: ./langchain-agent
+      dockerfile: Dockerfile
+    container_name: socpilots-langchain
+    restart: unless-stopped
+    networks:
+      - soc
+    ports:
+      - "8001:8001"
+    environment:
+      OPENAI_API_KEY:   ${OPENAI_API_KEY}
+      MISTRAL_API_KEY:  ${MISTRAL_API_KEY:-}
+      OPENSEARCH_URL:   ${OPENSEARCH_URL}
+      OPENSEARCH_USER:  ${OPENSEARCH_USER:-admin}
+      OPENSEARCH_PASS:  ${OPENSEARCH_PASS}
+      WAZUH_INDEX:      ${WAZUH_INDEX:-wazuh-alerts-*}
+      THEHIVE_URL:      ${THEHIVE_URL}
+      THEHIVE_API_KEY:  ${THEHIVE_API_KEY}
+      VIRUSTOTAL_API_KEY:  ${VIRUSTOTAL_API_KEY}
+      ABUSEIPDB_API_KEY:   ${ABUSEIPDB_API_KEY}
+      WEBAPP_URL:          http://webapp:3000
+      LANGCHAIN_INTERNAL_TOKEN: ${LANGCHAIN_INTERNAL_TOKEN:-}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8001/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
   # ── n8n Automation ─────────────────────────────────────────────
   # AI agent that connects SOCPilots → MCP-Wazuh → TheHive

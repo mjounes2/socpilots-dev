@@ -1014,8 +1014,9 @@ sshd: Failed" style="min-height:80px"></textarea></div>
         <button class="btn btn-p btn-sm" onclick="openAddSubnet()">+ Add Subnet</button>
       </div>
       <div id="subnet-list" style="font-size:12px;color:#8ab0d0;font-family:var(--fm)">Loading...</div>
-      <div style="margin-top:14px;display:flex;align-items:center;gap:10px">
+      <div style="margin-top:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
         <button class="btn btn-p" id="scan-btn" onclick="startScan()">▶ Scan Network</button>
+        <button class="btn btn-h btn-sm" onclick="syncAgents()" title="Re-match Wazuh agents without rescanning">⟳ Sync Wazuh Agents</button>
         <span id="scan-status" style="font-size:11px;font-family:var(--fm);color:#8ab0d0"></span>
       </div>
     </div>
@@ -1037,8 +1038,8 @@ sshd: Failed" style="min-height:80px"></textarea></div>
     <div class="card-hd"><div class="card-ttl">ASSET INVENTORY</div><button class="btn btn-h btn-sm" onclick="loadAssets()">⟳ Refresh</button></div>
     <div style="overflow-x:auto">
       <table class="tbl" id="asset-tbl">
-        <thead><tr><th>IP</th><th>HOSTNAME</th><th>OS</th><th>OPEN PORTS</th><th>SUBNET</th><th>LAST SEEN</th><th>STATUS</th></tr></thead>
-        <tbody id="asset-tbody"><tr><td colspan="7" style="text-align:center;color:#8ab0d0">Run a scan to discover assets</td></tr></tbody>
+        <thead><tr><th>IP</th><th>HOSTNAME</th><th>OS / VENDOR</th><th>OPEN PORTS</th><th>SUBNET</th><th>WAZUH AGENT</th><th>LAST SEEN</th><th>STATUS</th></tr></thead>
+        <tbody id="asset-tbody"><tr><td colspan="8" style="text-align:center;color:#8ab0d0">Run a scan to discover assets</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -1058,40 +1059,104 @@ sshd: Failed" style="min-height:80px"></textarea></div>
 
 <!-- UEBA -->
 <div class="page" id="page-ueba">
-  <div class="ph"><h1>UEBA</h1><p>User &amp; Entity Behavior Analytics — Neo4j Graph Engine</p></div>
-  <div class="g4 mb">
+  <div class="ph"><h1>UEBA</h1><p>User &amp; Entity Behavior Analytics — Neo4j behavioral graph, real-time deviation scoring</p></div>
+
+  <!-- KPI Row -->
+  <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:14px">
     <div class="kpi cl"><div class="kpi-lbl">USERS</div><div class="kpi-val" id="ub-users">—</div><div class="kpi-sub">tracked</div></div>
     <div class="kpi cg"><div class="kpi-lbl">HOSTS</div><div class="kpi-val" id="ub-hosts">—</div><div class="kpi-sub">in graph</div></div>
     <div class="kpi cp"><div class="kpi-lbl">PROCESSES</div><div class="kpi-val" id="ub-procs">—</div><div class="kpi-sub">observed</div></div>
-    <div class="kpi cr"><div class="kpi-lbl">RELATIONSHIPS</div><div class="kpi-val" id="ub-rels">—</div><div class="kpi-sub">graph edges</div></div>
+    <div class="kpi cr"><div class="kpi-lbl">EDGES</div><div class="kpi-val" id="ub-rels">—</div><div class="kpi-sub">relationships</div></div>
+    <div class="kpi cr"><div class="kpi-lbl">AVG RISK</div><div class="kpi-val" id="ub-avgrisk">—</div><div class="kpi-sub">org score</div></div>
+    <div class="kpi cr"><div class="kpi-lbl">HIGH RISK</div><div class="kpi-val" id="ub-highrisk">—</div><div class="kpi-sub">users ≥70</div></div>
   </div>
-  <div class="g2">
+
+  <!-- Risk Leaderboard + Entity Lookup -->
+  <div class="g2" style="margin-bottom:14px">
     <div class="card">
-      <div class="card-hd"><div class="card-ttl">LATERAL MOVEMENT</div></div>
+      <div class="card-hd"><div class="card-ttl">RISK LEADERBOARD</div><button class="btn btn-h btn-sm" onclick="loadUebaStats();loadUebaAnomalies()">⟳ Refresh</button></div>
+      <div id="ueba-leaderboard" style="font-size:12px;color:#8ab0d0;font-family:var(--fm)"><div class="loading"><div class="spin"></div></div></div>
+    </div>
+    <div class="card">
+      <div class="card-hd"><div class="card-ttl">ENTITY PROFILE &amp; GRAPH</div></div>
+      <div style="display:flex;gap:10px;margin-bottom:10px">
+        <input class="fi" id="ueba-entity" placeholder="username / hostname / IP..." style="flex:1">
+        <button class="btn btn-p" onclick="loadEntityGraph()">Lookup</button>
+      </div>
+      <div id="ueba-graph-result" style="font-size:12px;color:#8ab0d0;font-family:var(--fm)"></div>
+    </div>
+  </div>
+
+  <!-- Anomaly Panels Row 1 -->
+  <div class="g2" style="margin-bottom:14px">
+    <div class="card">
+      <div class="card-hd">
+        <div style="display:flex;align-items:center;gap:6px">
+          <span style="color:var(--r);font-size:14px">●</span>
+          <div class="card-ttl">LATERAL MOVEMENT</div>
+        </div>
+        <span id="cnt-lateral" class="sbi-n">—</span>
+      </div>
       <div id="ueba-lateral" style="font-size:12px;color:#8ab0d0;font-family:var(--fm)"><div class="loading"><div class="spin"></div></div></div>
     </div>
     <div class="card">
-      <div class="card-hd"><div class="card-ttl">HIGH FREQUENCY LOGINS</div></div>
+      <div class="card-hd">
+        <div style="display:flex;align-items:center;gap:6px">
+          <span style="color:var(--r);font-size:14px">●</span>
+          <div class="card-ttl">IMPOSSIBLE TRAVEL</div>
+        </div>
+        <span id="cnt-travel" class="sbi-n">—</span>
+      </div>
+      <div id="ueba-travel" style="font-size:12px;color:#8ab0d0;font-family:var(--fm)"><div class="loading"><div class="spin"></div></div></div>
+    </div>
+  </div>
+
+  <!-- Anomaly Panels Row 2 -->
+  <div class="g2" style="margin-bottom:14px">
+    <div class="card">
+      <div class="card-hd">
+        <div style="display:flex;align-items:center;gap:6px">
+          <span style="color:#ff9800;font-size:14px">●</span>
+          <div class="card-ttl">PRIVILEGE ESCALATION</div>
+        </div>
+        <span id="cnt-privesc" class="sbi-n">—</span>
+      </div>
+      <div id="ueba-privesc" style="font-size:12px;color:#8ab0d0;font-family:var(--fm)"><div class="loading"><div class="spin"></div></div></div>
+    </div>
+    <div class="card">
+      <div class="card-hd">
+        <div style="display:flex;align-items:center;gap:6px">
+          <span style="color:#ff9800;font-size:14px">●</span>
+          <div class="card-ttl">AFTER-HOURS ACCESS</div>
+        </div>
+        <span id="cnt-afterhours" class="sbi-n">—</span>
+      </div>
+      <div id="ueba-afterhours" style="font-size:12px;color:#8ab0d0;font-family:var(--fm)"><div class="loading"><div class="spin"></div></div></div>
+    </div>
+  </div>
+
+  <!-- Anomaly Panels Row 3 -->
+  <div class="g2" style="margin-bottom:14px">
+    <div class="card">
+      <div class="card-hd">
+        <div style="display:flex;align-items:center;gap:6px">
+          <span style="color:var(--c);font-size:14px">●</span>
+          <div class="card-ttl">HIGH FREQ LOGINS</div>
+        </div>
+        <span id="cnt-hf" class="sbi-n">—</span>
+      </div>
       <div id="ueba-hf" style="font-size:12px;color:#8ab0d0;font-family:var(--fm)"><div class="loading"><div class="spin"></div></div></div>
     </div>
-  </div>
-  <div class="g2" style="margin-top:14px">
     <div class="card">
-      <div class="card-hd"><div class="card-ttl">RARE PROCESSES</div></div>
+      <div class="card-hd">
+        <div style="display:flex;align-items:center;gap:6px">
+          <span style="color:var(--c);font-size:14px">●</span>
+          <div class="card-ttl">RARE PROCESSES</div>
+        </div>
+        <span id="cnt-rare" class="sbi-n">—</span>
+      </div>
       <div id="ueba-rare" style="font-size:12px;color:#8ab0d0;font-family:var(--fm)"><div class="loading"><div class="spin"></div></div></div>
     </div>
-    <div class="card">
-      <div class="card-hd"><div class="card-ttl">NEW CONNECTIONS</div></div>
-      <div id="ueba-conn" style="font-size:12px;color:#8ab0d0;font-family:var(--fm)"><div class="loading"><div class="spin"></div></div></div>
-    </div>
-  </div>
-  <div class="card" style="margin-top:14px">
-    <div class="card-hd"><div class="card-ttl">ENTITY GRAPH LOOKUP</div></div>
-    <div style="display:flex;gap:10px;margin-bottom:14px">
-      <input class="fi" id="ueba-entity" placeholder="Enter username, hostname or IP..." style="flex:1">
-      <button class="btn btn-p" onclick="loadEntityGraph()">Lookup</button>
-    </div>
-    <div id="ueba-graph-result" style="font-size:12px;color:#8ab0d0;font-family:var(--fm)"></div>
   </div>
 </div>
 
@@ -3239,15 +3304,20 @@ async function loadAssets(){
   if(!tbody)return;
   if(!d.assets?.length){tbody.innerHTML='<tr><td colspan="7" style="text-align:center;color:#8ab0d0">No assets found</td></tr>';return;}
   tbody.innerHTML=d.assets.map(a=>{
-    const ports=(a.open_ports||[]).slice(0,6).map(p=>`<span style="background:rgba(0,229,255,.1);color:var(--c);padding:1px 5px;border-radius:3px;font-size:10px">${p.port}/${p.proto}</span>`).join(' ');
-    const morePorts=(a.open_ports||[]).length>6?`<span style="color:#8ab0d0;font-size:10px">+${(a.open_ports||[]).length-6}</span>`:'';
+    const ports=(a.open_ports||[]).slice(0,5).map(p=>`<span style="background:rgba(0,229,255,.1);color:var(--c);padding:1px 5px;border-radius:3px;font-size:10px" title="${p.product||''}">${p.port}/${p.service||p.proto}</span>`).join(' ');
+    const morePorts=(a.open_ports||[]).length>5?`<span style="color:#8ab0d0;font-size:10px"> +${(a.open_ports||[]).length-5}</span>`:'';
     const statusColor=a.status==='online'?'var(--g)':'var(--r)';
+    const osVendor=[a.os_guess,a.vendor].filter(Boolean).join(' · ')||'—';
+    const wazuhStatus=a.wazuh_agent_name
+      ?`<span style="color:${a.wazuh_agent_status==='active'?'var(--g)':'var(--y)'}">✓ ${a.wazuh_agent_name}</span>`
+      :`<span style="color:#8ab0d0;font-size:10px">✗ No agent</span>`;
     return`<tr>
       <td style="font-family:var(--fm);color:var(--c);cursor:pointer" onclick="uebaLookup('${a.ip}')">${a.ip}</td>
-      <td>${a.hostname||'—'}</td>
-      <td style="color:#8ab0d0;font-size:11px">${a.os_guess||'—'}</td>
+      <td style="font-size:11px">${a.hostname||'—'}</td>
+      <td style="color:#8ab0d0;font-size:11px;max-width:150px;overflow:hidden;text-overflow:ellipsis" title="${a.os_guess||''}">${osVendor}</td>
       <td>${ports}${morePorts}</td>
       <td style="color:#8ab0d0;font-size:11px">${a.subnet_cidr||'—'}</td>
+      <td style="font-size:11px">${wazuhStatus}</td>
       <td style="color:#8ab0d0;font-size:11px">${a.last_seen?new Date(a.last_seen).toLocaleString():'—'}</td>
       <td><span style="color:${statusColor};font-size:11px;font-family:var(--fm)">${(a.status||'').toUpperCase()}</span></td>
     </tr>`;
@@ -3299,6 +3369,15 @@ async function saveSubnet(){
   toast('Subnet added');
 }
 
+async function syncAgents(){
+  const btn=event?.target;if(btn)btn.disabled=true;
+  const d=await P('/api/assets/sync-agents',{});
+  if(btn)btn.disabled=false;
+  if(d?.error){toast(d.error,'error');return;}
+  toast(`Synced ${d.agents_synced} Wazuh agents`);
+  loadAssets();
+}
+
 async function deleteSubnet(id){
   if(!confirm('Remove this subnet?'))return;
   await fetch(`/api/subnets/${id}`,{method:'DELETE',headers:{Authorization:`Bearer ${TK}`}});
@@ -3307,53 +3386,133 @@ async function deleteSubnet(id){
 }
 
 // ═══════════════════════════════════════════════════════════════
-// ─── UEBA (Neo4j Graph Analytics) ─────────────────────────────
+// ─── UEBA (Neo4j Behavioral Analytics) ────────────────────────
 // ═══════════════════════════════════════════════════════════════
+
+function riskColor(score){
+  if(score>=70)return'var(--r)';
+  if(score>=40)return'#ff9800';
+  if(score>=15)return'var(--y)';
+  return'var(--g)';
+}
+function riskBadge(score){
+  const c=riskColor(score);
+  const label=score>=70?'CRITICAL':score>=40?'HIGH':score>=15?'MEDIUM':'LOW';
+  return`<span style="background:${c}22;color:${c};padding:2px 7px;border-radius:8px;font-size:10px;font-family:var(--fm)">${label} ${score}</span>`;
+}
 
 async function loadUebaStats(){
   const d=await G('/api/ueba/stats');
   if(!d?.stats)return;
   const s=d.stats;
-  document.getElementById('ub-users').textContent=s.users??'—';
-  document.getElementById('ub-hosts').textContent=s.hosts??'—';
-  document.getElementById('ub-procs').textContent=s.processes??'—';
-  document.getElementById('ub-rels').textContent=s.relationships??'—';
+  ['users','hosts','processes','relationships'].forEach((k,i)=>{
+    const ids=['ub-users','ub-hosts','ub-procs','ub-rels'];
+    const el=document.getElementById(ids[i]);if(el)el.textContent=s[k]??'0';
+  });
+  const ar=document.getElementById('ub-avgrisk');if(ar)ar.textContent=s.avg_risk??'0';
+  const hr=document.getElementById('ub-highrisk');if(hr)hr.textContent=s.high_risk_users??'0';
 }
 
 async function loadUebaAnomalies(){
+  // Load leaderboard
+  const lb=await G('/api/ueba/leaderboard');
+  renderLeaderboard(lb?.users||[]);
+
+  // Load all anomalies
   const d=await G('/api/ueba/anomalies');
   if(!d)return;
+
   renderUebaSection('ueba-lateral',d.lateral_movement,r=>`
-    <div style="padding:6px 0;border-bottom:1px solid var(--b1)">
-      <span style="color:var(--r);font-weight:600">${r.user}</span>
-      <span style="color:#8ab0d0"> moved across ${(r.hops||[]).length} host pair(s)</span>
-      <div style="font-size:10px;color:var(--txt2);margin-top:2px">${(r.hops||[]).join(' | ')}</div>
+    <div style="padding:8px 0;border-bottom:1px solid var(--b1)">
+      <div style="display:flex;align-items:center;gap:8px">
+        ${riskBadge(r.risk_score||0)}
+        <span style="color:var(--r);font-weight:600;cursor:pointer" onclick="uebaLookup('${r.user}')">${r.user}</span>
+        <span style="color:#8ab0d0">moved to ${r.hops} hosts</span>
+      </div>
+      <div style="font-size:10px;color:var(--txt2);margin-top:3px">
+        From: ${(r.src_hosts||[]).join(', ')} → To: ${(r.dst_hosts||[]).join(', ')}
+      </div>
     </div>`,'No lateral movement detected in last 24h');
+
+  renderUebaSection('ueba-travel',d.impossible_travel,r=>`
+    <div style="padding:8px 0;border-bottom:1px solid var(--b1)">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="background:var(--r)22;color:var(--r);padding:2px 7px;border-radius:8px;font-size:10px">IMPOSSIBLE TRAVEL</span>
+        <span style="color:var(--r);font-weight:600;cursor:pointer" onclick="uebaLookup('${r.user}')">${r.user}</span>
+        <span style="color:#8ab0d0">@ ${r.host}</span>
+      </div>
+      <div style="font-size:10px;color:var(--txt2);margin-top:3px">
+        ${r.ip1} → ${r.ip2} within minutes
+      </div>
+    </div>`,'No impossible travel detected');
+
+  renderUebaSection('ueba-privesc',d.privilege_escalation,r=>`
+    <div style="padding:8px 0;border-bottom:1px solid var(--b1)">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="color:#ff9800;font-family:var(--fm);font-size:11px">${r.process}</span>
+        <span style="color:#8ab0d0">by</span>
+        <span style="color:var(--c);cursor:pointer" onclick="uebaLookup('${r.user||r.host}')">${r.user||'system'}</span>
+        <span style="color:#8ab0d0">on ${r.host}</span>
+      </div>
+      <div style="font-size:10px;color:var(--txt2);margin-top:2px">${r.time?new Date(r.time).toLocaleString():''}</div>
+    </div>`,'No privilege escalation detected');
+
+  renderUebaSection('ueba-afterhours',d.after_hours_access,r=>`
+    <div style="padding:8px 0;border-bottom:1px solid var(--b1)">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="color:#ff9800;font-weight:600;cursor:pointer" onclick="uebaLookup('${r.user}')">${r.user}</span>
+        <span style="color:#8ab0d0">→ ${r.host}</span>
+        <span style="background:rgba(255,152,0,.12);color:#ff9800;padding:2px 6px;border-radius:8px;font-size:10px">${r.events}x</span>
+      </div>
+      <div style="font-size:10px;color:var(--txt2);margin-top:2px">Hours: ${(r.hours_seen||[]).map(h=>h+'h').join(', ')}</div>
+    </div>`,'No after-hours access detected');
+
   renderUebaSection('ueba-hf',d.high_frequency_logins,r=>`
     <div style="padding:6px 0;border-bottom:1px solid var(--b1)">
-      <span style="color:var(--r);font-weight:600">${r.user}</span>
+      <span style="color:var(--r);font-weight:600;cursor:pointer" onclick="uebaLookup('${r.user}')">${r.user}</span>
       <span style="color:#8ab0d0"> → ${r.host}</span>
-      <span style="background:rgba(255,23,68,.12);color:var(--r);padding:2px 6px;border-radius:8px;font-size:10px;margin-left:6px">${r.count}x in 1h</span>
+      <span style="background:rgba(255,23,68,.12);color:var(--r);padding:2px 6px;border-radius:8px;font-size:10px;margin-left:6px">${r.count}x / 1h</span>
     </div>`,'No high-frequency logins detected');
+
   renderUebaSection('ueba-rare',d.rare_processes,r=>`
     <div style="padding:6px 0;border-bottom:1px solid var(--b1)">
       <span style="color:var(--c);font-family:var(--fm)">${r.process}</span>
-      <span style="color:#8ab0d0"> on ${r.host_count} host(s): ${(r.hosts||[]).join(', ')}</span>
+      <span style="color:#8ab0d0"> seen ${r.seen_count}x on: ${(r.hosts||[]).join(', ')}</span>
     </div>`,'No rare processes detected');
-  renderUebaSection('ueba-conn',d.new_connections,r=>`
-    <div style="padding:6px 0;border-bottom:1px solid var(--b1)">
-      <span style="color:var(--c);font-family:var(--fm)">${r.ip}</span>
-      <span style="color:#8ab0d0"> → ${r.host}</span>
-      <span style="font-size:10px;color:var(--txt2);margin-left:6px">${r.count} conn · ${r.first_seen?new Date(r.first_seen).toLocaleString():''}</span>
-    </div>`,'No new connection sources');
-  const total=(d.lateral_movement?.length||0)+(d.high_frequency_logins?.length||0)+(d.rare_processes?.length||0);
+
+  // Update badge counters
+  const cnt=(arr,id)=>{const e=document.getElementById(id);if(e)e.textContent=(arr?.length||0)||'0';};
+  cnt(d.lateral_movement,'cnt-lateral');
+  cnt(d.impossible_travel,'cnt-travel');
+  cnt(d.privilege_escalation,'cnt-privesc');
+  cnt(d.after_hours_access,'cnt-afterhours');
+  cnt(d.high_frequency_logins,'cnt-hf');
+  cnt(d.rare_processes,'cnt-rare');
+
+  const total=(d.lateral_movement?.length||0)+(d.impossible_travel?.length||0)+
+              (d.privilege_escalation?.length||0)+(d.after_hours_access?.length||0);
   document.getElementById('n-ueba').textContent=total||'0';
+}
+
+function renderLeaderboard(users){
+  const el=document.getElementById('ueba-leaderboard');
+  if(!el)return;
+  if(!users.length){el.innerHTML='<div style="color:#8ab0d0;padding:8px 0">No behavioral data yet. Feed Wazuh alerts via POST /api/ueba/event or wait for auto-ingest.</div>';return;}
+  el.innerHTML=`<table class="tbl"><thead><tr><th>#</th><th>USER</th><th>RISK</th><th>ANOMALIES</th><th>EVENTS 24H</th><th>RECENT HOSTS</th></tr></thead><tbody>`+
+    users.map((u,i)=>`<tr>
+      <td style="color:#8ab0d0">${i+1}</td>
+      <td style="cursor:pointer;color:var(--c)" onclick="uebaLookup('${u.user}')">${u.user}</td>
+      <td>${riskBadge(u.risk_score)}</td>
+      <td style="color:#8ab0d0">${u.anomaly_count||0}</td>
+      <td style="color:#8ab0d0">${u.events_24h||0}</td>
+      <td style="font-size:10px;color:var(--txt2)">${(u.recent_hosts||[]).join(', ')||'—'}</td>
+    </tr>`).join('')+'</tbody></table>';
 }
 
 function renderUebaSection(elId,items,rowFn,emptyMsg){
   const el=document.getElementById(elId);
   if(!el)return;
-  if(!items?.length){el.innerHTML=`<div style="color:#8ab0d0;padding:8px 0">${emptyMsg}</div>`;return;}
+  if(!items?.length){el.innerHTML=`<div style="color:#8ab0d0;padding:8px 0;font-size:11px">${emptyMsg}</div>`;return;}
   el.innerHTML=items.map(rowFn).join('');
 }
 
@@ -3362,22 +3521,56 @@ async function loadEntityGraph(){
   if(!name)return;
   const el=document.getElementById('ueba-graph-result');
   if(el)el.innerHTML='<div class="loading"><div class="spin"></div></div>';
-  const d=await G(`/api/ueba/graph/${encodeURIComponent(name)}`);
+
+  const [graphD, profileD] = await Promise.all([
+    G(`/api/ueba/graph/${encodeURIComponent(name)}`),
+    G(`/api/ueba/profile/${encodeURIComponent(name)}`),
+  ]);
+
   if(!el)return;
-  if(!d?.edges?.length){el.innerHTML='<div style="color:#8ab0d0">No graph data found for this entity</div>';return;}
-  el.innerHTML=`<table class="tbl"><thead><tr><th>RELATIONSHIP</th><th>SOURCE</th><th>TARGET</th><th>TIME</th></tr></thead><tbody>`+
-    d.edges.map(e=>`<tr>
-      <td><span style="background:rgba(0,229,255,.1);color:var(--c);padding:2px 7px;border-radius:4px;font-size:10px">${e.rel}</span></td>
-      <td style="font-family:var(--fm)">${e.src} <span style="color:#8ab0d0;font-size:10px">[${e.src_type}]</span></td>
-      <td style="font-family:var(--fm)">${e.dst} <span style="color:#8ab0d0;font-size:10px">[${e.dst_type}]</span></td>
-      <td style="color:#8ab0d0;font-size:11px">${e.time?new Date(e.time).toLocaleString():'—'}</td>
-    </tr>`).join('')+'</tbody></table>';
+  let html='';
+
+  if(profileD?.profile){
+    const p=profileD.profile;
+    html+=`<div style="padding:10px;background:var(--bg2);border-radius:4px;margin-bottom:10px;font-size:12px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+        <span style="font-weight:700;color:var(--c)">${p.name}</span>
+        ${riskBadge(p.risk_score)}
+        <span style="color:#8ab0d0;font-size:10px">${p.total_events} total events · ${p.anomaly_count} anomalies</span>
+      </div>
+      <div style="font-size:10px;color:var(--txt2)">
+        Known hosts: ${(p.all_hosts||[]).join(', ')||'none'} ·
+        Last seen: ${p.last_seen?new Date(p.last_seen).toLocaleString():'—'}
+        ${p.last_anomaly?` · Last anomaly: ${new Date(p.last_anomaly).toLocaleString()}`:''}
+      </div>
+    </div>`;
+  }
+
+  if(!graphD?.edges?.length){
+    html+='<div style="color:#8ab0d0;font-size:11px">No graph relationships found for this entity</div>';
+    el.innerHTML=html;return;
+  }
+  html+=`<table class="tbl"><thead><tr><th>RELATIONSHIP</th><th>SOURCE</th><th>TARGET</th><th>DEVIATION</th><th>FLAGS</th><th>TIME</th></tr></thead><tbody>`+
+    graphD.edges.map(e=>{
+      const dev=e.deviation||0;
+      const devColor=dev>=70?'var(--r)':dev>=40?'#ff9800':dev>=15?'var(--y)':'var(--g)';
+      const flags=(e.flags||[]).map(f=>`<span style="background:rgba(255,152,0,.15);color:#ff9800;padding:1px 4px;border-radius:3px;font-size:9px">${f}</span>`).join(' ');
+      return`<tr>
+        <td><span style="background:rgba(0,229,255,.1);color:var(--c);padding:2px 7px;border-radius:4px;font-size:10px">${e.rel}</span></td>
+        <td style="font-family:var(--fm);font-size:11px">${e.src}<span style="color:#8ab0d0"> [${e.src_type}]</span></td>
+        <td style="font-family:var(--fm);font-size:11px">${e.dst}<span style="color:#8ab0d0"> [${e.dst_type}]</span></td>
+        <td style="color:${devColor};font-family:var(--fm);font-size:11px">${dev}</td>
+        <td>${flags||'—'}</td>
+        <td style="color:#8ab0d0;font-size:10px">${e.time?new Date(e.time).toLocaleString():'—'}</td>
+      </tr>`;
+    }).join('')+'</tbody></table>';
+  el.innerHTML=html;
 }
 
 function uebaLookup(entity){
   document.getElementById('ueba-entity').value=entity;
   go('ueba');
-  loadEntityGraph();
+  setTimeout(loadEntityGraph,100);
 }
 
 // ─── STARTUP ──────────────────────────────────────────────────

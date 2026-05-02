@@ -24,7 +24,9 @@ const HIVE_KEY = process.env.THEHIVE_API_KEY  || '';
 const N8N_URL  = process.env.N8N_WEBHOOK_URL  || 'http://n8n:5678/webhook/socpilots';
 const N8N_INV  = process.env.N8N_INVESTIGATION_URL || 'http://n8n:5678/webhook/socpilots-investigation';
 const IDX          = process.env.WAZUH_INDEX      || 'wazuh-alerts-*';
-const SCANNER_URL  = process.env.SCANNER_URL      || 'http://scanner:7777';
+const SCANNER_URL       = process.env.SCANNER_URL      || 'http://scanner:7777';
+const LANGCHAIN_URL     = process.env.LANGCHAIN_URL    || 'http://langchain-agent:8001';
+const LANGCHAIN_TOKEN   = process.env.LANGCHAIN_INTERNAL_TOKEN || '';
 
 // Skip SSL verify (Wazuh self-signed cert)
 const httpsAgent = new https.Agent({ rejectUnauthorized: false });
@@ -1087,6 +1089,41 @@ app.get('/api/reports/summary', authMW, async (req, res) => {
   res.json({ text: r.text, ok: r.ok });
 });
 
+// ── Wazuh agent helpers used by scanner enrichment ─────────────
+async function getWazuhAgentMap() {
+  try {
+    const r = await osSearch({
+      size: 0,
+      aggs: {
+        agents: {
+          terms: { field: 'agent.name', size: 500 },
+          aggs: {
+            id:   { terms: { field: 'agent.id', size: 1 } },
+            ip:   { terms: { field: 'agent.ip', size: 1 } },
+            last: { max: { field: '@timestamp' } },
+          },
+        },
+      },
+    });
+    const now = Date.now();
+    const map = {};
+    for (const b of (r.aggregations?.agents?.buckets || [])) {
+      const agentIp = b.ip?.buckets?.[0]?.key;
+      if (!agentIp) continue;
+      const lastMs  = b.last?.value || 0;
+      const diffHrs = lastMs > 0 ? (now - lastMs) / 3600000 : Infinity;
+      const status  = lastMs === 0 ? 'disconnected' : diffHrs < 24 ? 'active' : 'inactive';
+      map[agentIp] = { id: b.id?.buckets?.[0]?.key || '', name: b.key, status };
+    }
+    return map;
+  } catch { return {}; }
+}
+function matchWazuhByHostname(agentMap, hostname) {
+  if (!hostname) return null;
+  const h = hostname.toLowerCase().split('.')[0];
+  return Object.values(agentMap).find(a => a.name.toLowerCase().startsWith(h)) || null;
+}
+
 // ═══════════════════════════════════════════════════════════════
 // ─── ASSET DISCOVERY ───────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════
@@ -1130,6 +1167,14 @@ app.get('/api/assets', authMW, async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+app.post('/api/assets/sync-agents', authMW, async (req, res) => {
+  try {
+    const agentMap = await getWazuhAgentMap();
+    await db.bulkUpdateWazuhAgents(agentMap);
+    res.json({ ok: true, agents_synced: Object.keys(agentMap).length });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/api/assets/scan/status', authMW, async (req, res) => {
   try {
     const job = await db.getLatestScanJob();
@@ -1156,13 +1201,22 @@ app.post('/api/assets/scan', authMW, async (req, res) => {
         const resp = await axios.post(`${SCANNER_URL}/scan`, { subnets: enabled }, { timeout: 310_000 });
         const hosts = resp.data?.hosts || [];
 
+        // Fetch Wazuh agents for cross-reference
+        const wazuhAgentMap = await getWazuhAgentMap();
+
         for (const host of hosts) {
-          // Find which subnet this IP belongs to
           const matchedSubnet = subnets.find(s => ipInSubnet(host.ip, s.cidr));
-          await db.upsertAsset({ ...host, subnet_id: matchedSubnet?.id || null });
+          const wazuhAgent    = wazuhAgentMap[host.ip] || matchWazuhByHostname(wazuhAgentMap, host.hostname);
+          await db.upsertAsset({
+            ...host,
+            subnet_id:          matchedSubnet?.id || null,
+            wazuh_agent_id:     wazuhAgent?.id     || null,
+            wazuh_agent_name:   wazuhAgent?.name   || null,
+            wazuh_agent_status: wazuhAgent?.status || null,
+          });
         }
         await db.finishScanJob(job.id, hosts.length, null);
-        console.log(`[SCAN] Job ${job.id} complete — ${hosts.length} hosts`);
+        console.log(`[SCAN] Job ${job.id} complete — ${hosts.length} hosts, ${Object.keys(wazuhAgentMap).length} Wazuh agents`);
       } catch(e) {
         console.error(`[SCAN] Job ${job.id} failed:`, e.message);
         await db.finishScanJob(job.id, 0, e.message);
@@ -1212,6 +1266,51 @@ app.get('/api/ueba/stats', authMW, async (req, res) => {
   try {
     const stats = await ueba.getUebaStats();
     res.json({ stats });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// ─── LANGCHAIN AGENT PROXY ─────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════
+
+app.post('/api/langchain/investigate', authMW, async (req, res) => {
+  try {
+    const r = await axios.post(`${LANGCHAIN_URL}/investigate`, req.body, {
+      timeout: 180_000,
+      headers: { Authorization: `Bearer ${LANGCHAIN_TOKEN}` },
+    });
+    res.json(r.data);
+  } catch(e) {
+    const msg = e.response?.data?.detail || e.message;
+    res.status(502).json({ error: `LangChain agent error: ${msg}` });
+  }
+});
+
+app.post('/api/langchain/triage', authMW, async (req, res) => {
+  try {
+    const r = await axios.post(`${LANGCHAIN_URL}/triage`, req.body, {
+      timeout: 30_000,
+      headers: { Authorization: `Bearer ${LANGCHAIN_TOKEN}` },
+    });
+    res.json(r.data);
+  } catch(e) {
+    const msg = e.response?.data?.detail || e.message;
+    res.status(502).json({ error: `LangChain triage error: ${msg}` });
+  }
+});
+
+app.get('/api/ueba/leaderboard', authMW, async (req, res) => {
+  try {
+    const users = await ueba.getRiskLeaderboard(parseInt(req.query.limit) || 20);
+    res.json({ users });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/ueba/profile/:user', authMW, async (req, res) => {
+  try {
+    const profile = await ueba.getUserProfile(req.params.user);
+    if (!profile) return res.status(404).json({ error: 'User not found in graph' });
+    res.json({ profile });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 

@@ -87,17 +87,28 @@ async function initSchema() {
 
     // Asset Discovery — discovered hosts
     `CREATE TABLE IF NOT EXISTS assets (
-      id         SERIAL PRIMARY KEY,
-      ip         VARCHAR(50) NOT NULL UNIQUE,
-      hostname   VARCHAR(255),
-      mac        VARCHAR(20),
-      os_guess   VARCHAR(255),
-      status     VARCHAR(10) DEFAULT 'online',
-      open_ports JSONB DEFAULT '[]',
-      subnet_id  INTEGER REFERENCES subnets(id) ON DELETE SET NULL,
-      first_seen TIMESTAMPTZ DEFAULT NOW(),
-      last_seen  TIMESTAMPTZ DEFAULT NOW()
+      id                  SERIAL PRIMARY KEY,
+      ip                  VARCHAR(50) NOT NULL UNIQUE,
+      hostname            VARCHAR(255),
+      mac                 VARCHAR(20),
+      vendor              VARCHAR(100),
+      os_guess            VARCHAR(255),
+      status              VARCHAR(10) DEFAULT 'online',
+      open_ports          JSONB DEFAULT '[]',
+      subnet_id           INTEGER REFERENCES subnets(id) ON DELETE SET NULL,
+      wazuh_agent_id      VARCHAR(20),
+      wazuh_agent_name    VARCHAR(100),
+      wazuh_agent_status  VARCHAR(20),
+      risk_score          INT DEFAULT 0,
+      first_seen          TIMESTAMPTZ DEFAULT NOW(),
+      last_seen           TIMESTAMPTZ DEFAULT NOW()
     )`,
+    // Add new columns to existing assets table (safe to run repeatedly)
+    `ALTER TABLE assets ADD COLUMN IF NOT EXISTS vendor             VARCHAR(100)`,
+    `ALTER TABLE assets ADD COLUMN IF NOT EXISTS wazuh_agent_id     VARCHAR(20)`,
+    `ALTER TABLE assets ADD COLUMN IF NOT EXISTS wazuh_agent_name   VARCHAR(100)`,
+    `ALTER TABLE assets ADD COLUMN IF NOT EXISTS wazuh_agent_status VARCHAR(20)`,
+    `ALTER TABLE assets ADD COLUMN IF NOT EXISTS risk_score         INT DEFAULT 0`,
     `CREATE INDEX IF NOT EXISTS idx_assets_ip     ON assets(ip)`,
     `CREATE INDEX IF NOT EXISTS idx_assets_status ON assets(status)`,
 
@@ -275,19 +286,41 @@ async function listAssets({ status, q, limit=500 } = {}) {
   );
   return r.rows;
 }
-async function upsertAsset({ ip, hostname, mac, os_guess, open_ports, subnet_id }) {
+async function upsertAsset({ ip, hostname, mac, vendor, os_guess, open_ports, subnet_id,
+                             wazuh_agent_id, wazuh_agent_name, wazuh_agent_status }) {
   const r = await pool.query(
-    `INSERT INTO assets(ip, hostname, mac, os_guess, open_ports, subnet_id, status, last_seen)
-     VALUES($1,$2,$3,$4,$5,$6,'online',NOW())
+    `INSERT INTO assets(ip, hostname, mac, vendor, os_guess, open_ports, subnet_id, status, last_seen)
+     VALUES($1,$2,$3,$4,$5,$6,$7,'online',NOW())
      ON CONFLICT(ip) DO UPDATE SET
-       hostname=EXCLUDED.hostname, mac=COALESCE(EXCLUDED.mac, assets.mac),
+       hostname=COALESCE(EXCLUDED.hostname, assets.hostname),
+       mac=COALESCE(EXCLUDED.mac, assets.mac),
+       vendor=COALESCE(EXCLUDED.vendor, assets.vendor),
        os_guess=COALESCE(EXCLUDED.os_guess, assets.os_guess),
        open_ports=EXCLUDED.open_ports, status='online',
-       last_seen=NOW(), subnet_id=COALESCE(EXCLUDED.subnet_id, assets.subnet_id)
+       last_seen=NOW(),
+       subnet_id=COALESCE(EXCLUDED.subnet_id, assets.subnet_id)
      RETURNING *`,
-    [ip, hostname||null, mac||null, os_guess||null, JSON.stringify(open_ports||[]), subnet_id||null]
+    [ip, hostname||null, mac||null, vendor||null, os_guess||null,
+     JSON.stringify(open_ports||[]), subnet_id||null]
   );
+  // Update Wazuh agent info if provided
+  if (wazuh_agent_id || wazuh_agent_name) {
+    await pool.query(
+      `UPDATE assets SET wazuh_agent_id=$1, wazuh_agent_name=$2, wazuh_agent_status=$3 WHERE ip=$4`,
+      [wazuh_agent_id||null, wazuh_agent_name||null, wazuh_agent_status||null, ip]
+    );
+  }
   return r.rows[0];
+}
+
+async function bulkUpdateWazuhAgents(agentMap) {
+  // agentMap: { [ip]: { id, name, status } }
+  for (const [ip, agent] of Object.entries(agentMap)) {
+    await pool.query(
+      `UPDATE assets SET wazuh_agent_id=$1, wazuh_agent_name=$2, wazuh_agent_status=$3 WHERE ip=$4`,
+      [agent.id, agent.name, agent.status, ip]
+    );
+  }
 }
 async function getAssetStats() {
   const r = await pool.query(`
@@ -349,6 +382,7 @@ module.exports = {
   deleteSubnet,
   listAssets,
   upsertAsset,
+  bulkUpdateWazuhAgents,
   getAssetStats,
   createScanJob,
   finishScanJob,
