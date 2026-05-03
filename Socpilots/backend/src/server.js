@@ -26,6 +26,7 @@ const N8N_INV  = process.env.N8N_INVESTIGATION_URL || 'http://n8n:5678/webhook/s
 const IDX          = process.env.WAZUH_INDEX      || 'wazuh-alerts-*';
 const SCANNER_URL       = process.env.SCANNER_URL      || 'http://scanner:7777';
 const LANGCHAIN_URL     = process.env.LANGCHAIN_URL    || 'http://langchain-agent:8001';
+const RAG_URL           = process.env.RAG_URL          || 'http://rag-retrieval:5005';
 const LANGCHAIN_TOKEN   = process.env.LANGCHAIN_INTERNAL_TOKEN || '';
 
 // Skip SSL verify (Wazuh self-signed cert)
@@ -228,15 +229,38 @@ app.get('/api/status', authMW, async (req, res) => {
 // ── DASHBOARD ─── OpenSearch aggregations ──
 app.get('/api/dashboard', authMW, async (req, res) => {
   try {
+    // Time range: hours preset OR absolute from/to
+    const hours   = parseInt(req.query.hours) || 24;
+    const fromTs  = req.query.from || null;
+    const toTs    = req.query.to   || null;
+
+    const tsRange = fromTs
+      ? { gte: fromTs, ...(toTs ? { lte: toTs } : {}) }
+      : { gte: `now-${hours}h` };
+
+    // Pick histogram interval based on window size
+    let calInterval = 'hour';
+    if (fromTs && toTs) {
+      const diffH = (new Date(toTs) - new Date(fromTs)) / 3600000;
+      calInterval = diffH <= 48 ? 'hour' : diffH <= 336 ? '6h' : 'day';
+    } else {
+      calInterval = hours <= 48 ? 'hour' : hours <= 336 ? '6h' : 'day';
+    }
+    const boundsMin = fromTs || `now-${hours}h`;
+    const boundsMax = toTs   || 'now';
+
     // Run 5 queries in parallel
-    const [totalAlerts, critAlerts, last24h, agentAgg, hiveCases] = await Promise.allSettled([
-      // Total alerts count
+    const [totalAlerts, critAlerts, periodAlerts, agentAgg, hiveCases] = await Promise.allSettled([
+      // All-time total
       osCount({ query: { match_all: {} } }),
-      // Critical alerts (level >= 12)
-      osCount({ query: { range: { 'rule.level': { gte: 12 } } } }),
-      // Last 24h
-      osCount({ query: { range: { '@timestamp': { gte: 'now-24h' } } } }),
-      // Unique agents
+      // Critical in selected period
+      osCount({ query: { bool: { must: [
+        { range: { 'rule.level': { gte: 12 } } },
+        { range: { '@timestamp': tsRange } },
+      ]}}}),
+      // Total in selected period
+      osCount({ query: { range: { '@timestamp': tsRange } } }),
+      // Unique agents + severity breakdown + timeline — all scoped to period
       osSearch({
         size: 0,
         aggs: {
@@ -250,8 +274,8 @@ app.get('/api/dashboard', authMW, async (req, res) => {
             ]
           }},
           over_time: {
-            date_histogram: { field: '@timestamp', calendar_interval: 'hour', min_doc_count: 0,
-              extended_bounds: { min: 'now-24h', max: 'now' }
+            date_histogram: { field: '@timestamp', calendar_interval: calInterval, min_doc_count: 0,
+              extended_bounds: { min: boundsMin, max: boundsMax }
             },
             aggs: {
               critical: { filter: { range: { 'rule.level': { gte: 12 } } } },
@@ -261,7 +285,7 @@ app.get('/api/dashboard', authMW, async (req, res) => {
             }
           }
         },
-        query: { range: { '@timestamp': { gte: 'now-24h' } } }
+        query: { range: { '@timestamp': tsRange } }
       }),
       // SP-CM open cases
       hiveQuery([
@@ -284,9 +308,9 @@ app.get('/api/dashboard', authMW, async (req, res) => {
     const agentCount = aggs?.agents?.buckets?.length || 0;
 
     res.json({
-      totalAlerts:    totalAlerts.value || 0,
-      alerts24h:      last24h.value || 0,
-      criticalAlerts: critAlerts.value || 0,
+      totalAlerts:    totalAlerts.value   || 0,
+      alerts24h:      periodAlerts.value  || 0,   // "period" alerts — label updated on frontend
+      criticalAlerts: critAlerts.value    || 0,
       highAlerts:     getSev('high'),
       mediumAlerts:   getSev('medium'),
       lowAlerts:      getSev('low'),
@@ -298,7 +322,10 @@ app.get('/api/dashboard', authMW, async (req, res) => {
         high:     getSev('high'),
         medium:   getSev('medium'),
         low:      getSev('low'),
-      }
+      },
+      periodLabel: fromTs
+        ? `${new Date(fromTs).toLocaleDateString()} – ${toTs ? new Date(toTs).toLocaleDateString() : 'now'}`
+        : `Last ${hours >= 720 ? Math.round(hours/720)+'mo' : hours >= 168 ? Math.round(hours/168)+'w' : hours >= 24 ? Math.round(hours/24)+'d' : hours+'h'}`,
     });
   } catch (e) {
     console.error('[dashboard]', e.message);
@@ -313,11 +340,20 @@ app.get('/api/alerts', authMW, async (req, res) => {
     const sev    = req.query.severity; // critical|high|medium|low
     const search = req.query.q;
     const hours  = parseInt(req.query.hours) || 0;
+    const fromTs = req.query.from || null;
+    const toTs   = req.query.to   || null;
     const agent  = req.query.agent;
     const srcip  = req.query.srcip;
 
     const must = [];
-    if (hours)  must.push({ range: { '@timestamp': { gte: `now-${hours}h` } } });
+    if (fromTs || toTs) {
+      const r = {};
+      if (fromTs) r.gte = fromTs;
+      if (toTs)   r.lte = toTs;
+      must.push({ range: { '@timestamp': r } });
+    } else if (hours) {
+      must.push({ range: { '@timestamp': { gte: `now-${hours}h` } } });
+    }
     if (agent)  must.push({ term: { 'agent.name': agent } });
     if (srcip)  must.push({ term: { 'data.srcip': srcip } });
     if (sev) {
@@ -1200,9 +1236,11 @@ async function getWazuhAgentMap() {
         agents: {
           terms: { field: 'agent.name', size: 500 },
           aggs: {
-            id:   { terms: { field: 'agent.id', size: 1 } },
-            ip:   { terms: { field: 'agent.ip', size: 1 } },
-            last: { max: { field: '@timestamp' } },
+            id:      { terms: { field: 'agent.id',          size: 1 } },
+            ip:      { terms: { field: 'agent.ip',          size: 1 } },
+            os_name: { terms: { field: 'agent.os.name',     size: 1 } },
+            os_plat: { terms: { field: 'agent.os.platform', size: 1 } },
+            last:    { max:   { field: '@timestamp' } },
           },
         },
       },
@@ -1215,7 +1253,8 @@ async function getWazuhAgentMap() {
       const lastMs  = b.last?.value || 0;
       const diffHrs = lastMs > 0 ? (now - lastMs) / 3600000 : Infinity;
       const status  = lastMs === 0 ? 'disconnected' : diffHrs < 24 ? 'active' : 'inactive';
-      map[agentIp] = { id: b.id?.buckets?.[0]?.key || '', name: b.key, status };
+      const os_name = b.os_name?.buckets?.[0]?.key || b.os_plat?.buckets?.[0]?.key || '';
+      map[agentIp] = { id: b.id?.buckets?.[0]?.key || '', name: b.key, status, os_name };
     }
     return map;
   } catch { return {}; }
@@ -1309,8 +1348,15 @@ app.post('/api/assets/scan', authMW, async (req, res) => {
         for (const host of hosts) {
           const matchedSubnet = subnets.find(s => ipInSubnet(host.ip, s.cidr));
           const wazuhAgent    = wazuhAgentMap[host.ip] || matchWazuhByHostname(wazuhAgentMap, host.hostname);
+          // scanner returns { os, ports } — db expects { os_guess, open_ports }
+          const osGuess = host.os_guess || host.os || wazuhAgent?.os_name || null;
           await db.upsertAsset({
-            ...host,
+            ip:                 host.ip,
+            hostname:           host.hostname || null,
+            mac:                host.mac      || null,
+            vendor:             host.vendor   || null,
+            os_guess:           osGuess,
+            open_ports:         host.open_ports || host.ports || [],
             subnet_id:          matchedSubnet?.id || null,
             wazuh_agent_id:     wazuhAgent?.id     || null,
             wazuh_agent_name:   wazuhAgent?.name   || null,
@@ -1435,6 +1481,48 @@ app.post('/api/langchain/hunt-queries', authMW, async (req, res) => {
   } catch(e) {
     const msg = e.response?.data?.detail || e.message;
     res.status(502).json({ error: `Hunt queries error: ${msg}` });
+  }
+});
+
+// ── RAG / Vector Search endpoints ──────────────────────────────
+app.post('/api/investigation/search-similar', authMW, async (req, res) => {
+  try {
+    const r = await axios.post(`${RAG_URL}/search/investigation`, req.body, { timeout: 15_000 });
+    res.json(r.data);
+  } catch(e) {
+    res.status(502).json({ error: `RAG investigation search failed: ${e.message}` });
+  }
+});
+
+app.post('/api/hunting/search-patterns', authMW, async (req, res) => {
+  try {
+    const r = await axios.post(`${RAG_URL}/search/hunting`, req.body, { timeout: 15_000 });
+    res.json(r.data);
+  } catch(e) {
+    res.status(502).json({ error: `RAG hunting search failed: ${e.message}` });
+  }
+});
+
+app.post('/api/ueba/analyze-anomaly', authMW, async (req, res) => {
+  try {
+    const { entity, anomaly_description } = req.body;
+    if (!anomaly_description) return res.status(400).json({ error: 'anomaly_description required' });
+
+    // Run RAG retrieval + UEBA profile in parallel
+    const [ragResult, uebaProfile] = await Promise.allSettled([
+      axios.post(`${RAG_URL}/search/investigation`,
+        { query: anomaly_description, limit: 5 },
+        { timeout: 15_000 }
+      ),
+      entity ? ueba.getUserProfile(entity).catch(() => null) : Promise.resolve(null),
+    ]);
+
+    res.json({
+      rag_context: ragResult.status === 'fulfilled' ? ragResult.value.data : null,
+      ueba_profile: uebaProfile.status === 'fulfilled' ? uebaProfile.value : null,
+    });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
   }
 });
 

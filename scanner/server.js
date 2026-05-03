@@ -55,7 +55,12 @@ function parseNmapXml(xml) {
       if (oc) os = oc[1];
     }
 
-    // TTL-based OS hint if nmap OS detection failed
+    // Fallback: ostype from service detection (e.g. SSH banner reveals "Linux")
+    if (!os) {
+      const stM = block.match(/ostype="([^"]+)"/);
+      if (stM) os = stM[1];
+    }
+    // TTL-based OS hint if all else failed
     if (!os) {
       const ttlM = block.match(/reason_ttl="(\d+)"/);
       if (ttlM) {

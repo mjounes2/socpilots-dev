@@ -46,6 +46,7 @@ OPENAI_API_KEY   = os.getenv("OPENAI_API_KEY", "")
 MISTRAL_API_KEY  = os.getenv("MISTRAL_API_KEY", "")
 INTERNAL_TOKEN   = os.getenv("LANGCHAIN_INTERNAL_TOKEN", "")
 REDIS_URL        = os.getenv("REDIS_URL", "")
+RAG_URL          = os.getenv("RAG_URL", "http://rag-retrieval:5005")
 
 # ── Redis IOC Cache ───────────────────────────────────────────
 _redis = None
@@ -261,6 +262,38 @@ def query_ueba(entity_name: str) -> str:
 
 
 @tool
+def query_knowledge_base(query: str) -> str:
+    """
+    Search the RAG knowledge base for relevant MITRE ATT&CK techniques,
+    detection rules, and historical incident cases matching the query.
+    Use this to enrich investigation context with threat intelligence.
+    """
+    try:
+        r = _sync_client.post(
+            f"{RAG_URL}/search/investigation",
+            json={"query": query, "limit": 5},
+            timeout=15
+        )
+        if r.status_code != 200:
+            return f"Knowledge base unavailable: {r.status_code}"
+        data = r.json()
+        lines = []
+        for item in data.get("attack_patterns", []):
+            meta = item.get("metadata", {})
+            lines.append(
+                f"[MITRE {meta.get('technique_id','?')}] {item['title']} "
+                f"(tactic: {meta.get('tactic','?')}, similarity: {item['score']})"
+            )
+        for item in data.get("similar_incidents", []):
+            lines.append(f"[PAST INCIDENT] {item['title']} (similarity: {item['score']})")
+        for item in data.get("detection_rules", []):
+            lines.append(f"[DETECTION RULE] {item['title']} (similarity: {item['score']})")
+        return "\n".join(lines) if lines else "No relevant knowledge base entries found."
+    except Exception as e:
+        return f"Knowledge base query error: {e}"
+
+
+@tool
 def query_assets(ip_or_hostname: str) -> str:
     """
     Check if an IP address or hostname is in the asset inventory.
@@ -339,7 +372,7 @@ Final Answer: [your structured report]
 
 {agent_scratchpad}""")
 
-TOOLS = [search_alerts, enrich_ip, check_cases, query_ueba, query_assets]
+TOOLS = [search_alerts, enrich_ip, check_cases, query_ueba, query_assets, query_knowledge_base]
 
 # ── Request Models ────────────────────────────────────────────
 class InvestigateRequest(BaseModel):

@@ -345,10 +345,30 @@ if(localStorage.getItem("soc_dim")==="1")document.body.classList.add("dim");
       <span style="font-size:9px;font-family:var(--fm);color:#8ab0d0" id="dash-updated">—</span>
     </div>
   </div>
+  <!-- Dashboard Time Range Filter -->
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;padding:8px 12px;background:var(--bg1);border:1px solid var(--b1);border-radius:4px;flex-wrap:wrap">
+    <span style="font-size:9px;font-family:var(--fm);color:var(--txt3);letter-spacing:1px;white-space:nowrap">TIME RANGE</span>
+    <div style="display:flex;gap:3px;flex-wrap:wrap" id="dash-preset-btns">
+      <button class="btn btn-h btn-sm" data-hrs="1"   onclick="setDashRange(1)">1h</button>
+      <button class="btn btn-h btn-sm" data-hrs="6"   onclick="setDashRange(6)">6h</button>
+      <button class="btn btn-p btn-sm" data-hrs="24"  onclick="setDashRange(24)">24h</button>
+      <button class="btn btn-h btn-sm" data-hrs="168" onclick="setDashRange(168)">7d</button>
+      <button class="btn btn-h btn-sm" data-hrs="720" onclick="setDashRange(720)">30d</button>
+      <button class="btn btn-h btn-sm" data-hrs="2160" onclick="setDashRange(2160)">90d</button>
+      <button class="btn btn-h btn-sm" data-hrs="custom" onclick="toggleDashCustom()">Custom ▾</button>
+    </div>
+    <div id="dash-custom-range" style="display:none;align-items:center;gap:6px">
+      <input type="datetime-local" class="fi" id="dash-from" style="width:155px;padding:4px 8px;font-size:11px">
+      <span style="color:var(--txt3);font-size:11px">→</span>
+      <input type="datetime-local" class="fi" id="dash-to" style="width:155px;padding:4px 8px;font-size:11px">
+      <button class="btn btn-p btn-sm" onclick="applyDashCustom()">Apply</button>
+    </div>
+    <span style="font-size:10px;font-family:var(--fm);color:var(--c);margin-left:4px" id="dash-range-lbl">Last 24h</span>
+  </div>
   <!-- Row 1: Alert KPIs -->
   <div class="kpi-row" style="grid-template-columns:repeat(4,1fr) 1.2fr 1.2fr;margin-bottom:10px">
     <div class="kpi cl"><div class="kpi-lbl">Total Alerts</div><div class="kpi-val" id="k-total">—</div><div class="kpi-sub">all time</div></div>
-    <div class="kpi cr"><div class="kpi-lbl">Alerts 24h</div><div class="kpi-val" id="k-24h">—</div><div class="kpi-sub">last 24 hours</div></div>
+    <div class="kpi cr"><div class="kpi-lbl">Period Alerts</div><div class="kpi-val" id="k-24h">—</div><div class="kpi-sub" id="k-24h-sub">last 24 hours</div></div>
     <div class="kpi co"><div class="kpi-lbl">Critical</div><div class="kpi-val" id="k-crit">—</div><div class="kpi-sub">level ≥ 12</div></div>
     <div class="kpi cy"><div class="kpi-lbl">High</div><div class="kpi-val" id="k-high">—</div><div class="kpi-sub">level 8–11</div></div>
     <div class="kpi cp"><div class="kpi-lbl">Open Cases</div><div class="kpi-val" id="k-cases">—</div><div class="kpi-sub">SP-CM</div></div>
@@ -453,7 +473,21 @@ if(localStorage.getItem("soc_dim")==="1")document.body.classList.add("dim");
       <div class="row">
         <input class="fi" style="width:140px" placeholder="Search..." id="al-q" oninput="filterAlerts()">
         <select class="fs" style="width:100px" id="al-sev" onchange="loadAlerts()"><option value="">All Sev</option><option value="critical">Critical</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select>
-        <select class="fs" style="width:90px" id="al-hrs" onchange="loadAlerts()"><option value="0">All Time</option><option value="1">1h</option><option value="6">6h</option><option value="24" selected>24h</option><option value="72">3d</option><option value="168">7d</option></select>
+        <select class="fs" style="width:105px" id="al-hrs" onchange="onAlHrsChange()">
+          <option value="0">All Time</option>
+          <option value="1">Last 1h</option>
+          <option value="6">Last 6h</option>
+          <option value="24" selected>Last 24h</option>
+          <option value="72">Last 3d</option>
+          <option value="168">Last 7d</option>
+          <option value="720">Last 30d</option>
+          <option value="custom">Custom Range</option>
+        </select>
+        <div id="al-custom-range" style="display:none;align-items:center;gap:4px">
+          <input type="date" class="fi" id="al-from-date" style="width:130px;padding:4px 7px;font-size:11px" onchange="loadAlerts()">
+          <span style="color:var(--txt3);font-size:11px;white-space:nowrap">→</span>
+          <input type="date" class="fi" id="al-to-date" style="width:130px;padding:4px 7px;font-size:11px" onchange="loadAlerts()">
+        </div>
         <input class="fi" style="width:130px" placeholder="Agent..." id="al-agent" oninput="loadAlerts()">
         <input class="fi" style="width:120px" placeholder="Src IP..." id="al-srcip" oninput="loadAlerts()">
         <button class="btn btn-p btn-sm" onclick="loadAlerts()">↻ Refresh</button>
@@ -1880,12 +1914,56 @@ function renderDots(dots,dotsId,ll2xy,W,H){
 // ═══════════════════════════════════════════════════════════════
 let chTime=null,chSev=null,_dashMap=null;
 
+// ── Dashboard time range state ────────────────────────────────
+let _dashRange={hours:24};
+function setDashRange(hrs){
+  _dashRange={hours:hrs};
+  document.querySelectorAll('#dash-preset-btns .btn').forEach(b=>{
+    const active=b.dataset.hrs==hrs;
+    b.classList.toggle('btn-p',active);
+    b.classList.toggle('btn-h',!active);
+  });
+  document.getElementById('dash-custom-range').style.display='none';
+  loadDashboard();
+}
+function toggleDashCustom(){
+  const el=document.getElementById('dash-custom-range');
+  const shown=el.style.display==='flex';
+  el.style.display=shown?'none':'flex';
+  if(!shown){
+    // Set sensible defaults: today 00:00 → now
+    const now=new Date();
+    const pad=n=>n<10?'0'+n:n;
+    const fmt=d=>`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    const from=new Date(now); from.setHours(0,0,0,0);
+    if(!document.getElementById('dash-from').value) document.getElementById('dash-from').value=fmt(from);
+    if(!document.getElementById('dash-to').value)   document.getElementById('dash-to').value=fmt(now);
+  }
+}
+function applyDashCustom(){
+  const f=document.getElementById('dash-from').value;
+  const t=document.getElementById('dash-to').value;
+  if(!f||!t){return;}
+  _dashRange={from:new Date(f).toISOString(),to:new Date(t).toISOString()};
+  document.querySelectorAll('#dash-preset-btns .btn').forEach(b=>{b.classList.remove('btn-p');b.classList.add('btn-h');});
+  document.querySelector('#dash-preset-btns .btn[data-hrs="custom"]').classList.add('btn-p');
+  document.querySelector('#dash-preset-btns .btn[data-hrs="custom"]').classList.remove('btn-h');
+  loadDashboard();
+}
+
 async function loadDashboard(){
   document.getElementById('dash-sub').textContent='Loading from SIEM + SP-CM...';
-  const d=await G('/api/dashboard');
+  const p=new URLSearchParams();
+  if(_dashRange.from){p.set('from',_dashRange.from);if(_dashRange.to)p.set('to',_dashRange.to);}
+  else if(_dashRange.hours) p.set('hours',_dashRange.hours);
+  const d=await G('/api/dashboard?'+p);
   if(!d||d.error){document.getElementById('dash-sub').textContent='Error connecting — check Settings';return;}
   document.getElementById('dash-sub').textContent=`SIEM + SP-CM connected`;
   document.getElementById('dash-updated').textContent=`Updated ${new Date().toLocaleTimeString('en',{hour12:false})} UTC`;
+  // Update range label
+  const lbl=d.periodLabel||'Last 24h';
+  const rl=document.getElementById('dash-range-lbl'); if(rl)rl.textContent=lbl;
+  const sub=document.getElementById('k-24h-sub'); if(sub)sub.textContent=lbl;
   const set=(id,v)=>{const el=document.getElementById(id);if(el)el.textContent=v??'—';};
   set('k-total',d.totalAlerts?.toLocaleString());
   set('k-24h',d.alerts24h?.toLocaleString());
@@ -2062,18 +2140,46 @@ function renderAgents(agents){
 
 // ─── ALERTS ──────────────────────────────────────────────────
 let _alerts=[],_selAlert=null;
+function onAlHrsChange(){
+  const hrs=document.getElementById('al-hrs')?.value;
+  const cr=document.getElementById('al-custom-range');
+  if(hrs==='custom'){cr.style.display='flex'; return;}
+  cr.style.display='none';
+  loadAlerts();
+}
 async function loadAlerts(){
   document.getElementById('al-body').innerHTML=spin('Loading from SIEM...');
   refreshInvestigatedKeys();
-  const sev=document.getElementById('al-sev')?.value||'',hrs=document.getElementById('al-hrs')?.value||'24';
+  const sev=document.getElementById('al-sev')?.value||'';
+  const hrs=document.getElementById('al-hrs')?.value||'24';
   const agent=(document.getElementById('al-agent')?.value||'').trim();
   const srcip=(document.getElementById('al-srcip')?.value||'').trim();
   const p=new URLSearchParams({limit:200});
-  if(sev)p.set('severity',sev);if(hrs&&hrs!=='0')p.set('hours',hrs);if(agent)p.set('agent',agent);if(srcip)p.set('srcip',srcip);
+  if(sev) p.set('severity',sev);
+  if(agent) p.set('agent',agent);
+  if(srcip) p.set('srcip',srcip);
+  if(hrs==='custom'){
+    const fd=document.getElementById('al-from-date')?.value;
+    const td=document.getElementById('al-to-date')?.value;
+    if(fd) p.set('from', new Date(fd).toISOString());
+    if(td) p.set('to',   new Date(td+'T23:59:59').toISOString());
+  } else if(hrs&&hrs!=='0'){
+    p.set('hours',hrs);
+  }
   const d=await G(`/api/alerts?${p}`);
   if(!d||d.error){document.getElementById('al-body').innerHTML=errBnr(d?.error||'SIEM unavailable');return;}
   _alerts=d.alerts||[];
-  document.getElementById('al-total').textContent=`Showing ${_alerts.length} of ${(d.total||_alerts.length).toLocaleString()} alerts`;
+  // Build a human label for the filter summary
+  let rangeLabel='';
+  if(hrs==='custom'){
+    const fd=document.getElementById('al-from-date')?.value||'';
+    const td=document.getElementById('al-to-date')?.value||'';
+    rangeLabel=fd&&td?` · ${fd} → ${td}`:'';
+  } else if(hrs&&hrs!=='0'){
+    const labels={'1':'1h','6':'6h','24':'24h','72':'3d','168':'7d','720':'30d'};
+    rangeLabel=` · last ${labels[hrs]||hrs+'h'}`;
+  }
+  document.getElementById('al-total').textContent=`Showing ${_alerts.length} of ${(d.total||_alerts.length).toLocaleString()} alerts${rangeLabel}`;
   filterAlerts();
 }
 function filterAlerts(){const q=(document.getElementById('al-q')?.value||'').toLowerCase();renderAlerts(q?_alerts.filter(a=>(a.description||'').toLowerCase().includes(q)||(a.srcIp||'').includes(q)||(a.agent||'').toLowerCase().includes(q)):_alerts);}

@@ -314,11 +314,14 @@ async function upsertAsset({ ip, hostname, mac, vendor, os_guess, open_ports, su
 }
 
 async function bulkUpdateWazuhAgents(agentMap) {
-  // agentMap: { [ip]: { id, name, status } }
+  // agentMap: { [ip]: { id, name, status, os_name? } }
   for (const [ip, agent] of Object.entries(agentMap)) {
     await pool.query(
-      `UPDATE assets SET wazuh_agent_id=$1, wazuh_agent_name=$2, wazuh_agent_status=$3 WHERE ip=$4`,
-      [agent.id, agent.name, agent.status, ip]
+      `UPDATE assets
+       SET wazuh_agent_id=$1, wazuh_agent_name=$2, wazuh_agent_status=$3,
+           os_guess=COALESCE(os_guess, NULLIF($5,''))
+       WHERE ip=$4`,
+      [agent.id, agent.name, agent.status, ip, agent.os_name || '']
     );
   }
 }
