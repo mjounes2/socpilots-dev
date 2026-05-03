@@ -17,6 +17,7 @@ Endpoints:
 
 import os, json, re, time, logging
 import httpx
+import redis as redis_lib
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -44,6 +45,36 @@ WEBAPP_URL       = os.getenv("WEBAPP_URL", "http://webapp:3000")
 OPENAI_API_KEY   = os.getenv("OPENAI_API_KEY", "")
 MISTRAL_API_KEY  = os.getenv("MISTRAL_API_KEY", "")
 INTERNAL_TOKEN   = os.getenv("LANGCHAIN_INTERNAL_TOKEN", "")
+REDIS_URL        = os.getenv("REDIS_URL", "")
+
+# ── Redis IOC Cache ───────────────────────────────────────────
+_redis = None
+if REDIS_URL:
+    try:
+        _redis = redis_lib.from_url(REDIS_URL, decode_responses=True, socket_timeout=2)
+        _redis.ping()
+        log.info(f"Redis cache connected: {REDIS_URL}")
+    except Exception as _re:
+        log.warning(f"Redis unavailable ({_re}) — IOC caching disabled")
+        _redis = None
+
+_IOC_TTL = 3600  # 1 hour cache for IOC results
+
+def _cache_get(key: str) -> str | None:
+    if not _redis:
+        return None
+    try:
+        return _redis.get(key)
+    except Exception:
+        return None
+
+def _cache_set(key: str, value: str, ttl: int = _IOC_TTL) -> None:
+    if not _redis:
+        return
+    try:
+        _redis.setex(key, ttl, value)
+    except Exception:
+        pass
 
 # Synchronous client — used by @tool functions (called from thread pool, no event loop)
 _sync_client = httpx.Client(verify=False, timeout=30.0)
@@ -109,6 +140,12 @@ def enrich_ip(ip_address: str) -> str:
     ip = ip_address.strip()
     if not re.match(r'^\d{1,3}(\.\d{1,3}){3}$', ip):
         return f"Invalid IP format: {ip}"
+
+    cached = _cache_get(f"ioc:ip:{ip}")
+    if cached:
+        log.info(f"Cache HIT enrich_ip: {ip}")
+        return cached
+
     results = []
 
     vt_key = os.getenv("VIRUSTOTAL_API_KEY", "")
@@ -151,7 +188,10 @@ def enrich_ip(ip_address: str) -> str:
         except Exception as e:
             results.append(f"AbuseIPDB error: {e}")
 
-    return "\n".join(results) if results else f"No threat intel API keys configured — cannot enrich {ip}"
+    result_text = "\n".join(results) if results else f"No threat intel API keys configured — cannot enrich {ip}"
+    if results:
+        _cache_set(f"ioc:ip:{ip}", result_text)
+    return result_text
 
 
 @tool
@@ -311,16 +351,36 @@ class TriageRequest(BaseModel):
     alert: dict
     model: str = "mistral"
 
+class EnrichRequest(BaseModel):
+    indicator: str
+    type: str = "ip"  # ip | domain | url | hash
+
+class HuntQueriesRequest(BaseModel):
+    type: str   # ip | user | hash | domain | process | rule
+    value: str
+    context: str = ""
+    model: str = "auto"
+
 # ── Endpoints ─────────────────────────────────────────────────
 
 @app.get("/health")
 def health():
+    redis_ok = False
+    if _redis:
+        try:
+            _redis.ping()
+            redis_ok = True
+        except Exception:
+            pass
     return {
         "status": "ok",
-        "openai":  bool(OPENAI_API_KEY),
-        "mistral": bool(MISTRAL_API_KEY),
+        "openai":     bool(OPENAI_API_KEY),
+        "mistral":    bool(MISTRAL_API_KEY),
         "opensearch": bool(OPENSEARCH_URL),
-        "thehive": bool(THEHIVE_URL),
+        "thehive":    bool(THEHIVE_URL),
+        "redis":      redis_ok,
+        "vt":         bool(os.getenv("VIRUSTOTAL_API_KEY")),
+        "abuseipdb":  bool(os.getenv("ABUSEIPDB_API_KEY")),
         "model": "gpt-4o-mini" if OPENAI_API_KEY else ("mistral-small-latest" if MISTRAL_API_KEY else "none"),
     }
 
@@ -402,6 +462,125 @@ Return ONLY valid JSON with these fields:
         return result
     except Exception as e:
         log.error(f"Triage error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/enrich")
+def enrich_direct(req: EnrichRequest):
+    """Direct enrichment — structured JSON, Redis-cached. Supports ip/domain/url/hash."""
+    indicator = req.indicator.strip()
+    ioc_type  = req.type.lower()
+    cache_key = f"ioc:{ioc_type}:{indicator}"
+
+    cached = _cache_get(cache_key)
+    if cached:
+        log.info(f"Cache HIT /enrich: {indicator}")
+        data = json.loads(cached)
+        data["cached"] = True
+        return data
+
+    result: dict = {"indicator": indicator, "type": ioc_type, "vt": None, "abuse": None, "cached": False}
+    vt_key = os.getenv("VIRUSTOTAL_API_KEY", "")
+    ab_key  = os.getenv("ABUSEIPDB_API_KEY", "")
+
+    # ── VirusTotal ──
+    if vt_key:
+        try:
+            vt_endpoint_map = {"ip": "ip_addresses", "domain": "domains", "url": "urls", "hash": "files"}
+            vt_ep = vt_endpoint_map.get(ioc_type, "ip_addresses")
+            lookup = indicator
+            if ioc_type == "url":
+                import base64
+                lookup = base64.urlsafe_b64encode(indicator.encode()).decode().rstrip("=")
+            r = _sync_client.get(
+                f"https://www.virustotal.com/api/v3/{vt_ep}/{lookup}",
+                headers={"x-apikey": vt_key}
+            )
+            if r.status_code == 200:
+                attr = r.json().get("data", {}).get("attributes", {})
+                stats = attr.get("last_analysis_stats", {})
+                result["vt"] = {
+                    "malicious":  stats.get("malicious", 0),
+                    "suspicious": stats.get("suspicious", 0),
+                    "harmless":   stats.get("harmless", 0),
+                    "undetected": stats.get("undetected", 0),
+                    "country":    attr.get("country", ""),
+                    "owner":      attr.get("as_owner", ""),
+                    "reputation": attr.get("reputation", 0),
+                    "tags":       attr.get("tags", []),
+                }
+            elif r.status_code == 404:
+                result["vt"] = {"error": "Not found in VirusTotal"}
+            else:
+                result["vt"] = {"error": f"VT HTTP {r.status_code}"}
+        except Exception as e:
+            result["vt"] = {"error": str(e)}
+
+    # ── AbuseIPDB (IPs only) ──
+    if ab_key and ioc_type == "ip":
+        try:
+            r = _sync_client.get(
+                "https://api.abuseipdb.com/api/v2/check",
+                params={"ipAddress": indicator, "maxAgeInDays": 90, "verbose": True},
+                headers={"Key": ab_key, "Accept": "application/json"}
+            )
+            if r.status_code == 200:
+                d = r.json().get("data", {})
+                result["abuse"] = {
+                    "score":     d.get("abuseConfidenceScore", 0),
+                    "reports":   d.get("totalReports", 0),
+                    "country":   d.get("countryCode", ""),
+                    "isp":       d.get("isp", ""),
+                    "usage":     d.get("usageType", ""),
+                    "is_public": d.get("isPublic", True),
+                    "domain":    d.get("domain", ""),
+                }
+            else:
+                result["abuse"] = {"error": f"AbuseIPDB HTTP {r.status_code}"}
+        except Exception as e:
+            result["abuse"] = {"error": str(e)}
+
+    _cache_set(cache_key, json.dumps(result))
+    return result
+
+
+@app.post("/hunt-queries")
+async def hunt_queries(req: HuntQueriesRequest):
+    """AI-generated threat hunt hypotheses and OpenSearch query suggestions."""
+    start = time.time()
+    try:
+        llm = get_llm(req.model)
+    except ValueError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+    prompt = f"""You are an expert SOC threat hunter. Generate hunt hypotheses and OpenSearch query suggestions.
+
+Indicator type: {req.type}
+Indicator value: {req.value}
+Context: {req.context or "No additional context"}
+
+Return ONLY valid JSON:
+{{
+  "summary": "one-sentence hunting strategy",
+  "hypotheses": [
+    {{"title": "...", "description": "...", "mitre_technique": "T1234", "mitre_tactic": "...", "risk": "high|medium|low"}}
+  ],
+  "opensearch_queries": [
+    {{"name": "...", "description": "...", "field": "data.srcip", "value": "{req.value}"}}
+  ],
+  "related_iocs": ["list of related indicators to also hunt for"],
+  "recommended_tools": ["nmap", "VirusTotal", "etc"]
+}}"""
+
+    try:
+        response = await llm.ainvoke(prompt)
+        text = response.content.strip()
+        match = re.search(r'\{[\s\S]*\}', text)
+        result = json.loads(match.group()) if match else {"raw": text, "summary": "Parse error"}
+        result["duration_ms"] = int((time.time() - start) * 1000)
+        return result
+    except Exception as e:
+        log.error(f"Hunt queries error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

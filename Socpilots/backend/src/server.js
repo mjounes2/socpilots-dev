@@ -707,19 +707,26 @@ app.post('/api/hunt', authMW, async (req, res) => {
     }));
   } catch (e) { console.error('[hunt-os]', e.message); }
 
-  // Then ask AI for analysis
+  // AI analysis + hunt query generation (run in parallel)
   let aiAnalysis = '';
-  try {
-    const r = await n8nAsk(
+  let huntQueries = null;
+  await Promise.allSettled([
+    n8nAsk(
       `Threat hunt analysis for ${type}: "${value}". ` +
       `OpenSearch found ${osResults.length} matching alerts. ` +
       `Provide: risk assessment, MITRE mapping, recommended response actions, and IOC context.`,
       'soc-hunt', req.user
-    );
-    aiAnalysis = r.text;
-  } catch (e) { aiAnalysis = 'AI analysis unavailable'; }
+    ).then(r => { aiAnalysis = r.text || 'AI analysis unavailable'; })
+     .catch(() => { aiAnalysis = 'AI analysis unavailable'; }),
 
-  res.json({ osResults, osTotal: osResults.length, aiAnalysis });
+    axios.post(`${LANGCHAIN_URL}/hunt-queries`,
+      { type, value, context: `SIEM found ${osResults.length} matching alerts` },
+      { timeout: 60_000, headers: { Authorization: `Bearer ${LANGCHAIN_TOKEN}` } }
+    ).then(r => { huntQueries = r.data; })
+     .catch(() => {}),
+  ]);
+
+  res.json({ osResults, osTotal: osResults.length, aiAnalysis, huntQueries });
 });
 
 // ── CORRELATION ──
@@ -1400,6 +1407,34 @@ app.post('/api/langchain/triage', authMW, async (req, res) => {
   } catch(e) {
     const msg = e.response?.data?.detail || e.message;
     res.status(502).json({ error: `LangChain triage error: ${msg}` });
+  }
+});
+
+// ── DIRECT IOC ENRICHMENT — proxies to LangChain agent (Redis-cached) ──
+app.post('/api/langchain/enrich', authMW, async (req, res) => {
+  try {
+    const r = await axios.post(`${LANGCHAIN_URL}/enrich`, req.body, {
+      timeout: 30_000,
+      headers: { Authorization: `Bearer ${LANGCHAIN_TOKEN}` },
+    });
+    res.json(r.data);
+  } catch(e) {
+    const msg = e.response?.data?.detail || e.message;
+    res.status(502).json({ error: `Enrichment error: ${msg}` });
+  }
+});
+
+// ── AI HUNT QUERIES ──
+app.post('/api/langchain/hunt-queries', authMW, async (req, res) => {
+  try {
+    const r = await axios.post(`${LANGCHAIN_URL}/hunt-queries`, req.body, {
+      timeout: 60_000,
+      headers: { Authorization: `Bearer ${LANGCHAIN_TOKEN}` },
+    });
+    res.json(r.data);
+  } catch(e) {
+    const msg = e.response?.data?.detail || e.message;
+    res.status(502).json({ error: `Hunt queries error: ${msg}` });
   }
 });
 

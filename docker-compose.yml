@@ -26,8 +26,25 @@ volumes:
   n8n_data:
   neo4j_data:
   neo4j_logs:
+  redis_data:
 
 services:
+
+  # ── Redis IOC Cache ────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: socpilots-redis
+    restart: unless-stopped
+    networks:
+      - soc
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   # ── PostgreSQL ─────────────────────────────────────────────────
   postgres:
@@ -283,6 +300,7 @@ services:
       ABUSEIPDB_API_KEY:   ${ABUSEIPDB_API_KEY}
       WEBAPP_URL:          http://webapp:3000
       LANGCHAIN_INTERNAL_TOKEN: ${LANGCHAIN_INTERNAL_TOKEN:-}
+      REDIS_URL:           redis://redis:6379
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8001/health || exit 1"]
       interval: 30s

@@ -239,6 +239,22 @@ tr:last-child td{border-bottom:none}
 .ph{margin-bottom:14px}
 .ph h1{font-family:var(--fw);font-size:20px;font-weight:700;letter-spacing:2px}
 .ph p{font-size:11px;color:var(--txt2);margin-top:2px;font-family:var(--fm)}
+
+/* ─── DIM MODE — reduced eye strain for long shifts ─── */
+body.dim{
+  --bg0:#010406; --bg1:#020609; --bg2:#03080d; --bg3:#040a10;
+  --bg4:#060c14; --card:#020609; --card2:#03080d;
+  --b1:#0f1e30; --b2:#162840; --b3:#1c3250;
+  --c:#38b2c8; --c2:#2a9ab5; --cdim:rgba(56,178,200,.07);
+  --g:#48a860; --gdim:rgba(72,168,96,.07);
+  --r:#c0392b; --rdim:rgba(192,57,43,.07);
+  --y:#c8900a; --ydim:rgba(200,144,10,.07);
+  --txt:#9ab8cc; --txt2:#2d4a5e; --txt3:#4a6a80;
+}
+body.dim .led.g{box-shadow:0 0 3px var(--g)}
+body.dim .led.r{box-shadow:0 0 2px var(--r)}
+body.dim .kpi::after{opacity:.5}
+body.dim .live-dot{box-shadow:0 0 3px var(--g)}
 </style>
 </head>
 <body>
@@ -246,6 +262,7 @@ tr:last-child td{border-bottom:none}
 const _T=sessionStorage.getItem("soc_token"),_U=sessionStorage.getItem("soc_user");
 if(!_T){location.replace("/login");}
 const CU=_U?JSON.parse(_U):{username:"Admin",role:"admin"};
+if(localStorage.getItem("soc_dim")==="1")document.body.classList.add("dim");
 </script>
 <div id="app">
 
@@ -307,6 +324,7 @@ const CU=_U?JSON.parse(_U):{username:"Admin",role:"admin"};
   <div class="tb-pill"><div class="led x" id="l-spcm"></div><span id="lb-spcm">SP-CM</span></div>
   <div class="tb-pill"><div class="led x" id="l-ai"></div><span id="lb-ai">SOCPilots AI</span></div>
   <div class="tb-flex"></div>
+  <button class="tb-btn" id="dim-btn" onclick="toggleDim()" title="Toggle dim mode for eye strain reduction"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:11px;height:11px"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg><span id="dim-label">DIM</span></button>
   <button class="tb-btn" onclick="refresh()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>Refresh</button>
   <div class="tb-user"><div class="tb-av" id="tb-av">Y</div><span class="tb-uname" id="tb-un">—</span></div>
 </header>
@@ -475,15 +493,19 @@ const CU=_U?JSON.parse(_U):{username:"Admin",role:"admin"};
 
 <!-- HUNT -->
 <div class="page" id="page-hunt">
-  <div class="ph"><h1>THREAT HUNT</h1><p>SIEM direct search + SOCPilots AI analysis</p></div>
+  <div class="ph"><h1>THREAT HUNT</h1><p>SIEM search + AI-generated hunt hypotheses</p></div>
   <div class="card mb"><div class="card-hd"><div class="card-ttl">Hunt Indicator</div></div>
     <div style="display:grid;grid-template-columns:150px 1fr auto;gap:8px;align-items:end">
       <div class="fg" style="margin:0"><label class="fl">Type</label><select class="fs" id="hunt-type"><option value="ip">IP Address</option><option value="user">Username</option><option value="hash">File Hash</option><option value="domain">Domain</option><option value="process">Process</option><option value="rule">Rule ID</option></select></div>
-      <div class="fg" style="margin:0"><label class="fl">Value</label><input class="fi" id="hunt-val" placeholder="e.g. 192.168.1.100"></div>
+      <div class="fg" style="margin:0"><label class="fl">Value</label><input class="fi" id="hunt-val" placeholder="e.g. 192.168.1.100" onkeydown="if(event.key==='Enter')doHunt()"></div>
       <button class="btn btn-p" onclick="doHunt()" style="height:34px">Hunt</button>
     </div>
   </div>
   <div id="hunt-os" style="display:none" class="card mb"><div class="card-hd"><div class="card-ttl" id="hunt-os-ttl">SIEM Results</div></div><div id="hunt-os-body"></div></div>
+  <div id="hunt-queries" style="display:none" class="card mb">
+    <div class="card-hd"><div class="card-ttl"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44"/><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5"/></svg>AI HUNT HYPOTHESES</div><span id="hunt-q-badge" class="badge low" style="font-size:9px"></span></div>
+    <div id="hunt-queries-body"></div>
+  </div>
   <div id="hunt-ai" style="display:none" class="card"><div class="card-hd"><div class="card-ttl">SOCPilots AI Analysis</div></div><div id="hunt-ai-body" class="ai-txt"></div></div>
 </div>
 
@@ -499,7 +521,7 @@ const CU=_U?JSON.parse(_U):{username:"Admin",role:"admin"};
       <div class="fg"><label class="fl">Indicator</label><input class="fi" id="ioc-val" placeholder="e.g. 45.148.10.157 or evil.com" style="font-size:14px"></div>
       <button class="btn btn-p" style="width:100%;justify-content:center" onclick="doIOC()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
-        Enrich via SOCPilots AI
+        Enrich Indicator
       </button>
       <div class="sep"></div>
       <div class="ioc-lbl">QUICK LOOKUP — TOP ATTACK IPs FROM SIEM</div>
@@ -2411,14 +2433,42 @@ async function loadHiveAlerts(){
 async function doHunt(){
   const type=document.getElementById('hunt-type').value,val=document.getElementById('hunt-val').value.trim();
   if(!val){toast('Enter indicator','warn');return;}
-  document.getElementById('hunt-os').style.display='block';document.getElementById('hunt-ai').style.display='block';
-  document.getElementById('hunt-os-body').innerHTML=spin('Searching SIEM...');document.getElementById('hunt-ai-body').textContent='Requesting SOCPilots AI analysis...';
+  document.getElementById('hunt-os').style.display='block';
+  document.getElementById('hunt-queries').style.display='block';
+  document.getElementById('hunt-ai').style.display='block';
+  document.getElementById('hunt-os-body').innerHTML=spin('Searching SIEM...');
+  document.getElementById('hunt-queries-body').innerHTML=spin('Generating AI hunt hypotheses...');
+  document.getElementById('hunt-ai-body').textContent='Requesting SOCPilots AI analysis...';
   document.getElementById('hunt-os-ttl').textContent=`SIEM: ${type} = "${val}"`;
-  const d=await P('/api/hunt',{type,value:val});if(!d){document.getElementById('hunt-os-body').innerHTML=errBnr('Hunt failed');return;}
+  const d=await P('/api/hunt',{type,value:val});
+  if(!d){document.getElementById('hunt-os-body').innerHTML=errBnr('Hunt failed');return;}
   const hits=d.osResults||[];
   if(!hits.length)document.getElementById('hunt-os-body').innerHTML=empty(`No matches for "${val}" in SIEM`);
   else document.getElementById('hunt-os-body').innerHTML=`<div style="font-size:10px;color:var(--g);font-family:var(--fm);margin-bottom:8px">✓ ${hits.length} matches</div><div class="tbl"><table><thead><tr><th>Time</th><th>Description</th><th>Agent</th><th>Src IP</th><th>Sev</th><th>MITRE</th></tr></thead><tbody>${hits.map(h=>`<tr><td style="color:#8ab0d0">${fmtDate(h.timestamp)}</td><td>${esc(h.description||'—')}</td><td>${esc(h.agent||'—')}</td><td style="color:var(--r)">${esc(h.srcIp||'—')}</td><td><span class="badge ${sbadge(h.severity)}">${h.severity}</span></td><td>${(h.mitre||[]).map(m=>`<span class="badge low" style="font-size:7px">${esc(m)}</span>`).join(' ')}</td></tr>`).join('')}</tbody></table></div>`;
   document.getElementById('hunt-ai-body').textContent=d.aiAnalysis||'SOCPilots AI unavailable';
+  // Render AI hunt hypotheses
+  const hq=d.huntQueries;
+  if(hq&&!hq.error){
+    const hyps=(hq.hypotheses||[]);
+    document.getElementById('hunt-q-badge').textContent=`${hyps.length} hypotheses`;
+    const riskCol={high:'var(--r)',medium:'var(--y)',low:'var(--g)'};
+    const hypsHtml=hyps.map(h=>`<div style="padding:10px;background:var(--bg2);border:1px solid var(--b1);border-radius:4px;margin-bottom:7px">
+      <div style="display:flex;align-items:center;gap:7px;margin-bottom:5px">
+        <span style="color:${riskCol[h.risk]||'var(--c)'};font-size:10px;font-family:var(--fm);font-weight:700">${(h.risk||'').toUpperCase()}</span>
+        <span style="font-size:12px;font-family:var(--fb);color:var(--txt)">${esc(h.title||'')}</span>
+        ${h.mitre_technique?`<span class="badge low" style="font-size:8px;margin-left:auto">${esc(h.mitre_technique)}</span>`:''}
+      </div>
+      <div style="font-size:11px;color:var(--txt2);font-family:var(--fm)">${esc(h.description||'')}</div>
+      ${h.mitre_tactic?`<div style="font-size:9px;color:#8ab0d0;margin-top:3px;font-family:var(--fm)">Tactic: ${esc(h.mitre_tactic)}</div>`:''}
+    </div>`).join('');
+    const relIocs=(hq.related_iocs||[]).map(i=>`<button class="btn btn-h btn-sm" onclick="document.getElementById('hunt-val').value='${esc(i)}';doHunt();" style="font-size:10px">${esc(i)}</button>`).join('');
+    document.getElementById('hunt-queries-body').innerHTML=
+      (hq.summary?`<div style="padding:8px 10px;background:var(--cdim);border:1px solid rgba(0,229,255,.15);border-radius:4px;font-size:11px;color:var(--c);font-family:var(--fm);margin-bottom:10px">${esc(hq.summary)}</div>`:'')+
+      hypsHtml+
+      (relIocs?`<div style="margin-top:8px"><div style="font-size:9px;color:#8ab0d0;font-family:var(--fm);letter-spacing:1.5px;text-transform:uppercase;margin-bottom:5px">Related IOCs to Hunt</div><div style="display:flex;flex-wrap:wrap;gap:5px">${relIocs}</div></div>`:'');
+  } else {
+    document.getElementById('hunt-queries-body').innerHTML=empty('AI hunt queries unavailable');
+  }
 }
 
 // ─── IOC ENRICHMENT ───────────────────────────────────────────
@@ -2430,22 +2480,76 @@ async function loadIOCQuick(){
 async function doIOC(){
   const type=document.getElementById('ioc-type').value, val=(document.getElementById('ioc-val')?.value||'').trim();
   if(!val){toast('Enter indicator','warn');return;}
-  document.getElementById('ioc-result').innerHTML=spin('Loading from SOCPilots AI...');
+  document.getElementById('ioc-result').innerHTML=spin('Querying threat intelligence...');
   if(!_iocMap)_iocMap=drawWorldMap('ioc-canvas');
-  const d=await P('/api/ai/chat',{
-    message:`Perform a complete threat intelligence enrichment on this ${type}: "${val}".\n\nProvide:\n1. **Geolocation**: Country, City, ISP/ASN, Coordinates (lat/lon)\n2. **Threat Intel**: Known malicious? Blacklists? Reputation score.\n3. **Risk Score**: 0-100 with justification.\n4. **Category**: malware C2 / scanner / botnet / legitimate / phishing / unknown\n5. **Recommended Action**: Block / Monitor / Allow\n6. **Threat Actors / Campaigns**: Any known associations\n7. **Related CVEs**: If applicable\n\nRespond with clear sections using ** for headers.`,
-    session_id:'soc-ioc-enrichment',
-  });
-  const text=d?.response||d?.output||d?.text||'No response from SOCPilots AI';
-  const geo=GEO_HEURISTIC(val);
+
+  // Direct enrichment (fast, Redis-cached) + AI narrative in parallel
+  const [enrichRes, aiRes] = await Promise.allSettled([
+    P('/api/langchain/enrich', {indicator: val, type}),
+    P('/api/ai/chat', {
+      message:`Threat intel summary for ${type} "${val}": country, ISP, known campaigns, recommended action. Be concise (3-5 sentences).`,
+      session_id:'soc-ioc-enrichment'
+    }),
+  ]);
+
+  const enrich = enrichRes.status==='fulfilled' ? enrichRes.value : null;
+  const aiText = aiRes.status==='fulfilled' ? (aiRes.value?.response||aiRes.value?.output||aiRes.value?.text||'') : '';
+  const geo = GEO_HEURISTIC(val);
+
+  // Build structured display
+  let vtHtml='', abuseHtml='', cacheHtml='';
+  if(enrich){
+    if(enrich.cached) cacheHtml=`<span style="font-size:8px;color:var(--g);font-family:var(--fm);padding:2px 6px;background:var(--gdim);border:1px solid rgba(0,230,118,.2);border-radius:3px">CACHED</span>`;
+    if(enrich.vt&&!enrich.vt.error){
+      const vt=enrich.vt;
+      const malCol=vt.malicious>0?'var(--r)':vt.suspicious>0?'var(--y)':'var(--g)';
+      vtHtml=`<div class="ioc-section">
+        <div class="ioc-lbl">VirusTotal</div>
+        <div style="display:flex;gap:12px;flex-wrap:wrap">
+          <span style="font-family:var(--fm);font-size:13px;color:${malCol};font-weight:700">${vt.malicious} malicious</span>
+          <span style="font-family:var(--fm);font-size:12px;color:var(--y)">${vt.suspicious} suspicious</span>
+          <span style="font-family:var(--fm);font-size:12px;color:var(--g)">${vt.harmless} harmless</span>
+          ${vt.country?`<span style="font-size:11px;color:var(--txt2);font-family:var(--fm)">📍 ${esc(vt.country)}</span>`:''}
+          ${vt.owner?`<span style="font-size:11px;color:var(--txt2);font-family:var(--fm)">🏢 ${esc(vt.owner)}</span>`:''}
+          ${vt.reputation!=null?`<span style="font-size:11px;color:var(--txt2);font-family:var(--fm)">Rep: ${vt.reputation}</span>`:''}
+        </div>
+        ${(vt.tags||[]).length?`<div style="margin-top:5px;display:flex;gap:4px;flex-wrap:wrap">${vt.tags.slice(0,5).map(t=>`<span class="badge low" style="font-size:8px">${esc(t)}</span>`).join('')}</div>`:''}
+      </div>`;
+    } else if(enrich.vt?.error){
+      vtHtml=`<div class="ioc-section"><div class="ioc-lbl">VirusTotal</div><span style="color:var(--txt2);font-size:11px">${esc(enrich.vt.error)}</span></div>`;
+    }
+    if(enrich.abuse&&!enrich.abuse.error){
+      const ab=enrich.abuse;
+      const scoreCol=ab.score>=80?'var(--r)':ab.score>=40?'var(--y)':'var(--g)';
+      abuseHtml=`<div class="ioc-section">
+        <div class="ioc-lbl">AbuseIPDB</div>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center">
+          <span style="font-family:var(--fm);font-size:18px;color:${scoreCol};font-weight:700">${ab.score}%</span>
+          <span style="font-size:11px;color:var(--txt2);font-family:var(--fm)">confidence</span>
+          <span style="font-size:11px;color:var(--txt2);font-family:var(--fm)">${ab.reports} reports</span>
+          ${ab.isp?`<span style="font-size:11px;color:var(--txt2);font-family:var(--fm)">🏢 ${esc(ab.isp)}</span>`:''}
+          ${ab.country?`<span style="font-size:11px;color:var(--txt2);font-family:var(--fm)">📍 ${esc(ab.country)}</span>`:''}
+          ${ab.usage?`<span class="badge low" style="font-size:8px">${esc(ab.usage)}</span>`:''}
+        </div>
+      </div>`;
+    } else if(enrich.abuse?.error){
+      abuseHtml=`<div class="ioc-section"><div class="ioc-lbl">AbuseIPDB</div><span style="color:var(--txt2);font-size:11px">${esc(enrich.abuse.error)}</span></div>`;
+    }
+  }
+
+  const noEnrichMsg = (!enrich||(!vtHtml&&!abuseHtml)) ?
+    `<div class="banner info" style="margin-bottom:10px">Direct enrichment unavailable — check VIRUSTOTAL_API_KEY / ABUSEIPDB_API_KEY in .env</div>` : '';
+
   document.getElementById('ioc-result').innerHTML=`
-    <div style="padding:10px;background:var(--bg2);border:1px solid var(--b1);border-radius:4px;margin-bottom:12px;display:flex;align-items:center;gap:10px">
+    <div style="padding:10px;background:var(--bg2);border:1px solid var(--b1);border-radius:4px;margin-bottom:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
       <span class="badge ${type==='ip'?'high':'medium'}" style="font-size:10px">${type.toUpperCase()}</span>
       <span style="font-family:var(--fm);font-size:14px;color:var(--c);font-weight:600">${esc(val)}</span>
       ${geo.c?`<span style="font-size:11px;color:var(--txt2);font-family:var(--fm)">📍 ${esc(geo.c)}</span>`:''}
+      ${cacheHtml}
     </div>
-    <div class="ai-txt" style="font-size:12px">${fmtAI(text)}</div>`;
-  // Show on IOC map
+    ${noEnrichMsg}${vtHtml}${abuseHtml}
+    ${aiText?`<div class="ioc-section"><div class="ioc-lbl">AI Analysis</div><div style="font-size:12px;line-height:1.7;font-family:var(--fm);color:var(--txt2)">${fmtAI(aiText)}</div></div>`:''}`;
+
   if(_iocMap&&type==='ip'){
     renderDots([{...geo,ip:val,count:1,c:geo.c}],'ioc-dots',_iocMap.ll2xy,_iocMap.W,_iocMap.H);
   }
@@ -3732,6 +3836,20 @@ function lcQuick(q){
 }
 
 function lcKey(e){if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){e.preventDefault();lcInvestigate();}}
+
+// ─── DIM MODE TOGGLE ──────────────────────────────────────────
+function toggleDim(){
+  const isDim=document.body.classList.toggle('dim');
+  localStorage.setItem('soc_dim',isDim?'1':'0');
+  const lbl=document.getElementById('dim-label');
+  if(lbl)lbl.textContent=isDim?'BRIGHT':'DIM';
+}
+// Sync button label to saved state on load
+(function(){
+  const isDim=document.body.classList.contains('dim');
+  const lbl=document.getElementById('dim-label');
+  if(lbl)lbl.textContent=isDim?'BRIGHT':'DIM';
+})();
 
 // ─── STARTUP ──────────────────────────────────────────────────
 checkStatus();
