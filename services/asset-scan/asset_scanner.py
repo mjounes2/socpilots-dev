@@ -21,8 +21,10 @@ import os
 import re
 import json
 import logging
+import socket
 import subprocess
 import ipaddress
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -167,6 +169,75 @@ class AssetScanner:
             log.info("Extended schema initialized")
         except Exception as e:
             log.error(f"Schema init error: {e}")
+        # On every startup: backfill hostnames for existing assets using
+        # Wazuh agent names and reverse DNS — fixes already-stored nulls
+        self._backfill_existing_hostnames()
+
+    def _backfill_existing_hostnames(self):
+        """
+        One-shot on startup: find assets with NULL/empty hostname and try to
+        populate them from:
+          1. Wazuh agent name (already in wazuh_agents_cache, matched by IP)
+          2. Reverse DNS via socket.gethostbyaddr()
+        Safe to run repeatedly — only touches rows where hostname IS NULL or ''.
+        """
+        try:
+            with db_conn() as conn, conn.cursor() as cur:
+                # Step A: Use Wazuh agent name for matched assets with no hostname
+                cur.execute("""
+                    UPDATE assets a
+                    SET hostname = w.agent_name
+                    FROM wazuh_agents_cache w
+                    WHERE a.ip = w.agent_ip
+                      AND w.agent_ip != ''
+                      AND w.agent_name != ''
+                      AND (a.hostname IS NULL OR a.hostname = '')
+                """)
+                wazuh_filled = cur.rowcount
+
+                # Step B: Get IPs that still have no hostname for rdns pass
+                cur.execute("""
+                    SELECT ip FROM assets
+                    WHERE hostname IS NULL OR hostname = ''
+                    LIMIT 100
+                """)
+                ips = [r['ip'] for r in cur.fetchall()]
+                conn.commit()
+            log.info(f"[BACKFILL] Wazuh agent names filled {wazuh_filled} hostnames. {len(ips)} still need rdns.")
+
+            if ips:
+                # Build minimal host stubs with OS/vendor/ports info from DB
+                try:
+                    with db_conn() as conn, conn.cursor() as cur:
+                        cur.execute("SELECT ip, os_guess, vendor, open_ports FROM assets WHERE ip = ANY(%s)", (ips,))
+                        rows = {r['ip']: r for r in cur.fetchall()}
+                except Exception:
+                    rows = {}
+
+                host_stubs = [{
+                    'ip':       ip,
+                    'os_guess': rows.get(ip, {}).get('os_guess', '') or '',
+                    'vendor':   rows.get(ip, {}).get('vendor', '') or '',
+                    'ports':    json.loads(rows.get(ip, {}).get('open_ports') or '[]')
+                                if isinstance(rows.get(ip, {}).get('open_ports'), str)
+                                else (rows.get(ip, {}).get('open_ports') or []),
+                } for ip in ips]
+
+                # Use full multi-method chain (rdns, NetBIOS, SMB, SSH, HTTP, fingerprint)
+                enriched = self._enrich_hostnames(host_stubs)
+                resolved = {h['ip']: h['hostname'] for h in enriched if h.get('hostname')}
+
+                if resolved:
+                    with db_conn() as conn, conn.cursor() as cur:
+                        for ip, name in resolved.items():
+                            cur.execute("""
+                                UPDATE assets SET hostname = %s
+                                WHERE ip = %s AND (hostname IS NULL OR hostname = '')
+                            """, (name, ip))
+                        conn.commit()
+                    log.info(f"[BACKFILL] Resolved {len(resolved)}/{len(ips)} hostnames via multi-method chain")
+        except Exception as e:
+            log.warning(f"[BACKFILL] Startup hostname backfill failed: {e}")
 
     # ── 1. Discover assets via nmap ──────────────────────────────
     def discover_assets_nmap(self, subnets: list[str]) -> list[dict]:
@@ -179,20 +250,191 @@ class AssetScanner:
             return []
         cmd = [
             'nmap', '-sV', '-O', '--osscan-guess', '--version-intensity', '3',
-            '--top-ports', '50', '-T4', '--system-dns', '-oX', '-',
+            '--top-ports', '50', '-T4',
+            '-R',                       # Force reverse DNS PTR lookups for all hosts
+            '--system-dns',             # Use system resolver (picks up local DNS/mDNS)
+            '--script', 'nbstat',       # NetBIOS name script — resolves Windows hostnames
+            '-oX', '-',
         ] + safe
         log.info(f"[NMAP] Scanning: {safe}")
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=360)
             hosts = parse_nmap_xml(result.stdout)
             log.info(f"[NMAP] Found {len(hosts)} hosts")
+            # Enrich hostname for any hosts nmap couldn't resolve via PTR
+            hosts = self._enrich_hostnames(hosts)
             return hosts
         except subprocess.TimeoutExpired:
-            log.error("[NMAP] Scan timed out after 300s")
+            log.error("[NMAP] Scan timed out after 360s")
             return []
         except Exception as e:
             log.error(f"[NMAP] Error: {e}")
             return []
+
+    # ── 1b. Hostname enrichment — multi-method fallback chain ────
+    def _enrich_hostnames(self, hosts: list[dict]) -> list[dict]:
+        """
+        For hosts with no hostname from nmap PTR, try in order:
+          1. socket.gethostbyaddr()     — reverse DNS / /etc/hosts / mDNS
+          2. NetBIOS UDP query (raw)    — Windows/Samba without nmblookup tool
+          3. SMB ComputerName via nmap  — Windows with port 445 open (nmap available)
+          4. HTTP title via urllib      — IoT/Fire TV/Fortinet web interfaces
+          5. Fingerprint fallback       — vendor/OS short name + last IP octet
+             (always produces something — never leaves hostname blank)
+        Runs in parallel for speed. Only uses Python stdlib + nmap (available in container).
+        """
+        missing = [h for h in hosts if not h.get('hostname')]
+        if not missing:
+            return hosts
+        log.info(f"[HOSTNAME] Enriching {len(missing)} hosts without hostnames...")
+
+        def _netbios_query(ip: str) -> str:
+            """
+            Send a raw NetBIOS Node Status Request to port 137 UDP.
+            Returns the NetBIOS workstation name if found, else ''.
+            No external tools needed — pure Python sockets.
+            """
+            try:
+                # NetBIOS NS query packet (Node Status Request)
+                packet = (
+                    b'\xff\xfe'                # Transaction ID (random)
+                    b'\x00\x00'                # Flags: query, non-recursive
+                    b'\x00\x01'                # Questions: 1
+                    b'\x00\x00'                # Answer RRs: 0
+                    b'\x00\x00'                # Authority RRs: 0
+                    b'\x00\x00'                # Additional RRs: 0
+                    b'\x20CKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\x00'  # Encoded "*" (wildcard)
+                    b'\x00\x21'                # Type: NBSTAT
+                    b'\x00\x01'                # Class: IN
+                )
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                s.settimeout(2)
+                s.sendto(packet, (ip, 137))
+                data, _ = s.recvfrom(1024)
+                s.close()
+                # Parse: after 57 bytes header, num_names * 18 bytes entries
+                # Each entry: 16 bytes name (space-padded) + 2 bytes flags
+                if len(data) > 56:
+                    num_names = data[56]
+                    for i in range(num_names):
+                        offset = 57 + i * 18
+                        if offset + 15 > len(data):
+                            break
+                        name_raw = data[offset:offset+15]
+                        flags = data[offset+16:offset+18]
+                        suffix = data[offset+15]
+                        # suffix 0x00 = workstation name, 0x20 = file server
+                        if suffix in (0x00, 0x20):
+                            name = name_raw.decode('ascii', errors='ignore').rstrip()
+                            if name and name != '*' and '__' not in name:
+                                return name
+            except Exception:
+                pass
+            return ''
+
+        def _resolve_one(host: dict) -> tuple[str, str, str]:
+            """Returns (ip, hostname, method)"""
+            ip = host['ip']
+            ports_open = {p.get('port') for p in (host.get('ports') or [])}
+
+            # 1. Reverse DNS / /etc/hosts via system resolver
+            try:
+                name, _, _ = socket.gethostbyaddr(ip)
+                name = name.rstrip('.')
+                if name and name != ip:
+                    return ip, name, 'rdns'
+            except Exception:
+                pass
+
+            # 2. NetBIOS raw UDP query — Windows/Samba hosts
+            if ports_open & {137, 139, 445}:
+                name = _netbios_query(ip)
+                if name:
+                    return ip, name, 'netbios-udp'
+
+            # 3. SMB ComputerName via nmap script (nmap is installed in container)
+            if 445 in ports_open:
+                try:
+                    r = subprocess.run(
+                        ['nmap', '-p', '445', '--script', 'smb-os-discovery',
+                         '-T4', '--open', '--host-timeout', '15s', ip],
+                        capture_output=True, text=True, timeout=20
+                    )
+                    m = re.search(r'Computer name:\s+([^\s\n\\]+)', r.stdout)
+                    if m:
+                        return ip, m.group(1).strip(), 'smb'
+                    m = re.search(r'FQDN:\s+([^\s\n]+)', r.stdout)
+                    if m:
+                        return ip, m.group(1).strip().split('.')[0], 'smb-fqdn'
+                except Exception:
+                    pass
+
+            # 4. HTTP title via Python urllib — IoT, Fire TV, Fortinet, cameras
+            import urllib.request, ssl
+            web_ports = ports_open & {80, 8080, 8008, 443, 8443}
+            for wport in sorted(web_ports):
+                try:
+                    scheme = 'https' if wport in (443, 8443) else 'http'
+                    ctx = ssl.create_default_context()
+                    ctx.check_hostname = False
+                    ctx.verify_mode = ssl.CERT_NONE
+                    req = urllib.request.urlopen(
+                        f'{scheme}://{ip}:{wport}/', timeout=4,
+                        context=ctx if scheme == 'https' else None
+                    )
+                    html = req.read(4096).decode('utf-8', errors='ignore')
+                    m = re.search(r'<title[^>]*>([^<]{3,80})</title>', html, re.IGNORECASE)
+                    if m:
+                        title = m.group(1).strip()
+                        skip = {'login', 'home', 'index', 'default', 'welcome',
+                                'router', 'admin', 'dashboard', 'untitled', ''}
+                        if title.lower() not in skip:
+                            candidate = re.split(r'[\s\-|/\\]+', title)[0].strip()
+                            if len(candidate) >= 2:
+                                return ip, candidate, f'http:{wport}'
+                except Exception:
+                    pass
+
+            # 5. Fingerprint fallback — always produces a label (never blank)
+            # Based on already-known OS/vendor data from nmap. Much better than "—".
+            vendor  = (host.get('vendor') or '').strip()
+            os_low  = (host.get('os_guess') or '').lower()
+            last    = ip.split('.')[-1]
+            if vendor:
+                short = re.split(r'[\s,.(]', vendor)[0]
+                if short:
+                    return ip, f'{short}-{last}', 'vendor-fp'
+            if 'windows' in os_low:
+                return ip, f'Windows-{last}', 'os-fp'
+            if 'fortinet' in os_low or 'forti' in os_low:
+                return ip, f'Fortinet-{last}', 'os-fp'
+            if 'apple' in os_low or 'darwin' in os_low or 'ios' in os_low:
+                return ip, f'Apple-{last}', 'os-fp'
+            if 'linux' in os_low or 'ubuntu' in os_low or 'debian' in os_low:
+                return ip, f'Linux-{last}', 'os-fp'
+            if 'amazon' in os_low or 'fire' in os_low:
+                return ip, f'Amazon-{last}', 'os-fp'
+            return ip, f'Device-{last}', 'ip-fp'
+
+        resolved = {}
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            futures = {pool.submit(_resolve_one, h): h['ip'] for h in missing}
+            for fut in as_completed(futures, timeout=90):
+                try:
+                    ip, name, method = fut.result(timeout=10)
+                    if name:
+                        resolved[ip] = (name, method)
+                except Exception:
+                    pass
+
+        for h in hosts:
+            if not h.get('hostname') and h['ip'] in resolved:
+                name, method = resolved[h['ip']]
+                h['hostname'] = name
+                log.info(f"[HOSTNAME] {h['ip']} → {name!r} ({method})")
+
+        log.info(f"[HOSTNAME] Enriched {len(resolved)}/{len(missing)} hostnames")
+        return hosts
 
     # ── 2. Fast ARP scan for local subnets ──────────────────────
     def discover_assets_arp(self, subnets: list[str]) -> list[dict]:
@@ -341,10 +583,15 @@ class AssetScanner:
                           (ip, hostname, mac, vendor, os_guess, status, open_ports, subnet_id)
                         VALUES (%s, %s, %s, %s, %s, 'online', %s, %s)
                         ON CONFLICT(ip) DO UPDATE SET
-                          hostname   = COALESCE(EXCLUDED.hostname,   assets.hostname),
-                          mac        = COALESCE(EXCLUDED.mac,        assets.mac),
-                          vendor     = COALESCE(EXCLUDED.vendor,     assets.vendor),
-                          os_guess   = COALESCE(EXCLUDED.os_guess,   assets.os_guess),
+                          -- Prefer a new non-empty hostname over keeping an existing empty/null one
+                          hostname   = CASE
+                                         WHEN EXCLUDED.hostname IS NOT NULL AND EXCLUDED.hostname != ''
+                                         THEN EXCLUDED.hostname
+                                         ELSE COALESCE(assets.hostname, EXCLUDED.hostname)
+                                       END,
+                          mac        = COALESCE(EXCLUDED.mac,      assets.mac),
+                          vendor     = COALESCE(EXCLUDED.vendor,   assets.vendor),
+                          os_guess   = COALESCE(EXCLUDED.os_guess, assets.os_guess),
                           open_ports = EXCLUDED.open_ports,
                           status     = 'online',
                           last_seen  = NOW(),
@@ -399,32 +646,61 @@ class AssetScanner:
 
     # ── 6. Match agents to assets ────────────────────────────────
     def match_agents_to_assets(self) -> int:
-        """Cross-reference assets with Wazuh agents by IP and hostname."""
+        """
+        Cross-reference assets with Wazuh agents by IP and hostname.
+        Also backfills the hostname column from the Wazuh agent name when
+        nmap/rdns couldn't resolve one — Wazuh agents always register
+        with their real machine hostname.
+        """
         updated = 0
         try:
             with db_conn() as conn, conn.cursor() as cur:
-                # Match by exact IP
+                # ── Pass 1: Match by exact IP, backfill hostname from agent name ──
                 cur.execute("""
                     UPDATE assets a
                     SET wazuh_agent_id     = w.agent_id,
                         wazuh_agent_name   = w.agent_name,
-                        wazuh_agent_status = w.status
+                        wazuh_agent_status = w.status,
+                        -- Use agent name as hostname if nmap/rdns found nothing
+                        hostname = COALESCE(
+                            NULLIF(a.hostname, ''),
+                            NULLIF(w.agent_name, '')
+                        )
                     FROM wazuh_agents_cache w
                     WHERE a.ip = w.agent_ip AND w.agent_ip != ''
                 """)
                 updated += cur.rowcount
-                # Match by hostname prefix (case-insensitive)
+
+                # ── Pass 2: Match by hostname prefix (case-insensitive) ──────────
                 cur.execute("""
                     UPDATE assets a
                     SET wazuh_agent_id     = w.agent_id,
                         wazuh_agent_name   = w.agent_name,
-                        wazuh_agent_status = w.status
+                        wazuh_agent_status = w.status,
+                        hostname = COALESCE(
+                            NULLIF(a.hostname, ''),
+                            NULLIF(w.agent_name, '')
+                        )
                     FROM wazuh_agents_cache w
                     WHERE a.wazuh_agent_id IS NULL
                       AND a.hostname IS NOT NULL
                       AND lower(split_part(a.hostname, '.', 1)) = lower(split_part(w.agent_name, '.', 1))
                 """)
                 updated += cur.rowcount
+
+                # ── Pass 3: Assign agent name as hostname for remaining matched assets
+                # that have no hostname but are linked to an agent ─────────────────
+                cur.execute("""
+                    UPDATE assets a
+                    SET hostname = wazuh_agent_name
+                    WHERE wazuh_agent_name IS NOT NULL
+                      AND wazuh_agent_name != ''
+                      AND (hostname IS NULL OR hostname = '')
+                """)
+                hostname_filled = cur.rowcount
+                if hostname_filled > 0:
+                    log.info(f"[MATCH] Backfilled hostname from Wazuh agent name for {hostname_filled} assets")
+
                 conn.commit()
         except Exception as e:
             log.error(f"[MATCH] Error matching agents: {e}")

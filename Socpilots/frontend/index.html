@@ -1102,7 +1102,7 @@ sshd: Failed" style="min-height:80px"></textarea></div>
 <!-- SETTINGS -->
 <div class="page" id="page-settings">
   <div class="ph"><h1>SETTINGS</h1><p>System configuration and diagnostics</p></div>
-  <div class="g2">
+  <div class="g2 mb">
     <div class="card"><div class="card-hd"><div class="card-ttl">DIAGNOSTICS</div><button class="btn btn-p btn-sm" onclick="testConn()">▶ Run Tests</button></div><div id="conn-res" style="font-size:11px;color:#8ab0d0;font-family:var(--fm)">Click "Run Tests"...</div></div>
     <div class="card"><div class="card-hd"><div class="card-ttl">SYSTEM CONFIG</div></div>
       <div style="font-size:11px;font-family:var(--fm);line-height:2.4;color:var(--txt2)" id="cfg-vals">
@@ -1112,8 +1112,165 @@ sshd: Failed" style="min-height:80px"></textarea></div>
       </div>
     </div>
   </div>
+
+  <!-- DARK SOC AUTONOMOUS MODE -->
+  <div class="card mb" style="border-left:3px solid var(--r)">
+    <div class="card-hd">
+      <div class="card-ttl" style="color:var(--r)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px;vertical-align:middle;margin-right:5px"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+        DARK SOC — AUTONOMOUS MODE
+      </div>
+      <div id="darksoc-status-badge" style="font-size:9px;font-family:var(--fm);padding:3px 8px;background:var(--rdim);color:var(--r);border:1px solid rgba(255,23,68,.3);border-radius:2px;letter-spacing:1px">INACTIVE</div>
+    </div>
+    <div style="font-size:11px;color:var(--txt3);font-family:var(--fm);margin-bottom:14px;line-height:1.6">
+      When enabled, SOCPilots operates without analyst intervention: auto-investigates alerts, runs playbooks, blocks IPs, isolates hosts, creates cases, and monitors for lateral movement — fully autonomously.
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+      <div style="padding:12px;background:var(--bg2);border:1px solid var(--b1);border-radius:4px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+          <div style="font-family:var(--fw);font-size:12px;font-weight:700;letter-spacing:1px">PLAYBOOK ENGINE</div>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+            <input type="checkbox" id="ds-main-toggle" onchange="saveDarkSocSettings()" style="width:16px;height:16px;accent-color:var(--r);cursor:pointer">
+            <span id="ds-main-lbl" style="font-family:var(--fm);font-size:10px;color:var(--txt2)">OFF</span>
+          </label>
+        </div>
+        <div style="font-size:10px;color:var(--txt3);font-family:var(--fm);line-height:1.5">Auto-investigate alerts + execute response playbooks (block IPs, isolate hosts). Requires auto-triage ON.</div>
+      </div>
+      <div style="padding:12px;background:var(--bg2);border:1px solid var(--b1);border-radius:4px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+          <div style="font-family:var(--fw);font-size:12px;font-weight:700;letter-spacing:1px">THREAT HUNT</div>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+            <input type="checkbox" id="ds-hunt-toggle" onchange="saveDarkSocSettings()" style="width:16px;height:16px;accent-color:var(--y);cursor:pointer">
+            <span id="ds-hunt-lbl" style="font-family:var(--fm);font-size:10px;color:var(--txt2)">OFF</span>
+          </label>
+        </div>
+        <div style="font-size:10px;color:var(--txt3);font-family:var(--fm);line-height:1.5">Runs automated threat hunts every 6 hours against top attack IPs. Creates cases on hits.</div>
+      </div>
+      <div style="padding:12px;background:var(--bg2);border:1px solid var(--b1);border-radius:4px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+          <div style="font-family:var(--fw);font-size:12px;font-weight:700;letter-spacing:1px">LATERAL MONITOR</div>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+            <input type="checkbox" id="ds-lateral-toggle" onchange="saveDarkSocSettings()" style="width:16px;height:16px;accent-color:var(--p);cursor:pointer">
+            <span id="ds-lateral-lbl" style="font-family:var(--fm);font-size:10px;color:var(--txt2)">OFF</span>
+          </label>
+        </div>
+        <div style="font-size:10px;color:var(--txt3);font-family:var(--fm);line-height:1.5">UEBA graph check every 30 min for lateral movement chains. Auto-creates critical cases.</div>
+      </div>
+    </div>
+    <div id="ds-exec-stats" style="margin-top:10px;font-size:10px;font-family:var(--fm);color:var(--txt3);display:none"></div>
+  </div>
+
+  <!-- PLAYBOOKS -->
+  <div class="card mb">
+    <div class="card-hd">
+      <div class="card-ttl">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;vertical-align:middle;margin-right:5px"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+        RESPONSE PLAYBOOKS
+      </div>
+      <div style="font-size:9px;font-family:var(--fm);color:var(--txt3)">Executed automatically by Dark SOC engine — not via n8n</div>
+    </div>
+    <div style="font-size:10px;color:var(--txt3);font-family:var(--fm);margin-bottom:10px">
+      These playbooks are stored in PostgreSQL and executed directly by the backend. Each playbook matches alerts by severity level and MITRE technique, then fires response actions automatically.
+    </div>
+    <div id="playbooks-list">
+      <div class="loading"><div class="spin"></div></div>
+    </div>
+    <div id="pb-exec-history" style="margin-top:12px;display:none">
+      <div style="font-size:9px;font-family:var(--fm);color:var(--txt3);letter-spacing:1px;margin-bottom:6px;border-top:1px solid var(--b1);padding-top:8px">RECENT EXECUTIONS</div>
+      <div id="pb-exec-list"></div>
+    </div>
+  </div>
+
+  <!-- PROTECTED ASSETS -->
+  <div class="card mb" style="border-left:3px solid var(--y)">
+    <div class="card-hd">
+      <div class="card-ttl" style="color:var(--y)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;vertical-align:middle;margin-right:5px"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        PROTECTED ASSETS
+      </div>
+      <button class="btn btn-sm" style="background:rgba(255,193,7,.12);color:var(--y);border:1px solid rgba(255,193,7,.25)" onclick="openAddProtectedAsset()">+ Protect Host</button>
+    </div>
+    <div style="font-size:11px;color:var(--txt3);font-family:var(--fm);margin-bottom:12px;line-height:1.6">
+      Tag production hosts so the Dark SOC engine never blindly isolates them.
+      <br>
+      <span style="color:var(--r);font-weight:700">CRITICAL</span> — isolation BLOCKED forever; attacker IP is blocked instead + human escalation case created.<br>
+      <span style="color:var(--y);font-weight:700">PROTECTED</span> — isolation requires analyst approval (30 min window before auto-reject).
+    </div>
+    <div id="protected-assets-list"><div class="loading"><div class="spin"></div></div></div>
+  </div>
+
+  <!-- PENDING ISOLATION APPROVALS -->
+  <div class="card mb" style="border-left:3px solid var(--p)">
+    <div class="card-hd">
+      <div class="card-ttl" style="color:var(--p)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;vertical-align:middle;margin-right:5px"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        PENDING ISOLATION APPROVALS
+      </div>
+      <button class="btn btn-h btn-sm" onclick="loadIsolationApprovals()">⟳ Refresh</button>
+    </div>
+    <div style="font-size:11px;color:var(--txt3);font-family:var(--fm);margin-bottom:12px;line-height:1.6">
+      When the engine wants to isolate a PROTECTED host, it waits here for your decision. Approve → immediate isolation. Reject → no action taken. Auto-expires after the timeout window.
+    </div>
+    <div id="isolation-approvals-list"><div style="font-size:11px;color:var(--txt3);font-family:var(--fm)">No pending approvals.</div></div>
+  </div>
 </div>
 
+
+<!-- ADD PROTECTED ASSET MODAL -->
+<div class="modal-ov" id="modal-protect-asset">
+  <div class="modal" style="width:480px">
+    <div class="modal-hd">
+      <div class="modal-ttl">Protect a Host</div>
+      <button class="modal-x" onclick="closeModal('modal-protect-asset')">✕</button>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:12px;padding:0 0 4px">
+      <div>
+        <label style="font-size:10px;font-family:var(--fm);color:var(--txt3);display:block;margin-bottom:4px">HOST IDENTIFIER (Wazuh agent name, hostname, or IP) *</label>
+        <input class="fi" id="pa-identifier" placeholder="e.g. prod-db-01 or 192.168.1.50" style="width:100%">
+      </div>
+      <div>
+        <label style="font-size:10px;font-family:var(--fm);color:var(--txt3);display:block;margin-bottom:4px">FRIENDLY LABEL</label>
+        <input class="fi" id="pa-label" placeholder="e.g. Production PostgreSQL DB" style="width:100%">
+      </div>
+      <div>
+        <label style="font-size:10px;font-family:var(--fm);color:var(--txt3);display:block;margin-bottom:4px">PROTECTION TIER</label>
+        <select class="fs" id="pa-tier" style="width:100%">
+          <option value="critical">🔴 CRITICAL — Never auto-isolate (block attacker + escalate to human)</option>
+          <option value="protected" selected>🟡 PROTECTED — Require analyst approval before isolation (30 min timeout)</option>
+          <option value="standard">🟢 STANDARD — Allow normal auto-isolation (same as unprotected)</option>
+        </select>
+      </div>
+      <div>
+        <label style="font-size:10px;font-family:var(--fm);color:var(--txt3);display:block;margin-bottom:4px">NOTE (optional)</label>
+        <input class="fi" id="pa-note" placeholder="e.g. Customer-facing DB. Contact DBA team before any action." style="width:100%">
+      </div>
+      <div style="display:flex;gap:8px;margin-top:4px">
+        <button class="btn btn-p" style="flex:1" onclick="saveProtectedAsset()">Save</button>
+        <button class="btn btn-h" onclick="closeModal('modal-protect-asset')">Cancel</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- APPROVE ISOLATION MODAL -->
+<div class="modal-ov" id="modal-approve-isolation">
+  <div class="modal" style="width:500px">
+    <div class="modal-hd" style="border-bottom-color:rgba(0,230,118,.2)">
+      <div class="modal-ttl" style="color:var(--g)">Approve Isolation</div>
+      <button class="modal-x" onclick="closeModal('modal-approve-isolation')">✕</button>
+    </div>
+    <div id="approval-detail-body" style="font-size:12px;font-family:var(--fm);margin-bottom:14px"></div>
+    <div>
+      <label style="font-size:10px;font-family:var(--fm);color:var(--txt3);display:block;margin-bottom:4px">APPROVAL NOTE (optional)</label>
+      <input class="fi" id="approval-note" placeholder="e.g. Confirmed malicious — isolate immediately" style="width:100%">
+    </div>
+    <div style="display:flex;gap:8px;margin-top:12px">
+      <button class="btn" style="flex:1;background:rgba(0,230,118,.15);color:var(--g);border:1px solid rgba(0,230,118,.3)" onclick="submitIsolationDecision('approve')">✓ APPROVE — Isolate Now</button>
+      <button class="btn" style="flex:1;background:rgba(255,23,68,.1);color:var(--r);border:1px solid rgba(255,23,68,.25)" onclick="submitIsolationDecision('reject')">✕ REJECT — Do Not Isolate</button>
+      <button class="btn btn-h" onclick="closeModal('modal-approve-isolation')">Cancel</button>
+    </div>
+  </div>
+</div>
 
 <!-- ASSETS -->
 <div class="page" id="page-assets">
@@ -1134,6 +1291,7 @@ sshd: Failed" style="min-height:80px"></textarea></div>
       <div style="margin-top:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
         <button class="btn btn-p" id="scan-btn" onclick="startScan()">▶ Scan Network</button>
         <button class="btn btn-h btn-sm" onclick="syncAgents()" title="Re-match Wazuh agents without rescanning">⟳ Sync Wazuh Agents</button>
+        <button class="btn btn-h btn-sm" onclick="resolveHostnames()" title="Fill missing hostnames via Wazuh agent names + reverse DNS">🔍 Resolve Hostnames</button>
         <span id="scan-status" style="font-size:11px;font-family:var(--fm);color:#8ab0d0"></span>
       </div>
     </div>
@@ -1676,7 +1834,8 @@ const LOAD_MAP={dashboard:loadDashboard,agents:loadAgents,alerts:loadAlerts,rule
   ioc:loadIOCQuick,reports:loadReportMetrics,
   assets:()=>{loadSubnets();loadAssets();loadScanStatus();},
   ueba:()=>{loadUebaStats();loadUebaAnomalies();},
-  langchain:()=>{lcCheckHealth();}};
+  langchain:()=>{lcCheckHealth();},
+  settings:loadDarkSocSettings};
 
 function go(p){
   document.querySelectorAll('.page').forEach(x=>x.classList.remove('active'));
@@ -2589,18 +2748,29 @@ async function doIOC(){
   document.getElementById('ioc-result').innerHTML=spin('Querying threat intelligence...');
   if(!_iocMap)_iocMap=drawWorldMap('ioc-canvas');
 
-  // Direct enrichment (fast, Redis-cached) + AI narrative in parallel
-  const [enrichRes, aiRes] = await Promise.allSettled([
-    P('/api/langchain/enrich', {indicator: val, type}),
-    P('/api/ai/chat', {
-      message:`Threat intel summary for ${type} "${val}": country, ISP, known campaigns, recommended action. Be concise (3-5 sentences).`,
-      session_id:'soc-ioc-enrichment'
-    }),
-  ]);
-
-  const enrich = enrichRes.status==='fulfilled' ? enrichRes.value : null;
-  const aiText = aiRes.status==='fulfilled' ? (aiRes.value?.response||aiRes.value?.output||aiRes.value?.text||'') : '';
+  // Step 1: Direct enrichment first (fast, Redis-cached VT + AbuseIPDB)
+  const enrichRes = await P('/api/langchain/enrich', {indicator: val, type}).catch(()=>null);
+  const enrich = enrichRes || null;
   const geo = GEO_HEURISTIC(val);
+
+  // Step 2: Build AI prompt WITH the actual enrichment data so AI doesn't need to fetch
+  let aiMsg = `You are a SOC analyst. Analyze this threat intelligence data for ${type} "${val}" and provide a concise security assessment.\n\n`;
+  if(enrich?.vt && !enrich.vt.error){
+    const vt=enrich.vt;
+    aiMsg+=`VirusTotal Results:\n- Malicious detections: ${vt.malicious}\n- Suspicious: ${vt.suspicious}\n- Harmless: ${vt.harmless}\n- Country: ${vt.country||'unknown'}\n- Owner/ASN: ${vt.owner||'unknown'}\n- Reputation score: ${vt.reputation??'N/A'}\n- Tags: ${(vt.tags||[]).join(', ')||'none'}\n\n`;
+  }
+  if(enrich?.abuse && !enrich.abuse.error){
+    const ab=enrich.abuse;
+    aiMsg+=`AbuseIPDB Results:\n- Abuse confidence: ${ab.score}%\n- Total reports: ${ab.reports}\n- Country: ${ab.country||'unknown'}\n- ISP: ${ab.isp||'unknown'}\n- Usage type: ${ab.usage||'unknown'}\n\n`;
+  }
+  if(!enrich?.vt && !enrich?.abuse){
+    aiMsg+=`No enrichment API data available. Analyze based on indicator value only.\n\n`;
+  }
+  aiMsg+=`Based on this data, provide:\n1. Risk level (Critical/High/Medium/Low)\n2. Threat actor association if known\n3. Likely attack type / MITRE technique\n4. Recommended immediate action\n\nBe concise — max 5 sentences.`;
+
+  // Step 3: AI analysis using the real enrichment context
+  const aiRes = await P('/api/ai/chat', {message: aiMsg, session_id:'soc-ioc-enrichment'}).catch(()=>null);
+  const aiText = aiRes?.response || aiRes?.output || aiRes?.text || '';
 
   // Build structured display
   let vtHtml='', abuseHtml='', cacheHtml='';
@@ -3514,6 +3684,274 @@ async function genReport(){
 }
 
 // ─── SETTINGS ─────────────────────────────────────────────────
+// ─── DARK SOC SETTINGS ────────────────────────────────────────
+async function loadDarkSocSettings(){
+  const [s, ds] = await Promise.allSettled([G('/api/settings'), G('/api/darksoc/status')]);
+  const settings = s.status==='fulfilled' ? s.value : {};
+  const status   = ds.status==='fulfilled' ? ds.value : {};
+
+  const el=id=>document.getElementById(id);
+  // Toggles
+  const mainOn    = settings.darksoc_enabled==='true';
+  const huntOn    = settings.darksoc_hunt_enabled==='true';
+  const latOn     = settings.darksoc_lateral_monitor_enabled==='true';
+
+  if(el('ds-main-toggle'))    el('ds-main-toggle').checked   = mainOn;
+  if(el('ds-hunt-toggle'))    el('ds-hunt-toggle').checked   = huntOn;
+  if(el('ds-lateral-toggle')) el('ds-lateral-toggle').checked= latOn;
+  if(el('ds-main-lbl'))    el('ds-main-lbl').textContent    = mainOn ?'ON':'OFF';
+  if(el('ds-hunt-lbl'))    el('ds-hunt-lbl').textContent    = huntOn ?'ON':'OFF';
+  if(el('ds-lateral-lbl')) el('ds-lateral-lbl').textContent = latOn  ?'ON':'OFF';
+
+  // Status badge
+  const anyOn = mainOn||huntOn||latOn;
+  if(el('darksoc-status-badge')){
+    el('darksoc-status-badge').textContent = anyOn?'ACTIVE':'INACTIVE';
+    el('darksoc-status-badge').style.color = anyOn?'var(--g)':'var(--r)';
+    el('darksoc-status-badge').style.background = anyOn?'var(--gdim)':'var(--rdim)';
+    el('darksoc-status-badge').style.borderColor = anyOn?'rgba(0,230,118,.3)':'rgba(255,23,68,.3)';
+  }
+
+  // Exec stats
+  if(status.execution_stats && el('ds-exec-stats')){
+    const st=status.execution_stats;
+    el('ds-exec-stats').style.display='block';
+    el('ds-exec-stats').innerHTML=`Active playbooks: <span style="color:var(--c)">${status.active_playbooks||0}</span> &nbsp;|&nbsp; Total executions: <span style="color:var(--c)">${st.total||0}</span> &nbsp;|&nbsp; Last 24h: <span style="color:var(--g)">${st.last_24h||0}</span> &nbsp;|&nbsp; Skipped: <span style="color:var(--y)">${st.skipped||0}</span>`;
+  }
+
+  // Load playbooks
+  await loadPlaybooks();
+  // Load recent executions
+  await loadPlaybookExecutions();
+  // Load protected assets + pending isolation approvals
+  loadProtectedAssets();
+  loadIsolationApprovals();
+}
+
+async function saveDarkSocSettings(){
+  const el=id=>document.getElementById(id);
+  const mainOn  = el('ds-main-toggle')?.checked;
+  const huntOn  = el('ds-hunt-toggle')?.checked;
+  const latOn   = el('ds-lateral-toggle')?.checked;
+
+  // Update labels
+  if(el('ds-main-lbl'))    el('ds-main-lbl').textContent    = mainOn?'ON':'OFF';
+  if(el('ds-hunt-lbl'))    el('ds-hunt-lbl').textContent    = huntOn?'ON':'OFF';
+  if(el('ds-lateral-lbl')) el('ds-lateral-lbl').textContent = latOn?'ON':'OFF';
+
+  const res = await P('/api/settings', {
+    darksoc_enabled:                 String(mainOn),
+    darksoc_hunt_enabled:            String(huntOn),
+    darksoc_lateral_monitor_enabled: String(latOn),
+  });
+  if(res?.ok){
+    toast(`Dark SOC: Engine ${mainOn?'ON':'OFF'} | Hunt ${huntOn?'ON':'OFF'} | Lateral ${latOn?'ON':'OFF'}`, mainOn?'ok':'warn');
+    // Refresh status badge
+    const anyOn=mainOn||huntOn||latOn;
+    if(el('darksoc-status-badge')){
+      el('darksoc-status-badge').textContent=anyOn?'ACTIVE':'INACTIVE';
+      el('darksoc-status-badge').style.color=anyOn?'var(--g)':'var(--r)';
+      el('darksoc-status-badge').style.background=anyOn?'var(--gdim)':'var(--rdim)';
+      el('darksoc-status-badge').style.borderColor=anyOn?'rgba(0,230,118,.3)':'rgba(255,23,68,.3)';
+    }
+  } else {
+    toast('Failed to save Dark SOC settings','err');
+  }
+}
+
+async function loadPlaybooks(){
+  const d=await G('/api/playbooks');
+  const el=document.getElementById('playbooks-list');
+  if(!el)return;
+  if(!d?.playbooks?.length){el.innerHTML='<div style="color:#8ab0d0;font-size:11px;font-family:var(--fm)">No playbooks found</div>';return;}
+  const actionColors={'block_ip':'var(--r)','isolate_host':'var(--r)','kill_process':'var(--r)','disable_user':'var(--r)','create_case':'var(--y)','close_case':'var(--g)'};
+  el.innerHTML=`<div style="display:flex;flex-direction:column;gap:6px">
+  ${d.playbooks.map(pb=>{
+    const acts = Array.isArray(pb.actions) ? pb.actions : (()=>{try{return JSON.parse(pb.actions||'[]');}catch{return [];}})();
+    const mitre = (pb.mitre_techniques||[]).join(', ');
+    return `<div style="padding:10px 12px;background:var(--bg2);border:1px solid var(--b1);border-radius:4px;display:grid;grid-template-columns:1fr auto;gap:8px;align-items:start">
+      <div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+          <div style="font-family:var(--fw);font-size:12px;font-weight:700;color:var(--txt)">${esc(pb.name)}</div>
+          ${pb.require_consensus?`<span style="font-size:8px;padding:1px 5px;background:rgba(213,0,249,.15);color:var(--p);border:1px solid rgba(213,0,249,.3);border-radius:2px;font-family:var(--fm)">CONSENSUS</span>`:''}
+        </div>
+        <div style="font-size:10px;color:var(--txt3);font-family:var(--fm);margin-bottom:5px">${esc(pb.description||'')}</div>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <span style="font-size:9px;font-family:var(--fm);color:var(--txt3)">Min Level: <span style="color:var(--c)">${pb.min_rule_level}</span></span>
+          <span style="font-size:9px;font-family:var(--fm);color:var(--txt3)">Max FP: <span style="color:var(--y)">${pb.fp_confidence_max}%</span></span>
+          ${mitre?`<span style="font-size:9px;font-family:var(--fm);color:var(--txt3)">MITRE: <span style="color:#8ab0d0">${esc(mitre.slice(0,40))}</span></span>`:''}
+          <div style="display:flex;gap:4px">${acts.map(a=>`<span style="font-size:8px;padding:1px 5px;border-radius:2px;border:1px solid var(--b2);color:${actionColors[a.type]||'var(--txt3)'};font-family:var(--fm)">${esc(a.type)}</span>`).join('')}</div>
+        </div>
+      </div>
+      <label style="display:flex;align-items:center;gap:5px;cursor:pointer;flex-shrink:0">
+        <input type="checkbox" ${pb.enabled?'checked':''} onchange="togglePlaybook(${pb.id},this.checked)" style="width:15px;height:15px;accent-color:var(--c);cursor:pointer">
+        <span style="font-size:9px;font-family:var(--fm);color:var(--txt3)">${pb.enabled?'ON':'OFF'}</span>
+      </label>
+    </div>`;}).join('')}
+  </div>`;
+}
+
+async function togglePlaybook(id, enabled){
+  const res = await fetch('/api/playbooks/'+id, {
+    method: 'PATCH',
+    headers: {'Content-Type':'application/json','Authorization':'Bearer '+_tok},
+    body: JSON.stringify({enabled})
+  });
+  if(res.ok){ toast(`Playbook ${enabled?'enabled':'disabled'}`,'ok'); }
+  else { toast('Failed to update playbook','err'); await loadPlaybooks(); }
+}
+
+async function loadPlaybookExecutions(){
+  const d = await G('/api/playbook-executions?limit=10');
+  const listEl = document.getElementById('pb-exec-list');
+  const wrapEl = document.getElementById('pb-exec-history');
+  if(!d?.executions||!listEl||!wrapEl) return;
+  if(!d.executions.length){ wrapEl.style.display='none'; return; }
+  wrapEl.style.display='block';
+  listEl.innerHTML=`<div style="display:flex;flex-direction:column;gap:4px">${
+    d.executions.slice(0,8).map(e=>{
+      const acts=(e.actions_taken||[]).join(', ')||'none';
+      const col=e.outcome==='executed'?'var(--g)':e.outcome==='skipped'?'var(--y)':'var(--r)';
+      return `<div style="padding:6px 8px;background:var(--bg0);border:1px solid var(--b1);border-radius:3px;font-family:var(--fm);font-size:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span style="color:${col}">${esc(e.outcome?.toUpperCase()||'?')}</span>
+        <span style="color:var(--txt3)">${esc(e.playbook_name||'?')}</span>
+        <span style="color:var(--c)">${esc(e.rule_id||'—')} (${esc(e.severity||'?')})</span>
+        <span style="color:#8ab0d0">${esc(e.agent||'—')}</span>
+        <span style="color:var(--txt2)">Actions: ${esc(acts)}</span>
+        <span style="color:var(--txt3);margin-left:auto">${fmtDate(e.created_at)}</span>
+      </div>`;
+    }).join('')
+  }</div>`;
+}
+
+// ─── PROTECTED ASSETS ─────────────────────────────────────────
+async function loadProtectedAssets(){
+  const rows = await G('/api/protected-assets').catch(()=>[]);
+  const el = document.getElementById('protected-assets-list');
+  if(!el) return;
+  if(!rows||!rows.length){
+    el.innerHTML=`<div style="font-size:11px;color:var(--txt3);font-family:var(--fm);padding:8px 0">No protected hosts configured. Add production systems that should never be auto-isolated.</div>`;
+    return;
+  }
+  const tierBadge = t => {
+    if(t==='critical') return `<span style="font-size:8px;font-family:var(--fm);padding:2px 7px;background:var(--rdim);color:var(--r);border:1px solid rgba(255,23,68,.3);border-radius:2px;letter-spacing:1px">CRITICAL</span>`;
+    if(t==='protected') return `<span style="font-size:8px;font-family:var(--fm);padding:2px 7px;background:rgba(255,193,7,.1);color:var(--y);border:1px solid rgba(255,193,7,.25);border-radius:2px;letter-spacing:1px">PROTECTED</span>`;
+    return `<span style="font-size:8px;font-family:var(--fm);padding:2px 7px;background:var(--gdim);color:var(--g);border:1px solid rgba(0,230,118,.2);border-radius:2px;letter-spacing:1px">STANDARD</span>`;
+  };
+  el.innerHTML = `<table class="tbl"><thead><tr><th>HOST IDENTIFIER</th><th>LABEL</th><th>TIER</th><th>NOTE</th><th>ACTION</th></tr></thead><tbody>
+    ${rows.map(r=>`<tr>
+      <td style="font-family:var(--fm);color:var(--c)">${esc(r.identifier)}</td>
+      <td>${esc(r.label||'—')}</td>
+      <td>${tierBadge(r.tier)}</td>
+      <td style="font-size:10px;color:var(--txt3);max-width:200px">${esc(r.note||'')}</td>
+      <td><button class="btn btn-h btn-sm" onclick="removeProtectedAsset(${r.id})">Remove</button></td>
+    </tr>`).join('')}
+  </tbody></table>`;
+}
+
+function openAddProtectedAsset(){
+  document.getElementById('pa-identifier').value='';
+  document.getElementById('pa-label').value='';
+  document.getElementById('pa-tier').value='protected';
+  document.getElementById('pa-note').value='';
+  document.getElementById('modal-protect-asset').classList.add('show');
+}
+
+async function saveProtectedAsset(){
+  const identifier = document.getElementById('pa-identifier').value.trim();
+  if(!identifier){toast('Host identifier is required','warn');return;}
+  const body={
+    identifier,
+    label:  document.getElementById('pa-label').value.trim(),
+    tier:   document.getElementById('pa-tier').value,
+    note:   document.getElementById('pa-note').value.trim(),
+  };
+  const r = await P('/api/protected-assets', body).catch(e=>{toast(e.message||'Error','err');return null;});
+  if(r){ toast(`${identifier} added as ${body.tier.toUpperCase()}`, 'ok'); closeModal('modal-protect-asset'); loadProtectedAssets(); }
+}
+
+async function removeProtectedAsset(id){
+  if(!confirm('Remove this host from the protected list?')) return;
+  await fetch(`/api/protected-assets/${id}`,{method:'DELETE',headers:{Authorization:`Bearer ${_tok}`}});
+  toast('Removed','ok'); loadProtectedAssets();
+}
+
+// ─── ISOLATION APPROVALS ───────────────────────────────────────
+let _pendingApprovalId = null;
+
+async function loadIsolationApprovals(){
+  const rows = await G('/api/isolation-approvals').catch(()=>[]);
+  const el = document.getElementById('isolation-approvals-list');
+  if(!el) return;
+  if(!rows||!rows.length){
+    el.innerHTML=`<div style="font-size:11px;color:var(--txt3);font-family:var(--fm)">No pending approvals.</div>`;
+    return;
+  }
+  const statusBadge = s => {
+    const map = {pending:'var(--y)',approved:'var(--g)',rejected:'var(--r)',expired:'var(--txt3)',executed:'var(--g)'};
+    return `<span style="font-size:8px;font-family:var(--fm);padding:2px 6px;background:rgba(128,128,128,.1);color:${map[s]||'var(--txt2)'};border:1px solid rgba(128,128,128,.2);border-radius:2px;letter-spacing:1px">${s.toUpperCase()}</span>`;
+  };
+  const timeLeft = exp => {
+    const ms = new Date(exp) - Date.now();
+    if(ms <= 0) return `<span style="color:var(--r);font-size:10px">EXPIRED</span>`;
+    const min = Math.ceil(ms/60000);
+    return `<span style="color:var(--y);font-size:10px">${min}m remaining</span>`;
+  };
+  el.innerHTML = rows.map(r=>`
+    <div style="display:flex;align-items:center;gap:10px;padding:10px;background:var(--bg2);border:1px solid var(--b1);border-radius:4px;margin-bottom:6px;flex-wrap:wrap">
+      <div style="flex:1;min-width:180px">
+        <div style="font-family:var(--fw);font-size:13px;color:var(--y)">${esc(r.agent)}</div>
+        <div style="font-size:10px;color:var(--txt3);font-family:var(--fm)">Playbook: ${esc(r.playbook_name||'—')} | Src IP: ${esc(r.src_ip||'—')}</div>
+        <div style="font-size:10px;color:var(--txt3);font-family:var(--fm)">Requested: ${new Date(r.created_at).toLocaleString()}</div>
+        ${r.status==='pending'?`<div style="margin-top:3px">${timeLeft(r.expires_at)}</div>`:''}
+        ${r.resolved_by?`<div style="font-size:10px;color:var(--txt2);font-family:var(--fm)">${r.status==='executed'?'Isolated':'Resolved'} by: ${esc(r.resolved_by)}</div>`:''}
+        ${r.resolve_note?`<div style="font-size:10px;color:var(--txt3);font-family:var(--fm)">Note: ${esc(r.resolve_note)}</div>`:''}
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
+        ${statusBadge(r.status)}
+        ${r.status==='pending'?`<div style="display:flex;gap:6px">
+          <button class="btn btn-sm" style="background:rgba(0,230,118,.15);color:var(--g);border:1px solid rgba(0,230,118,.3)" onclick="openIsolationApproval(${r.id},'${esc(r.agent)}','${esc(r.playbook_name||'')}','${esc(r.src_ip||'')}')">Approve</button>
+          <button class="btn btn-sm" style="background:rgba(255,23,68,.1);color:var(--r);border:1px solid rgba(255,23,68,.25)" onclick="rejectIsolation(${r.id},'${esc(r.agent)}')">Reject</button>
+        </div>`:''}
+      </div>
+    </div>
+  `).join('');
+}
+
+function openIsolationApproval(id, agent, playbookName, srcIp){
+  _pendingApprovalId = id;
+  document.getElementById('approval-note').value='';
+  document.getElementById('approval-detail-body').innerHTML=`
+    <div style="padding:12px;background:rgba(255,193,7,.05);border:1px solid rgba(255,193,7,.2);border-radius:4px;margin-bottom:4px">
+      <div style="font-size:13px;font-weight:700;color:var(--y);margin-bottom:6px">⚠ Isolating ${esc(agent)} will disconnect it from the network.</div>
+      <div style="font-size:11px;font-family:var(--fm);color:var(--txt2)">Playbook: <b>${esc(playbookName)}</b><br>Attacker IP: <b>${esc(srcIp||'unknown')}</b><br>Make sure you understand the business impact before approving.</div>
+    </div>`;
+  document.getElementById('modal-approve-isolation').classList.add('show');
+}
+
+async function submitIsolationDecision(decision){
+  if(!_pendingApprovalId){ closeModal('modal-approve-isolation'); return; }
+  const note = document.getElementById('approval-note').value.trim();
+  const url  = `/api/isolation-approvals/${_pendingApprovalId}/${decision}`;
+  const r    = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json', Authorization:`Bearer ${_tok}`}, body:JSON.stringify({note})});
+  const data = await r.json().catch(()=>({}));
+  closeModal('modal-approve-isolation');
+  if(r.ok){
+    toast(decision==='approve'?'Host isolation executed successfully':'Isolation rejected — host remains online', decision==='approve'?'ok':'warn');
+  } else {
+    toast(data.error||'Action failed','err');
+  }
+  _pendingApprovalId=null;
+  loadIsolationApprovals();
+}
+
+async function rejectIsolation(id, agent){
+  if(!confirm(`Reject isolation of "${agent}"? The host will NOT be isolated.`)) return;
+  const r = await fetch(`/api/isolation-approvals/${id}/reject`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${_tok}`},body:JSON.stringify({note:'Manually rejected'})});
+  toast(r.ok?'Isolation rejected':'Error rejecting', r.ok?'warn':'err');
+  loadIsolationApprovals();
+}
+
 async function testConn(){
   document.getElementById('conn-res').innerHTML=spin('Testing...');
   const d=await G('/api/status');if(!d){document.getElementById('conn-res').innerHTML=errBnr('Backend unreachable');return;}
@@ -3647,6 +4085,17 @@ async function syncAgents(){
   if(btn)btn.disabled=false;
   if(d?.error){toast(d.error,'error');return;}
   toast(`Synced ${d.agents_synced} Wazuh agents`);
+  loadAssets();
+}
+
+async function resolveHostnames(){
+  const btn=event?.target;
+  if(btn){btn.disabled=true;btn.textContent='Resolving...';}
+  const d=await P('/api/assets/resolve-hostnames',{}).catch(e=>({error:e.message}));
+  if(btn){btn.disabled=false;btn.textContent='🔍 Resolve Hostnames';}
+  if(d?.error){toast(d.error,'err');return;}
+  const total=(d.wazuh_filled||0)+(d.rdns_filled||0);
+  toast(total>0?`Filled ${total} hostname(s) — Wazuh: ${d.wazuh_filled}, rDNS: ${d.rdns_filled}`:'No new hostnames found (all already resolved)','ok');
   loadAssets();
 }
 

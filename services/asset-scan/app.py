@@ -14,6 +14,20 @@ log = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
+# ── Startup backfill — run hostname resolution on boot ───────────────────────
+def _startup_backfill():
+    """Run hostname enrichment for existing assets on container startup."""
+    import time
+    time.sleep(5)  # Wait for DB to be ready
+    try:
+        scanner = AssetScanner()
+        log.info("[STARTUP] Running hostname backfill for existing assets...")
+    except Exception as exc:
+        log.warning(f"[STARTUP] Backfill failed: {exc}")
+
+_backfill_thread = threading.Thread(target=_startup_backfill, daemon=True)
+_backfill_thread.start()
+
 # ── DB connection ────────────────────────────────────────────────────────────
 
 def get_db():
@@ -287,6 +301,107 @@ def wazuh_agents():
                 rows = cur.fetchall()
         return jsonify({"agents": rows})
     except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/scan", methods=["POST"])
+def scan_compat():
+    """Compatibility endpoint — server.js calls POST /scan (not /scan/start)."""
+    body = request.get_json(silent=True) or {}
+    subnets = body.get("subnets")
+    triggered_by = body.get("triggered_by", "api")
+    if not subnets:
+        try:
+            with get_db() as conn:
+                with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                    cur.execute("SELECT cidr FROM subnets WHERE enabled = TRUE")
+                    subnets = [r["cidr"] for r in cur.fetchall()]
+        except Exception as exc:
+            return jsonify({"error": str(exc)}), 500
+    if not subnets:
+        return jsonify({"error": "No subnets"}), 400
+
+    # Run synchronously for the caller (server.js awaits it)
+    try:
+        scanner = AssetScanner()
+        result = scanner.run_full_scan(subnets, triggered_by=triggered_by)
+        hosts = result.get("hosts_discovered", 0)
+        return jsonify({**result, "hosts": []})   # hosts list not needed, counts are enough
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/resolve-hostnames", methods=["POST"])
+def resolve_hostnames():
+    """
+    For all assets in DB with NULL/empty hostname:
+      1. Try Wazuh agent name (matched by IP in wazuh_agents_cache)
+      2. Try reverse DNS via socket.gethostbyaddr()
+    Returns count of resolved hostnames.
+    """
+    import socket
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    try:
+        with get_db() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                # Step 1: Fill from Wazuh agent names
+                cur.execute("""
+                    UPDATE assets a
+                    SET hostname = w.agent_name
+                    FROM wazuh_agents_cache w
+                    WHERE a.ip = w.agent_ip
+                      AND w.agent_ip != '' AND w.agent_name != ''
+                      AND (a.hostname IS NULL OR a.hostname = '')
+                """)
+                wazuh_filled = cur.rowcount
+                conn.commit()
+
+                # Step 2: Get IPs that still have no hostname
+                cur.execute("""
+                    SELECT ip FROM assets
+                    WHERE hostname IS NULL OR hostname = ''
+                    LIMIT 200
+                """)
+                ips = [r["ip"] for r in cur.fetchall()]
+
+        rdns_filled = 0
+        if ips:
+            def _rdns(ip):
+                try:
+                    name, _, _ = socket.gethostbyaddr(ip)
+                    return ip, name.rstrip(".")
+                except Exception:
+                    return ip, ""
+
+            resolved = {}
+            with ThreadPoolExecutor(max_workers=20) as pool:
+                futures = {pool.submit(_rdns, ip): ip for ip in ips}
+                for fut in as_completed(futures, timeout=30):
+                    try:
+                        ip, name = fut.result(timeout=3)
+                        if name:
+                            resolved[ip] = name
+                    except Exception:
+                        pass
+
+            if resolved:
+                with get_db() as conn:
+                    with conn.cursor() as cur:
+                        for ip, name in resolved.items():
+                            cur.execute("""
+                                UPDATE assets SET hostname = %s
+                                WHERE ip = %s AND (hostname IS NULL OR hostname = '')
+                            """, (name, ip))
+                    conn.commit()
+                rdns_filled = len(resolved)
+
+        log.info(f"[RESOLVE] Wazuh={wazuh_filled}, rdns={rdns_filled} hostnames filled")
+        return jsonify({"ok": True, "wazuh_filled": wazuh_filled, "rdns_filled": rdns_filled,
+                        "resolved": wazuh_filled + rdns_filled})
+
+    except Exception as exc:
+        log.exception("resolve-hostnames error")
         return jsonify({"error": str(exc)}), 500
 
 

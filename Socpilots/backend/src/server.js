@@ -8,8 +8,9 @@ const https   = require('https');
 const crypto  = require('crypto');
 const path    = require('path');
 require('dotenv').config({ path: path.join(__dirname, '../../.env') });
-const db    = require('./db');
-const ueba  = require('./neo4j');
+const db       = require('./db');
+const ueba     = require('./neo4j');
+const playbook = require('./playbook-engine');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -28,6 +29,7 @@ const SCANNER_URL       = process.env.SCANNER_URL      || 'http://scanner:7777';
 const LANGCHAIN_URL     = process.env.LANGCHAIN_URL    || 'http://langchain-agent:8001';
 const RAG_URL           = process.env.RAG_URL          || 'http://rag-retrieval:5005';
 const LANGCHAIN_TOKEN   = process.env.LANGCHAIN_INTERNAL_TOKEN || '';
+const MCP_WAZUH_URL     = process.env.MCP_WAZUH_URL    || 'http://mcp-wazuh:3001';
 
 // Skip SSL verify (Wazuh self-signed cert)
 const httpsAgent = new https.Agent({ rejectUnauthorized: false });
@@ -50,6 +52,12 @@ function authMW(req, res, next) {
   const s = sessions.get(t);
   if (!s || s.exp < Date.now()) { sessions.delete(t); return res.status(401).json({ error: 'Unauthorized' }); }
   req.user = s; next();
+}
+
+// Restrict to admin role (used for protected-asset management)
+function adminOnly(req, res, next) {
+  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Admin role required' });
+  next();
 }
 
 // ─── OPENSEARCH HELPER ─────────────────────────────────────
@@ -983,6 +991,91 @@ app.post('/api/settings', authMW, async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════
+// ─── DARK SOC — PLAYBOOK API ROUTES ────────────────────────────
+// ═══════════════════════════════════════════════════════════════
+
+// List all playbooks
+app.get('/api/playbooks', authMW, async (req, res) => {
+  try {
+    const pbs = await db.listPlaybooks({});
+    res.json({ playbooks: pbs, total: pbs.length });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Create new playbook (admin only)
+app.post('/api/playbooks', authMW, async (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'admin only' });
+  try {
+    const pb = await db.createPlaybook(req.body);
+    res.json({ playbook: pb });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Update playbook (admin only)
+app.patch('/api/playbooks/:id', authMW, async (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'admin only' });
+  try {
+    const pb = await db.updatePlaybook(parseInt(req.params.id), req.body);
+    if (!pb) return res.status(404).json({ error: 'not found' });
+    res.json({ playbook: pb });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Delete playbook (admin only)
+app.delete('/api/playbooks/:id', authMW, async (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'admin only' });
+  try {
+    await db.deletePlaybook(parseInt(req.params.id));
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// List playbook executions
+app.get('/api/playbook-executions', authMW, async (req, res) => {
+  try {
+    const limit  = Math.min(parseInt(req.query.limit) || 100, 500);
+    const offset = parseInt(req.query.offset) || 0;
+    const [execs, stats] = await Promise.all([
+      db.listPlaybookExecutions({ limit, offset }),
+      db.getPlaybookExecStats(),
+    ]);
+    res.json({ executions: execs, stats, total: execs.length });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Manual playbook trigger (run against a specific alert key)
+app.post('/api/playbooks/:id/run', authMW, async (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'admin only' });
+  try {
+    const pb = await db.getPlaybookById(parseInt(req.params.id));
+    if (!pb) return res.status(404).json({ error: 'playbook not found' });
+    const { alert, investigationText, fpProbability } = req.body;
+    if (!alert) return res.status(400).json({ error: 'alert required' });
+    const result = await playbook.runPlaybook(pb, alert, investigationText || '', fpProbability || 0);
+    res.json({ result });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Dark SOC status
+app.get('/api/darksoc/status', authMW, async (req, res) => {
+  try {
+    const [settings, execStats, pbCount] = await Promise.all([
+      db.getAllSettings(),
+      db.getPlaybookExecStats(),
+      db.listPlaybooks({ enabledOnly: true }).then(r => r.length),
+    ]);
+    res.json({
+      darksoc_enabled:                settings.darksoc_enabled === 'true',
+      hunt_enabled:                   settings.darksoc_hunt_enabled === 'true',
+      lateral_monitor_enabled:        settings.darksoc_lateral_monitor_enabled === 'true',
+      auto_triage_enabled:            settings.auto_triage_enabled === 'true',
+      active_playbooks:               pbCount,
+      execution_stats:                execStats,
+    });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── AUTO-TRIAGE WORKER ──
 let _lastAutoTriageRun = 0;
 let _autoTriageRunning = false;
@@ -1043,7 +1136,9 @@ async function autoTriageWorker() {
       console.log(`[AutoTriage] Investigating ${alert.ruleId} (${alert.severity})`);
 
       try {
-        const start = Date.now();
+        const start   = Date.now();
+        const darkSoc = await db.getSetting('darksoc_enabled');
+
         const prompt = `Auto-investigate this alert. Provide concise analysis with executive summary, MITRE mapping, risk assessment, and recommended actions.
 
 Alert:
@@ -1056,6 +1151,7 @@ Alert:
 
 Use markdown tables. Be concise.`;
 
+        // ── Step 1: Deep investigation via n8n ──────────────────
         const r = await axios.post(N8N_INV, {
           action: 'investigate',
           message: prompt,
@@ -1066,8 +1162,12 @@ Use markdown tables. Be concise.`;
         }, { timeout: 180000, validateStatus: () => true });
 
         const text = r.data?.response || r.data?.output || r.data?.text || '';
-        if (text) {
-          await db.saveInvestigation({
+        if (!text) continue;
+
+        // ── Step 2: Save investigation ──────────────────────────
+        let savedId = null;
+        try {
+          const saved = await db.saveInvestigation({
             alertId:      alert.id,
             ruleId:       alert.ruleId,
             level:        alert.level,
@@ -1083,7 +1183,54 @@ Use markdown tables. Be concise.`;
             durationMs:   Date.now() - start,
             rawAlert:     alert,
           });
+          savedId = saved.id;
           triaged++;
+        } catch(e) { console.warn('[AutoTriage] DB save failed:', e.message); }
+
+        // ── Step 3: Dark SOC — Triage + Playbook execution ──────
+        if (darkSoc !== 'true') continue;
+
+        let fpProbability = 0;
+        let triageResult  = null;
+        try {
+          const triageResp = await axios.post(`${LANGCHAIN_URL}/triage`,
+            { alert, model: 'mistral' },
+            { timeout: 45000, headers: { Authorization: `Bearer ${LANGCHAIN_TOKEN}` }, validateStatus: () => true }
+          );
+          if (triageResp.status < 400 && triageResp.data) {
+            triageResult   = triageResp.data;
+            fpProbability  = triageResult.false_positive_probability || 0;
+            console.log(`[DarkSOC] Triage for ${alert.ruleId}: FP=${fpProbability}%, action=${triageResult.recommended_action}`);
+          }
+        } catch(e) { console.warn('[DarkSOC] Triage call failed:', e.message); }
+
+        // Match and run playbooks
+        const matchedPlaybooks = await db.getMatchingPlaybooks(alert.level, alert.mitre || []);
+        for (const pb of matchedPlaybooks) {
+          console.log(`[DarkSOC] Running playbook "${pb.name}" for alert ${alert.ruleId}`);
+          try {
+            const execResult = await playbook.runPlaybook(pb, alert, text, fpProbability);
+            const outcome    = execResult.skipped ? 'skipped' : 'executed';
+
+            await db.savePlaybookExecution({
+              playbookId:        pb.id,
+              playbookName:      pb.name,
+              investigationId:   savedId,
+              alertKey:          `${alert.ruleId}_${alert.timestamp}_${alert.agent}_${alert.srcIp||''}`,
+              agent:             alert.agent,
+              srcIp:             alert.srcIp,
+              ruleId:            alert.ruleId,
+              severity:          alert.severity,
+              fpProbability,
+              consensusApproved: execResult.consensusApproved,
+              actionsTaken:      execResult.actionsTaken || [],
+              results:           execResult.results      || [],
+              outcome,
+              error:             execResult.error || null,
+            });
+          } catch(e) {
+            console.error(`[DarkSOC] Playbook "${pb.name}" execution error:`, e.message);
+          }
         }
       } catch(e) {
         console.warn(`[AutoTriage] Failed ${alert.ruleId}: ${e.message}`);
@@ -1197,6 +1344,271 @@ async function uebaIngestWorker() {
 
 setInterval(() => { uebaIngestWorker(); }, 120_000);
 setTimeout(() => { uebaIngestWorker(); }, 15_000); // first run 15s after boot
+
+// ═══════════════════════════════════════════════════════════════
+// ─── DARK SOC — AUTONOMOUS HUNT SCHEDULER (every 6 hours) ──────
+// Pulls top IOCs from recent alerts, generates hunt queries via
+// LangChain, executes against OpenSearch, creates cases on hits.
+// ═══════════════════════════════════════════════════════════════
+let _huntRunning = false;
+
+async function huntScheduler() {
+  if (_huntRunning) return;
+  const enabled = await db.getSetting('darksoc_hunt_enabled').catch(() => 'false');
+  if (enabled !== 'true') return;
+
+  _huntRunning = true;
+  console.log('[DarkSOC Hunt] Scheduled hunt started');
+
+  try {
+    // Step 1 — Find top source IPs from high/critical alerts (last 24h)
+    const agg = await osSearch({
+      size: 0,
+      query: { bool: { filter: [
+        { range: { '@timestamp': { gte: 'now-24h' } } },
+        { range: { 'rule.level': { gte: 8 } } },
+      ]}},
+      aggs: { top_ips: { terms: { field: 'data.srcip', size: 10, min_doc_count: 3 } } },
+    }).catch(() => null);
+
+    const topIPs = (agg?.aggregations?.top_ips?.buckets || [])
+      .filter(b => b.key && b.key !== '')
+      .map(b => b.key);
+
+    if (!topIPs.length) {
+      console.log('[DarkSOC Hunt] No significant source IPs — skipping');
+      _huntRunning = false;
+      return;
+    }
+
+    // Step 2 — Generate hunt queries for each IP
+    for (const ip of topIPs.slice(0, 3)) {
+      try {
+        const huntResp = await axios.post(`${LANGCHAIN_URL}/hunt-queries`,
+          { type: 'ip', value: ip, context: 'Automated 6h threat hunt' },
+          { timeout: 60_000, headers: { Authorization: `Bearer ${LANGCHAIN_TOKEN}` }, validateStatus: () => true }
+        );
+        const queries = huntResp.data?.queries || [];
+
+        // Step 3 — Execute queries against OpenSearch
+        let totalHits = 0;
+        for (const q of queries.slice(0, 3)) {
+          try {
+            const qBody = typeof q === 'string'
+              ? { size: 0, query: { multi_match: { query: q, fields: ['data.srcip','full_log','agent.name'] } } }
+              : q;
+            const r = await osSearch(qBody, IDX, 0);
+            totalHits += r.hits?.total?.value || 0;
+          } catch { /* skip bad query */ }
+        }
+
+        // Step 4 — Create TheHive case if significant hits found
+        if (totalHits >= 5) {
+          console.log(`[DarkSOC Hunt] IP ${ip} hit ${totalHits} alerts — creating case`);
+          await playbook.createHiveCase(
+            { ruleId: 'HUNT', agent: 'auto-hunt', srcIp: ip, description: `Threat hunt hit: ${ip}`, mitre: [] },
+            'high',
+            `[DarkSOC Hunt] Suspicious IP ${ip} — ${totalHits} alert hits in 24h`
+          ).catch(e => console.warn('[DarkSOC Hunt] Case creation failed:', e.message));
+        }
+      } catch(e) {
+        console.warn(`[DarkSOC Hunt] Hunt for ${ip} failed:`, e.message);
+      }
+    }
+  } catch(e) {
+    console.error('[DarkSOC Hunt] Error:', e.message);
+  } finally {
+    _huntRunning = false;
+    console.log('[DarkSOC Hunt] Done');
+  }
+}
+
+setInterval(() => { huntScheduler(); }, 6 * 3600_000);   // every 6 hours
+setTimeout (() => { huntScheduler(); }, 5 * 60_000);      // first run 5min after boot
+
+// ═══════════════════════════════════════════════════════════════
+// ─── DARK SOC — LATERAL MOVEMENT MONITOR (every 30 minutes) ────
+// Checks UEBA graph for new lateral movement chains, auto-creates
+// a TheHive case + triggers investigation for each new chain.
+// ═══════════════════════════════════════════════════════════════
+let _lateralRunning  = false;
+const _lateralSeen   = new Set(); // in-memory dedup (resets on restart)
+
+async function lateralMovementMonitor() {
+  if (_lateralRunning) return;
+  const enabled = await db.getSetting('darksoc_lateral_monitor_enabled').catch(() => 'false');
+  if (enabled !== 'true') return;
+
+  _lateralRunning = true;
+  try {
+    const chains = await ueba.detectLateralMovement(1); // last 1 hour
+    const highRisk = chains.filter(c => c.deviation >= 70 || c.hops >= 3);
+
+    for (const chain of highRisk) {
+      const key = `${chain.user}|${(chain.dst_hosts||[]).sort().join(',')}`;
+      if (_lateralSeen.has(key)) continue;
+      _lateralSeen.add(key);
+
+      console.log(`[DarkSOC Lateral] Detected: ${chain.user} → ${(chain.dst_hosts||[]).join(' → ')} (deviation=${chain.deviation})`);
+
+      // Create synthetic alert
+      const synAlert = {
+        ruleId:      'UEBA-LM',
+        level:       14,
+        severity:    'critical',
+        agent:       chain.src_hosts?.[0] || chain.user,
+        srcIp:       '',
+        description: `Lateral movement: ${chain.user} accessed ${chain.hops} hosts in 1h`,
+        mitre:       ['T1021','T1078','T1550'],
+        timestamp:   new Date().toISOString(),
+      };
+
+      // Create TheHive case
+      await playbook.createHiveCase(synAlert, 'critical',
+        `[DarkSOC] Lateral Movement — ${chain.user} (${chain.hops} hops, deviation ${chain.deviation})`
+      ).catch(e => console.warn('[DarkSOC Lateral] Case error:', e.message));
+
+      // Trigger n8n investigation
+      axios.post(N8N_INV, {
+        action: 'investigate',
+        message: `Investigate lateral movement: user "${chain.user}" accessed hosts ${(chain.dst_hosts||[]).join(', ')} within 1 hour. Deviation score: ${chain.deviation}. MITRE: T1021, T1078. Determine if this is insider threat or compromised account.`,
+        alert: synAlert,
+        session_id: `lateral_${Date.now()}`,
+        _user: 'dark-soc',
+        _role: 'system',
+      }, { timeout: 180000, validateStatus: () => true }).catch(() => {});
+    }
+  } catch(e) {
+    if (!e.message?.includes('ECONNREFUSED')) {
+      console.warn('[DarkSOC Lateral] Error:', e.message);
+    }
+  } finally {
+    _lateralRunning = false;
+  }
+}
+
+setInterval(() => { lateralMovementMonitor(); }, 30 * 60_000);  // every 30 min
+setTimeout (() => { lateralMovementMonitor(); }, 3 * 60_000);   // first run 3min after boot
+
+// ═══════════════════════════════════════════════════════════════
+// ─── DARK SOC — APPROVAL EXPIRY WORKER (every 2 minutes) ───────
+// Scans isolation_approvals for any that have passed their expiry
+// time and auto-rejects them (marks as expired, no isolation fired).
+// ═══════════════════════════════════════════════════════════════
+setInterval(() => { playbook.expireStaleApprovals(); }, 2 * 60_000);
+
+// ═══════════════════════════════════════════════════════════════
+// ─── PROTECTED ASSETS API ───────────────────────────────────────
+// Manage the list of hosts that require special handling before
+// auto-isolation. Tier: critical | protected | standard
+// ═══════════════════════════════════════════════════════════════
+
+// GET /api/protected-assets — list all protected hosts
+app.get('/api/protected-assets', authMW, async (req, res) => {
+  try {
+    const rows = await db.listProtectedAssets();
+    res.json(rows);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /api/protected-assets — add a host to the protected list
+app.post('/api/protected-assets', authMW, adminOnly, async (req, res) => {
+  const { identifier, label, tier, note } = req.body || {};
+  if (!identifier) return res.status(400).json({ error: 'identifier required (hostname, agent name, or IP)' });
+  try {
+    const row = await db.addProtectedAsset({ identifier, label, tier, note });
+    res.json(row);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// PATCH /api/protected-assets/:id — update tier / label / note
+app.patch('/api/protected-assets/:id', authMW, adminOnly, async (req, res) => {
+  const { label, tier, note } = req.body || {};
+  try {
+    const row = await db.updateProtectedAsset(req.params.id, { label, tier, note });
+    if (!row) return res.status(404).json({ error: 'not found' });
+    res.json(row);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// DELETE /api/protected-assets/:id — remove a host from the protected list
+app.delete('/api/protected-assets/:id', authMW, adminOnly, async (req, res) => {
+  try {
+    await db.deleteProtectedAsset(req.params.id);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// ─── ISOLATION APPROVALS API ────────────────────────────────────
+// Analysts use these routes to review pending isolation requests
+// and approve or reject them. Approved → immediate Wazuh isolate.
+// ═══════════════════════════════════════════════════════════════
+
+// GET /api/isolation-approvals — list pending (and recently resolved) approvals
+app.get('/api/isolation-approvals', authMW, async (req, res) => {
+  try {
+    const status = req.query.status || null;
+    const rows = await db.listIsolationApprovals({ status });
+    res.json(rows);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /api/isolation-approvals/:id/approve
+// Analyst approves → system immediately executes Wazuh isolate_host
+app.post('/api/isolation-approvals/:id/approve', authMW, async (req, res) => {
+  const { id } = req.params;
+  const analyst = req.user?.username || 'analyst';
+  const note = req.body?.note || '';
+  try {
+    const appr = await db.getIsolationApproval(id);
+    if (!appr) return res.status(404).json({ error: 'Approval record not found' });
+    if (appr.status !== 'pending') return res.status(409).json({ error: `Approval already ${appr.status}` });
+    if (new Date(appr.expires_at) < new Date()) {
+      await db.resolveIsolationApproval(id, { status: 'expired', resolvedBy: analyst, resolveNote: 'Expired before approval was processed.' });
+      return res.status(410).json({ error: 'Approval window has expired — isolation cannot proceed' });
+    }
+
+    // Mark as approved first (so UI shows status immediately)
+    await db.resolveIsolationApproval(id, { status: 'approved', resolvedBy: analyst, resolveNote: note });
+
+    // Execute the actual isolation
+    const isolResult = await playbook.executeIsolationNow({ ...appr, resolved_by: analyst });
+
+    // Update to executed (or back to approved if it failed)
+    const finalStatus = isolResult.success ? 'executed' : 'approved';
+    if (finalStatus === 'executed') {
+      await db.resolveIsolationApproval(id, {
+        status: 'executed', resolvedBy: analyst,
+        resolveNote: `${note} | Isolation result: ${isolResult.detail}`,
+      });
+    }
+
+    res.json({
+      ok: isolResult.success,
+      approval_id: id,
+      agent: appr.agent,
+      isolation: isolResult,
+      resolved_by: analyst,
+    });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /api/isolation-approvals/:id/reject
+// Analyst rejects — no isolation is performed
+app.post('/api/isolation-approvals/:id/reject', authMW, async (req, res) => {
+  const { id } = req.params;
+  const analyst = req.user?.username || 'analyst';
+  const note = req.body?.note || 'Manually rejected by analyst';
+  try {
+    const appr = await db.getIsolationApproval(id);
+    if (!appr) return res.status(404).json({ error: 'Approval record not found' });
+    if (appr.status !== 'pending') return res.status(409).json({ error: `Approval already ${appr.status}` });
+
+    await db.resolveIsolationApproval(id, { status: 'rejected', resolvedBy: analyst, resolveNote: note });
+    res.json({ ok: true, approval_id: id, agent: appr.agent, resolved_by: analyst });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
 
 // ── DETECTION RULES via n8n ──
 app.get('/api/detection-rules', authMW, async (req, res) => {
@@ -1312,7 +1724,31 @@ app.post('/api/assets/sync-agents', authMW, async (req, res) => {
   try {
     const agentMap = await getWazuhAgentMap();
     await db.bulkUpdateWazuhAgents(agentMap);
+    // Also backfill hostnames from agent names for assets that have none
+    await db.backfillHostnamesFromAgents();
     res.json({ ok: true, agents_synced: Object.keys(agentMap).length });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /api/assets/resolve-hostnames
+// Immediately fixes NULL hostnames in DB using:
+//   1. Wazuh agent name (from wazuh_agents_cache matched by IP)
+//   2. Reverse DNS lookup via the asset-scanner service
+app.post('/api/assets/resolve-hostnames', authMW, async (req, res) => {
+  try {
+    // Step 1: Wazuh agent name backfill (fast, no network call)
+    const wazuhFilled = await db.backfillHostnamesFromAgents();
+
+    // Step 2: Ask asset-scanner to run rdns on remaining nulls
+    let rdnsFilled = 0;
+    try {
+      const r = await axios.post(`${SCANNER_URL}/resolve-hostnames`, {}, { timeout: 60_000 });
+      rdnsFilled = r.data?.resolved || 0;
+    } catch (scanErr) {
+      console.warn('[RESOLVE] Scanner rdns call failed:', scanErr.message);
+    }
+
+    res.json({ ok: true, wazuh_filled: wazuhFilled, rdns_filled: rdnsFilled });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -1350,9 +1786,12 @@ app.post('/api/assets/scan', authMW, async (req, res) => {
           const wazuhAgent    = wazuhAgentMap[host.ip] || matchWazuhByHostname(wazuhAgentMap, host.hostname);
           // scanner returns { os, ports } — db expects { os_guess, open_ports }
           const osGuess = host.os_guess || host.os || wazuhAgent?.os_name || null;
+          // Use Wazuh agent name as hostname fallback — agents always register
+          // with their real machine hostname (fills the gap when nmap/rdns fails)
+          const hostname = host.hostname || wazuhAgent?.name || null;
           await db.upsertAsset({
             ip:                 host.ip,
-            hostname:           host.hostname || null,
+            hostname,
             mac:                host.mac      || null,
             vendor:             host.vendor   || null,
             os_guess:           osGuess,
