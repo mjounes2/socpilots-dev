@@ -44,7 +44,11 @@ async function createTransporter() {
     requireTLS: config.use_tls && !config.use_ssl,
     auth: auth,
     logger: true,
-    debug: true
+    debug: true,
+    tls: {
+      // Allow self-signed certificates (for internal mail servers)
+      rejectUnauthorized: false
+    }
   });
 
   // Log the connection attempt
@@ -53,7 +57,8 @@ async function createTransporter() {
     port: config.port,
     secure: config.use_ssl,
     requireTLS: config.use_tls && !config.use_ssl,
-    auth: auth ? 'enabled' : 'disabled'
+    auth: auth ? 'enabled' : 'disabled',
+    allowSelfSigned: true
   });
 
   return transporter;
