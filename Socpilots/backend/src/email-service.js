@@ -43,6 +43,7 @@ async function createTransporter() {
     secure: config.use_ssl,  // true for 465, false for 587
     requireTLS: config.use_tls && !config.use_ssl,
     auth: auth,
+    tls: { rejectUnauthorized: false },
     logger: false,
     debug: false
   });
