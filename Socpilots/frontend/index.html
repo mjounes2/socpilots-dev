@@ -3848,25 +3848,46 @@ async function loadSmtpSettings(){
 
 async function saveSmtpSettings(){
   const el=id=>document.getElementById(id);
+  const host = el('smtp-host').value.trim();
+  const from = el('smtp-from').value.trim();
+  const recipients = el('smtp-recipients').value.split(',').map(e=>e.trim()).filter(e=>e);
+
+  // Validate required fields
+  if(!host){
+    el('smtp-status').innerHTML='<span style="color:var(--r)">✗ SMTP Host is required</span>';
+    toast('SMTP Host required','err');
+    return;
+  }
+  if(!from){
+    el('smtp-status').innerHTML='<span style="color:var(--r)">✗ From Address is required</span>';
+    toast('From Address required','err');
+    return;
+  }
+  if(recipients.length===0){
+    el('smtp-status').innerHTML='<span style="color:var(--r)">✗ At least one recipient email is required</span>';
+    toast('Recipients required','err');
+    return;
+  }
+
   const pass = el('smtp-pass').value;
-  // Don't send password if it's masked (***), only if user typed new one
   const config = {
     enabled: el('smtp-enabled').checked,
-    host: el('smtp-host').value,
+    host: host,
     port: parseInt(el('smtp-port').value)||587,
-    from_address: el('smtp-from').value,
-    user: el('smtp-user').value,
+    from_address: from,
+    user: el('smtp-user').value.trim(),
     password: pass && pass!=='***' ? pass : '',
     use_tls: el('smtp-tls').checked,
     use_ssl: el('smtp-ssl').checked,
-    recipients: el('smtp-recipients').value.split(',').map(e=>e.trim()).filter(e=>e)
+    recipients: recipients
   };
 
+  el('smtp-status').innerHTML='<span style="color:var(--txt3)">Saving...</span>';
   const res = await P('/api/settings/smtp', config);
   if(res?.ok){
-    el('smtp-status').innerHTML='<span style="color:var(--g)">✓ Configuration saved</span>';
+    el('smtp-status').innerHTML='<span style="color:var(--g)">✓ Configuration saved successfully</span>';
     toast('SMTP settings updated','ok');
-    setTimeout(()=>{el('smtp-status').innerHTML='';}, 3000);
+    setTimeout(()=>{el('smtp-status').innerHTML='';}, 4000);
   } else {
     el('smtp-status').innerHTML=`<span style="color:var(--r)">✗ ${res?.error||'Failed to save'}</span>`;
     toast('Failed to save SMTP settings','err');
@@ -3874,16 +3895,45 @@ async function saveSmtpSettings(){
 }
 
 async function testSmtpConnection(){
-  const res = await P('/api/settings/smtp/test', {});
-  const el=document.getElementById('smtp-status');
-  if(res?.ok){
-    el.innerHTML=`<span style="color:var(--g)">✓ Test email sent to ${res.message?.match(/\S+@\S+/)?.[0]||'recipients'}</span>`;
-    toast('Test email sent successfully','ok');
-  } else {
-    el.innerHTML=`<span style="color:var(--r)">✗ ${res?.error||'Failed to send test email'}</span>`;
-    toast('Test email failed','err');
+  const el=id=>document.getElementById(id);
+  const host = el('smtp-host').value.trim();
+  const from = el('smtp-from').value.trim();
+  const recipients = el('smtp-recipients').value.split(',').map(e=>e.trim()).filter(e=>e);
+  const statusEl = el('smtp-status');
+
+  // Validate required fields before testing
+  if(!host){
+    statusEl.innerHTML='<span style="color:var(--r)">✗ SMTP Host is required before testing</span>';
+    toast('Configure SMTP Host first','err');
+    return;
   }
-  setTimeout(()=>{el.innerHTML='';}, 5000);
+  if(!from){
+    statusEl.innerHTML='<span style="color:var(--r)">✗ From Address is required before testing</span>';
+    toast('Configure From Address first','err');
+    return;
+  }
+  if(recipients.length===0){
+    statusEl.innerHTML='<span style="color:var(--r)">✗ At least one recipient email is required before testing</span>';
+    toast('Add recipient emails first','err');
+    return;
+  }
+
+  statusEl.innerHTML='<span style="color:var(--txt3)">Testing SMTP connection...</span>';
+  const res = await P('/api/settings/smtp/test', {});
+
+  if(res?.ok){
+    statusEl.innerHTML=`<span style="color:var(--g)">✓ Test email sent successfully!</span>`;
+    toast(`Test email sent to ${res.message?.match(/\S+@\S+/)?.[0]||'recipients'}`,'ok');
+    setTimeout(()=>{statusEl.innerHTML='';}, 6000);
+  } else if(res?._timeout){
+    statusEl.innerHTML='<span style="color:var(--r)">✗ Connection timeout (160s) - check SMTP server accessibility</span>';
+    toast('SMTP connection timeout','err');
+  } else {
+    const errMsg = res?.error||'Failed to send test email';
+    statusEl.innerHTML=`<span style="color:var(--r)">✗ ${errMsg}</span>`;
+    toast(`SMTP Error: ${errMsg}`,'err');
+    setTimeout(()=>{statusEl.innerHTML='';}, 8000);
+  }
 }
 
 // ── INVESTIGATION TRUE/FALSE POSITIVE STATUS ──────────────

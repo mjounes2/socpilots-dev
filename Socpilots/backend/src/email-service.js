@@ -118,24 +118,41 @@ async function sendToRecipients(subject, htmlBody) {
 async function testSmtpConnection() {
   try {
     const config = await getSmtpConfig();
-    if (!config || !config.host) {
-      return { success: false, error: 'SMTP not configured' };
+
+    // Detailed validation with clear error messages
+    if (!config) {
+      return { success: false, error: 'SMTP settings not found in database. Please save configuration first.' };
+    }
+
+    if (!config.host) {
+      return { success: false, error: 'SMTP Host is not configured. Please enter the SMTP server hostname (e.g., smtp.gmail.com).' };
     }
 
     if (!config.from_address) {
-      return { success: false, error: 'From address not configured' };
+      return { success: false, error: 'From Address is not configured. Please enter the sender email address.' };
     }
 
-    if (!config.recipients.length) {
-      return { success: false, error: 'No recipients configured' };
+    if (!config.recipients || !Array.isArray(config.recipients) || config.recipients.length === 0) {
+      return { success: false, error: 'No recipient emails configured. Please add at least one recipient email address.' };
     }
 
     const transporter = await createTransporter();
     if (!transporter) {
-      return { success: false, error: 'Failed to create SMTP transporter' };
+      return { success: false, error: 'Failed to create SMTP transporter. Check SMTP host, port, TLS/SSL settings, and credentials.' };
     }
 
-    const primaryRecipient = config.recipients[0];
+    // Ensure recipients is an array
+    const recipientsList = Array.isArray(config.recipients)
+      ? config.recipients
+      : (typeof config.recipients === 'string'
+          ? config.recipients.split(',').map(r => r.trim()).filter(r => r)
+          : []);
+
+    if (recipientsList.length === 0) {
+      return { success: false, error: 'No valid recipient emails to send test message to.' };
+    }
+
+    const primaryRecipient = recipientsList[0];
     const info = await transporter.sendMail({
       from: config.from_address,
       to: primaryRecipient,
