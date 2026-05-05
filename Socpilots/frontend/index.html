@@ -1234,11 +1234,13 @@ sshd: Failed" style="min-height:80px"></textarea></div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
         <div>
           <label style="font-size:9px;font-family:var(--fm);color:var(--txt3);display:block;margin-bottom:4px">SMTP HOST</label>
-          <input class="fi" id="smtp-host" placeholder="smtp.gmail.com" style="width:100%">
+          <input class="fi" id="smtp-host" placeholder="mail.socpilots.com" style="width:100%">
+          <div style="font-size:8px;color:#8ab0d0;margin-top:3px">e.g., mail.socpilots.com</div>
         </div>
         <div>
           <label style="font-size:9px;font-family:var(--fm);color:var(--txt3);display:block;margin-bottom:4px">SMTP PORT</label>
           <input class="fi" id="smtp-port" type="number" placeholder="587" style="width:100%" value="587">
+          <div style="font-size:8px;color:#8ab0d0;margin-top:3px">Use 587 (TLS) or 465 (SSL)</div>
         </div>
       </div>
 
@@ -1258,15 +1260,23 @@ sshd: Failed" style="min-height:80px"></textarea></div>
         </div>
       </div>
 
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-          <input type="checkbox" id="smtp-tls" checked style="width:14px;height:14px;accent-color:var(--c)">
-          <span style="font-size:10px;font-family:var(--fm);color:var(--txt2)">Use TLS</span>
-        </label>
-        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-          <input type="checkbox" id="smtp-ssl" style="width:14px;height:14px;accent-color:var(--c)">
-          <span style="font-size:10px;font-family:var(--fm);color:var(--txt2)">Use SSL (port 465)</span>
-        </label>
+      <div style="background:rgba(0,229,255,.08);padding:12px;border-radius:4px;border-left:2px solid var(--c);margin:10px 0">
+        <div style="font-size:9px;color:#8ab0d0;font-family:var(--fm);margin-bottom:8px">
+          <strong>Connection Security:</strong> Choose one
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+            <input type="checkbox" id="smtp-tls" checked style="width:14px;height:14px;accent-color:var(--c)" onchange="document.getElementById('smtp-ssl').checked = false;">
+            <span style="font-size:10px;font-family:var(--fm);color:var(--txt2)"><strong>TLS</strong> (port 587)</span>
+          </label>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+            <input type="checkbox" id="smtp-ssl" style="width:14px;height:14px;accent-color:var(--c)" onchange="document.getElementById('smtp-tls').checked = false;">
+            <span style="font-size:10px;font-family:var(--fm);color:var(--txt2)"><strong>SSL</strong> (port 465)</span>
+          </label>
+        </div>
+        <div style="font-size:8px;color:#8ab0d0;margin-top:6px">
+          TLS is more common for port 587. Uncheck one to ensure only one is selected.
+        </div>
       </div>
 
       <div>

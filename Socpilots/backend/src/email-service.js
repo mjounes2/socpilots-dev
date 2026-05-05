@@ -37,11 +37,15 @@ async function createTransporter() {
     ? { user: config.user, pass: config.password }
     : undefined;
 
+  // Determine if connection should be secure (SSL on 465) or use STARTTLS (TLS on 587)
+  const isSecure = config.use_ssl === true;  // port 465 uses implicit TLS
+  const useTLS = config.use_tls === true;    // port 587 uses STARTTLS
+
   const transporter = nodemailer.createTransport({
     host: config.host,
     port: config.port,
-    secure: config.use_ssl,  // true for 465, false for 587
-    requireTLS: config.use_tls && !config.use_ssl,
+    secure: isSecure,  // true for 465, false for 587 (uses STARTTLS instead)
+    requireTLS: useTLS && !isSecure,  // for port 587, require TLS via STARTTLS
     auth: auth,
     logger: true,
     debug: true,
@@ -55,8 +59,9 @@ async function createTransporter() {
   console.log('[Email] SMTP Transporter created:', {
     host: config.host,
     port: config.port,
-    secure: config.use_ssl,
-    requireTLS: config.use_tls && !config.use_ssl,
+    protocol: isSecure ? 'SSL (port 465)' : (useTLS ? 'STARTTLS (port 587)' : 'plain SMTP'),
+    secure: isSecure,
+    requireTLS: useTLS && !isSecure,
     auth: auth ? 'enabled' : 'disabled',
     allowSelfSigned: true
   });
@@ -158,14 +163,27 @@ async function testSmtpConnection() {
     }
 
     const primaryRecipient = recipientsList[0];
+
+    console.log('[Email] Attempting to send test email:', {
+      from: config.from_address,
+      to: primaryRecipient,
+      host: config.host,
+      port: config.port
+    });
+
     const info = await transporter.sendMail({
       from: config.from_address,
       to: primaryRecipient,
       subject: '[SOCPilots] SMTP Test Email',
-      html: `<p>This is a test email from SOCPilots.</p><p>SMTP configuration is working correctly!</p>`
+      html: `<p>This is a test email from SOCPilots.</p><p>SMTP configuration is working correctly!</p>`,
+      text: 'This is a test email from SOCPilots. SMTP configuration is working correctly!'
     });
 
-    console.log('[Email] Test email sent successfully:', info.messageId);
+    console.log('[Email] Test email sent successfully:', {
+      messageId: info.messageId,
+      to: primaryRecipient,
+      response: info.response
+    });
     return { success: true, messageId: info.messageId, to: primaryRecipient };
   } catch (error) {
     console.error('[Email] Test failed:', {
@@ -173,7 +191,9 @@ async function testSmtpConnection() {
       code: error.code,
       command: error.command,
       response: error.response,
-      stack: error.stack
+      errno: error.errno,
+      syscall: error.syscall,
+      stack: error.stack.split('\n').slice(0, 5).join('\n')
     });
     return { success: false, error: error.message };
   }
