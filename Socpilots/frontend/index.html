@@ -1213,6 +1213,75 @@ sshd: Failed" style="min-height:80px"></textarea></div>
     </div>
     <div id="isolation-approvals-list"><div style="font-size:11px;color:var(--txt3);font-family:var(--fm)">No pending approvals.</div></div>
   </div>
+
+  <!-- EMAIL NOTIFICATIONS -->
+  <div class="card mb" style="border-left:3px solid var(--c)">
+    <div class="card-hd">
+      <div class="card-ttl" style="color:var(--c)">
+        📧 EMAIL NOTIFICATIONS
+      </div>
+    </div>
+    <div style="font-size:11px;color:var(--txt3);font-family:var(--fm);margin-bottom:14px">
+      Configure SMTP server to send email alerts when playbooks execute, investigations are marked true positive, and when analyst approval is needed for protected assets.
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+        <input type="checkbox" id="smtp-enabled" style="width:16px;height:16px;accent-color:var(--c)">
+        <span style="font-size:10px;font-family:var(--fm);color:var(--txt2)">Enable Email Notifications</span>
+      </label>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div>
+          <label style="font-size:9px;font-family:var(--fm);color:var(--txt3);display:block;margin-bottom:4px">SMTP HOST</label>
+          <input class="fi" id="smtp-host" placeholder="smtp.gmail.com" style="width:100%">
+        </div>
+        <div>
+          <label style="font-size:9px;font-family:var(--fm);color:var(--txt3);display:block;margin-bottom:4px">SMTP PORT</label>
+          <input class="fi" id="smtp-port" type="number" placeholder="587" style="width:100%" value="587">
+        </div>
+      </div>
+
+      <div>
+        <label style="font-size:9px;font-family:var(--fm);color:var(--txt3);display:block;margin-bottom:4px">FROM ADDRESS</label>
+        <input class="fi" id="smtp-from" placeholder="alerts@company.com" style="width:100%">
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div>
+          <label style="font-size:9px;font-family:var(--fm);color:var(--txt3);display:block;margin-bottom:4px">USERNAME (optional)</label>
+          <input class="fi" id="smtp-user" placeholder="your_email@gmail.com" style="width:100%">
+        </div>
+        <div>
+          <label style="font-size:9px;font-family:var(--fm);color:var(--txt3);display:block;margin-bottom:4px">PASSWORD (optional)</label>
+          <input class="fi" id="smtp-pass" placeholder="•••••••" type="password" style="width:100%">
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="smtp-tls" checked style="width:14px;height:14px;accent-color:var(--c)">
+          <span style="font-size:10px;font-family:var(--fm);color:var(--txt2)">Use TLS</span>
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="smtp-ssl" style="width:14px;height:14px;accent-color:var(--c)">
+          <span style="font-size:10px;font-family:var(--fm);color:var(--txt2)">Use SSL (port 465)</span>
+        </label>
+      </div>
+
+      <div>
+        <label style="font-size:9px;font-family:var(--fm);color:var(--txt3);display:block;margin-bottom:4px">RECIPIENT EMAILS (comma-separated)</label>
+        <input class="fi" id="smtp-recipients" placeholder="analyst1@company.com, analyst2@company.com" style="width:100%;font-family:var(--fm);font-size:10px">
+      </div>
+
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-p" onclick="saveSmtpSettings()">💾 Save Configuration</button>
+        <button class="btn btn-h" onclick="testSmtpConnection()">✉️ Send Test Email</button>
+      </div>
+
+      <div id="smtp-status" style="font-size:10px;font-family:var(--fm);color:var(--txt3);margin-top:8px"></div>
+    </div>
+  </div>
 </div>
 
 
@@ -3726,6 +3795,8 @@ async function loadDarkSocSettings(){
   // Load protected assets + pending isolation approvals
   loadProtectedAssets();
   loadIsolationApprovals();
+  // Load SMTP email configuration
+  await loadSmtpSettings();
 }
 
 async function saveDarkSocSettings(){
@@ -3756,6 +3827,77 @@ async function saveDarkSocSettings(){
     }
   } else {
     toast('Failed to save Dark SOC settings','err');
+  }
+}
+
+// ── SMTP EMAIL CONFIGURATION ──────────────────────────────
+async function loadSmtpSettings(){
+  const d=await G('/api/settings/smtp');
+  if(!d||d.error) return;
+  const el=id=>document.getElementById(id);
+  el('smtp-enabled').checked = d.enabled;
+  el('smtp-host').value = d.host||'';
+  el('smtp-port').value = d.port||587;
+  el('smtp-from').value = d.from_address||'';
+  el('smtp-user').value = d.user||'';
+  el('smtp-pass').value = d.password ? '***' : '';
+  el('smtp-tls').checked = d.use_tls;
+  el('smtp-ssl').checked = d.use_ssl;
+  el('smtp-recipients').value = (d.recipients||[]).join(', ');
+}
+
+async function saveSmtpSettings(){
+  const el=id=>document.getElementById(id);
+  const pass = el('smtp-pass').value;
+  // Don't send password if it's masked (***), only if user typed new one
+  const config = {
+    enabled: el('smtp-enabled').checked,
+    host: el('smtp-host').value,
+    port: parseInt(el('smtp-port').value)||587,
+    from_address: el('smtp-from').value,
+    user: el('smtp-user').value,
+    password: pass && pass!=='***' ? pass : '',
+    use_tls: el('smtp-tls').checked,
+    use_ssl: el('smtp-ssl').checked,
+    recipients: el('smtp-recipients').value.split(',').map(e=>e.trim()).filter(e=>e)
+  };
+
+  const res = await P('/api/settings/smtp', config);
+  if(res?.ok){
+    el('smtp-status').innerHTML='<span style="color:var(--g)">✓ Configuration saved</span>';
+    toast('SMTP settings updated','ok');
+    setTimeout(()=>{el('smtp-status').innerHTML='';}, 3000);
+  } else {
+    el('smtp-status').innerHTML=`<span style="color:var(--r)">✗ ${res?.error||'Failed to save'}</span>`;
+    toast('Failed to save SMTP settings','err');
+  }
+}
+
+async function testSmtpConnection(){
+  const res = await P('/api/settings/smtp/test', {});
+  const el=document.getElementById('smtp-status');
+  if(res?.ok){
+    el.innerHTML=`<span style="color:var(--g)">✓ Test email sent to ${res.message?.match(/\S+@\S+/)?.[0]||'recipients'}</span>`;
+    toast('Test email sent successfully','ok');
+  } else {
+    el.innerHTML=`<span style="color:var(--r)">✗ ${res?.error||'Failed to send test email'}</span>`;
+    toast('Test email failed','err');
+  }
+  setTimeout(()=>{el.innerHTML='';}, 5000);
+}
+
+// ── INVESTIGATION TRUE/FALSE POSITIVE STATUS ──────────────
+async function markInvestigationStatus(investigationId, status){
+  const res = await P(`/api/investigations/${investigationId}/tp-status`, {tp_status: status});
+  if(res?.ok){
+    const statusText = status==='confirmed_tp'?'✓ True Positive':'✗ False Positive';
+    toast(`Marked as ${statusText} - Email sent to analysts`,'ok');
+    // Refresh investigation view if modal is open
+    if(document.querySelector('.modal.show')){
+      setTimeout(()=>location.reload(), 500);
+    }
+  } else {
+    toast(`Failed: ${res?.error||'Unknown error'}`,'err');
   }
 }
 

@@ -48,6 +48,10 @@ async function initSchema() {
     `CREATE INDEX IF NOT EXISTS idx_inv_rule      ON investigations(rule_id)`,
     `CREATE INDEX IF NOT EXISTS idx_inv_severity  ON investigations(severity)`,
     `CREATE INDEX IF NOT EXISTS idx_inv_agent     ON investigations(agent)`,
+    // Add tp_status column for True Positive / False Positive tracking
+    `ALTER TABLE investigations ADD COLUMN IF NOT EXISTS tp_status VARCHAR(30) DEFAULT NULL`,
+    `ALTER TABLE investigations ADD COLUMN IF NOT EXISTS tp_marked_by VARCHAR(50)`,
+    `ALTER TABLE investigations ADD COLUMN IF NOT EXISTS tp_marked_at TIMESTAMPTZ`,
 
     // Artifacts (IOCs extracted from investigations)
     `CREATE TABLE IF NOT EXISTS artifacts (
@@ -73,7 +77,17 @@ async function initSchema() {
     `INSERT INTO settings(key,value,updated_by) VALUES
       ('auto_triage_enabled','false','system'),
       ('auto_triage_min_level','12','system'),
-      ('auto_triage_interval_sec','60','system')
+      ('auto_triage_interval_sec','60','system'),
+      ('smtp_enabled','false','system'),
+      ('smtp_host','','system'),
+      ('smtp_port','587','system'),
+      ('smtp_user','','system'),
+      ('smtp_password','','system'),
+      ('smtp_from_address','','system'),
+      ('smtp_use_tls','true','system'),
+      ('smtp_use_ssl','false','system'),
+      ('smtp_auth_required','false','system'),
+      ('smtp_recipients','','system')
      ON CONFLICT(key) DO NOTHING`,
 
     // Asset Discovery — subnets
@@ -365,6 +379,60 @@ async function getAllSettings() {
   const out = {};
   r.rows.forEach(row => out[row.key] = row.value);
   return out;
+}
+
+// ── SMTP Email Configuration ──────────────────────────────
+async function getSmtpSettings() {
+  const settings = await getAllSettings();
+  return {
+    enabled: settings.smtp_enabled === 'true',
+    host: settings.smtp_host || '',
+    port: parseInt(settings.smtp_port || '587'),
+    user: settings.smtp_user || '',
+    password: settings.smtp_password || '',
+    from_address: settings.smtp_from_address || '',
+    use_tls: settings.smtp_use_tls === 'true',
+    use_ssl: settings.smtp_use_ssl === 'true',
+    auth_required: settings.smtp_auth_required === 'true',
+    recipients: (settings.smtp_recipients || '').split(',').map(e => e.trim()).filter(e => e)
+  };
+}
+
+async function updateSmtpSettings(config, user = 'admin') {
+  const updates = {
+    'smtp_enabled': String(config.enabled || false),
+    'smtp_host': config.host || '',
+    'smtp_port': String(config.port || 587),
+    'smtp_user': config.user || '',
+    'smtp_password': config.password || '',
+    'smtp_from_address': config.from_address || '',
+    'smtp_use_tls': String(config.use_tls !== false),
+    'smtp_use_ssl': String(config.use_ssl === true),
+    'smtp_auth_required': String(config.auth_required === true),
+    'smtp_recipients': (config.recipients || []).join(',')
+  };
+  for (const [key, value] of Object.entries(updates)) {
+    await setSetting(key, value, user);
+  }
+  return await getSmtpSettings();
+}
+
+// ── Investigation TP/FP Status ────────────────────────────
+async function updateInvestigationStatus(investigationId, tp_status, user) {
+  const r = await pool.query(`
+    UPDATE investigations
+    SET tp_status=$1, tp_marked_by=$2, tp_marked_at=NOW()
+    WHERE id=$3
+    RETURNING id, tp_status, tp_marked_by, tp_marked_at
+  `, [tp_status, user, investigationId]);
+  return r.rows[0] || null;
+}
+
+async function getInvestigationStatus(investigationId) {
+  const r = await pool.query(`
+    SELECT id, tp_status, tp_marked_by, tp_marked_at FROM investigations WHERE id=$1
+  `, [investigationId]);
+  return r.rows[0] || null;
 }
 
 // ── Artifacts ────────────────────────────────────────────
@@ -712,6 +780,10 @@ module.exports = {
   getSetting,
   setSetting,
   getAllSettings,
+  getSmtpSettings,
+  updateSmtpSettings,
+  updateInvestigationStatus,
+  getInvestigationStatus,
   saveArtifacts,
   ping,
   listSubnets,

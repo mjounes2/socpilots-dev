@@ -11,6 +11,7 @@ require('dotenv').config({ path: path.join(__dirname, '../../.env') });
 const db       = require('./db');
 const ueba     = require('./neo4j');
 const playbook = require('./playbook-engine');
+const email    = require('./email-service');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -988,6 +989,89 @@ app.post('/api/settings', authMW, async (req, res) => {
     res.json({ ok: true, updated: Object.keys(updates) });
   } catch(e) {
     res.status(503).json({ error: e.message });
+  }
+});
+
+// ── SMTP EMAIL CONFIGURATION ──────────────────────────────────
+app.get('/api/settings/smtp', authMW, async (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'admin only' });
+  try {
+    const config = await db.getSmtpSettings();
+    // Redact password in response
+    config.password = config.password ? '***' : '';
+    res.json(config);
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/settings/smtp', authMW, async (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'admin only' });
+  try {
+    const config = req.body;
+    const result = await db.updateSmtpSettings(config, req.user.username);
+    // Redact password in response
+    result.password = result.password ? '***' : '';
+    res.json({ ok: true, config: result });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/settings/smtp/test', authMW, async (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'admin only' });
+  try {
+    const result = await email.testSmtpConnection();
+    if (result.success) {
+      res.json({ ok: true, message: `Test email sent to ${result.to}`, messageId: result.messageId });
+    } else {
+      res.status(400).json({ error: result.error });
+    }
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── INVESTIGATION TRUE/FALSE POSITIVE STATUS ──────────────────
+app.get('/api/investigations/:id/tp-status', authMW, async (req, res) => {
+  try {
+    const status = await db.getInvestigationStatus(parseInt(req.params.id));
+    if (!status) return res.status(404).json({ error: 'Investigation not found' });
+    res.json(status);
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/investigations/:id/tp-status', authMW, async (req, res) => {
+  try {
+    const investigationId = parseInt(req.params.id);
+    const tp_status = req.body.tp_status;  // 'confirmed_tp', 'confirmed_fp', 'no_action'
+
+    if (!['confirmed_tp', 'confirmed_fp', 'no_action'].includes(tp_status)) {
+      return res.status(400).json({ error: 'Invalid tp_status value' });
+    }
+
+    const updated = await db.updateInvestigationStatus(investigationId, tp_status, req.user.username);
+    if (!updated) {
+      return res.status(404).json({ error: 'Investigation not found' });
+    }
+
+    // Send email notification if marked as true positive
+    if (tp_status === 'confirmed_tp') {
+      const investigation = await db.getInvestigationById(investigationId);
+      if (investigation) {
+        const emailBody = email.generateInvestigationTPEmail(investigation);
+        await email.sendToRecipients(
+          `[SOCPilots] Investigation Confirmed as True Positive: ${investigation.rule_id}`,
+          emailBody
+        );
+      }
+    }
+
+    res.json({ ok: true, status: updated });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
   }
 });
 
