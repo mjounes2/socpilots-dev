@@ -37,15 +37,26 @@ async function createTransporter() {
     ? { user: config.user, pass: config.password }
     : undefined;
 
-  return nodemailer.createTransport({
+  const transporter = nodemailer.createTransport({
     host: config.host,
     port: config.port,
     secure: config.use_ssl,  // true for 465, false for 587
     requireTLS: config.use_tls && !config.use_ssl,
     auth: auth,
-    logger: false,
-    debug: false
+    logger: true,
+    debug: true
   });
+
+  // Log the connection attempt
+  console.log('[Email] SMTP Transporter created:', {
+    host: config.host,
+    port: config.port,
+    secure: config.use_ssl,
+    requireTLS: config.use_tls && !config.use_ssl,
+    auth: auth ? 'enabled' : 'disabled'
+  });
+
+  return transporter;
 }
 
 // Send email to single recipient
@@ -135,7 +146,13 @@ async function testSmtpConnection() {
     console.log('[Email] Test email sent successfully:', info.messageId);
     return { success: true, messageId: info.messageId, to: primaryRecipient };
   } catch (error) {
-    console.error('[Email] Test failed:', error.message);
+    console.error('[Email] Test failed:', {
+      message: error.message,
+      code: error.code,
+      command: error.command,
+      response: error.response,
+      stack: error.stack
+    });
     return { success: false, error: error.message };
   }
 }
