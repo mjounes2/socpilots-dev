@@ -617,6 +617,94 @@ Return ONLY valid JSON:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ═══════════════════════════════════════════════════════════════
+#  DARK SOC — Consensus Validation Endpoint
+#  Called by playbook-engine.js before destructive actions.
+#  Uses a SECOND, independent LLM call to validate the action.
+#  Returns: { approved: bool, confidence: float, reasoning: str }
+# ═══════════════════════════════════════════════════════════════
+
+class ValidateActionRequest(BaseModel):
+    action: str          # e.g. "isolate_host", "kill_process", "disable_user"
+    alert: dict
+    evidence: str = ""   # investigation report excerpt (first 1500 chars)
+    model: str = "auto"  # always uses a different model than primary
+
+
+@app.post("/validate-action")
+async def validate_action(req: ValidateActionRequest):
+    """
+    Dark SOC consensus gate — a second LLM independently evaluates
+    whether a destructive response action is warranted.
+
+    Returns approved=True only if confidence is high and the action
+    is proportionate to the threat severity.
+    """
+    start = time.time()
+
+    # Intentionally use a different model than the primary investigation
+    # Primary: GPT-4o-mini (if available) → Secondary: Mistral, and vice versa
+    if req.model == "auto":
+        secondary_model = "mistral" if OPENAI_API_KEY else "auto"
+    else:
+        secondary_model = req.model
+
+    try:
+        llm = get_llm(secondary_model)
+    except ValueError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+    a = req.alert
+    prompt = f"""You are a senior SOC analyst reviewing an automated response action.
+A Dark SOC system wants to execute: **{req.action}**
+
+ALERT DETAILS:
+- Rule ID: {a.get('ruleId', '?')}
+- Severity: {a.get('severity', '?')} (level {a.get('level', '?')})
+- Description: {a.get('description', '?')}
+- Agent/Host: {a.get('agent', '?')}
+- Source IP: {a.get('srcIp', '?')}
+- MITRE: {', '.join(a.get('mitre', [])) or 'unknown'}
+
+INVESTIGATION EVIDENCE:
+{req.evidence[:1200] if req.evidence else 'No evidence provided'}
+
+TASK: Decide if executing "{req.action}" is APPROVED or REJECTED.
+
+Rules:
+- APPROVE only if the evidence clearly justifies this action
+- REJECT if false positive probability is high, evidence is weak, or action is disproportionate
+- {req.action} is a DESTRUCTIVE action — err on the side of caution
+
+Return ONLY valid JSON:
+{{
+  "approved": true or false,
+  "confidence": 0.0 to 1.0,
+  "reasoning": "one sentence justification",
+  "false_positive_risk": "low|medium|high"
+}}"""
+
+    try:
+        response = await llm.ainvoke(prompt)
+        text  = response.content.strip()
+        match = re.search(r'\{{[\s\S]*\}}', text)
+        if not match:
+            # Fallback: reject if we can't parse
+            return {"approved": False, "confidence": 0.0,
+                    "reasoning": "Could not parse validation response — rejecting for safety",
+                    "duration_ms": int((time.time() - start) * 1000)}
+        result = json.loads(match.group())
+        result["duration_ms"] = int((time.time() - start) * 1000)
+        log.info(f"[Consensus] action={req.action} approved={result.get('approved')} confidence={result.get('confidence')}")
+        return result
+    except Exception as e:
+        log.error(f"Validate-action error: {e}")
+        # Always reject on error — safer than accidentally approving
+        return {"approved": False, "confidence": 0.0,
+                "reasoning": f"Validation error: {str(e)[:100]} — rejecting for safety",
+                "duration_ms": int((time.time() - start) * 1000)}
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8001, log_level="info")

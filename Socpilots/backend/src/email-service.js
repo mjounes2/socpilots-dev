@@ -37,36 +37,15 @@ async function createTransporter() {
     ? { user: config.user, pass: config.password }
     : undefined;
 
-  // Determine if connection should be secure (SSL on 465) or use STARTTLS (TLS on 587)
-  const isSecure = config.use_ssl === true;  // port 465 uses implicit TLS
-  const useTLS = config.use_tls === true;    // port 587 uses STARTTLS
-
-  const transporter = nodemailer.createTransport({
+  return nodemailer.createTransport({
     host: config.host,
     port: config.port,
-    secure: isSecure,  // true for 465, false for 587 (uses STARTTLS instead)
-    requireTLS: useTLS && !isSecure,  // for port 587, require TLS via STARTTLS
+    secure: config.use_ssl,  // true for 465, false for 587
+    requireTLS: config.use_tls && !config.use_ssl,
     auth: auth,
-    logger: true,
-    debug: true,
-    tls: {
-      // Allow self-signed certificates (for internal mail servers)
-      rejectUnauthorized: false
-    }
+    logger: false,
+    debug: false
   });
-
-  // Log the connection attempt
-  console.log('[Email] SMTP Transporter created:', {
-    host: config.host,
-    port: config.port,
-    protocol: isSecure ? 'SSL (port 465)' : (useTLS ? 'STARTTLS (port 587)' : 'plain SMTP'),
-    secure: isSecure,
-    requireTLS: useTLS && !isSecure,
-    auth: auth ? 'enabled' : 'disabled',
-    allowSelfSigned: true
-  });
-
-  return transporter;
 }
 
 // Send email to single recipient
@@ -128,73 +107,35 @@ async function sendToRecipients(subject, htmlBody) {
 async function testSmtpConnection() {
   try {
     const config = await getSmtpConfig();
-
-    // Detailed validation with clear error messages
-    if (!config) {
-      return { success: false, error: 'SMTP settings not found in database. Please save configuration first.' };
-    }
-
-    if (!config.host) {
-      return { success: false, error: 'SMTP Host is not configured. Please enter the SMTP server hostname (e.g., smtp.gmail.com).' };
+    if (!config || !config.host) {
+      return { success: false, error: 'SMTP not configured' };
     }
 
     if (!config.from_address) {
-      return { success: false, error: 'From Address is not configured. Please enter the sender email address.' };
+      return { success: false, error: 'From address not configured' };
     }
 
-    if (!config.recipients || !Array.isArray(config.recipients) || config.recipients.length === 0) {
-      return { success: false, error: 'No recipient emails configured. Please add at least one recipient email address.' };
+    if (!config.recipients.length) {
+      return { success: false, error: 'No recipients configured' };
     }
 
     const transporter = await createTransporter();
     if (!transporter) {
-      return { success: false, error: 'Failed to create SMTP transporter. Check SMTP host, port, TLS/SSL settings, and credentials.' };
+      return { success: false, error: 'Failed to create SMTP transporter' };
     }
 
-    // Ensure recipients is an array
-    const recipientsList = Array.isArray(config.recipients)
-      ? config.recipients
-      : (typeof config.recipients === 'string'
-          ? config.recipients.split(',').map(r => r.trim()).filter(r => r)
-          : []);
-
-    if (recipientsList.length === 0) {
-      return { success: false, error: 'No valid recipient emails to send test message to.' };
-    }
-
-    const primaryRecipient = recipientsList[0];
-
-    console.log('[Email] Attempting to send test email:', {
-      from: config.from_address,
-      to: primaryRecipient,
-      host: config.host,
-      port: config.port
-    });
-
+    const primaryRecipient = config.recipients[0];
     const info = await transporter.sendMail({
       from: config.from_address,
       to: primaryRecipient,
       subject: '[SOCPilots] SMTP Test Email',
-      html: `<p>This is a test email from SOCPilots.</p><p>SMTP configuration is working correctly!</p>`,
-      text: 'This is a test email from SOCPilots. SMTP configuration is working correctly!'
+      html: `<p>This is a test email from SOCPilots.</p><p>SMTP configuration is working correctly!</p>`
     });
 
-    console.log('[Email] Test email sent successfully:', {
-      messageId: info.messageId,
-      to: primaryRecipient,
-      response: info.response
-    });
+    console.log('[Email] Test email sent successfully:', info.messageId);
     return { success: true, messageId: info.messageId, to: primaryRecipient };
   } catch (error) {
-    console.error('[Email] Test failed:', {
-      message: error.message,
-      code: error.code,
-      command: error.command,
-      response: error.response,
-      errno: error.errno,
-      syscall: error.syscall,
-      stack: error.stack.split('\n').slice(0, 5).join('\n')
-    });
+    console.error('[Email] Test failed:', error.message);
     return { success: false, error: error.message };
   }
 }

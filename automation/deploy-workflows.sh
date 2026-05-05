@@ -17,7 +17,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-WF_DIR="$PROJECT_ROOT/Socpilots-webapp/workflows"
+WF_DIR="$PROJECT_ROOT/Socpilots/workflows"
 DB="/var/lib/docker/volumes/socpilots_n8n_data/_data/database.sqlite"
 N8N_CONTAINER="socpilots-n8n"
 MODE="full"

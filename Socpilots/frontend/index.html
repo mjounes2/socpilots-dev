@@ -1234,13 +1234,11 @@ sshd: Failed" style="min-height:80px"></textarea></div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
         <div>
           <label style="font-size:9px;font-family:var(--fm);color:var(--txt3);display:block;margin-bottom:4px">SMTP HOST</label>
-          <input class="fi" id="smtp-host" placeholder="mail.socpilots.com" style="width:100%">
-          <div style="font-size:8px;color:#8ab0d0;margin-top:3px">e.g., mail.socpilots.com</div>
+          <input class="fi" id="smtp-host" placeholder="smtp.gmail.com" style="width:100%">
         </div>
         <div>
           <label style="font-size:9px;font-family:var(--fm);color:var(--txt3);display:block;margin-bottom:4px">SMTP PORT</label>
           <input class="fi" id="smtp-port" type="number" placeholder="587" style="width:100%" value="587">
-          <div style="font-size:8px;color:#8ab0d0;margin-top:3px">Use 587 (TLS) or 465 (SSL)</div>
         </div>
       </div>
 
@@ -1260,23 +1258,15 @@ sshd: Failed" style="min-height:80px"></textarea></div>
         </div>
       </div>
 
-      <div style="background:rgba(0,229,255,.08);padding:12px;border-radius:4px;border-left:2px solid var(--c);margin:10px 0">
-        <div style="font-size:9px;color:#8ab0d0;font-family:var(--fm);margin-bottom:8px">
-          <strong>Connection Security:</strong> Choose one
-        </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-          <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-            <input type="checkbox" id="smtp-tls" checked style="width:14px;height:14px;accent-color:var(--c)" onchange="document.getElementById('smtp-ssl').checked = false;">
-            <span style="font-size:10px;font-family:var(--fm);color:var(--txt2)"><strong>TLS</strong> (port 587)</span>
-          </label>
-          <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-            <input type="checkbox" id="smtp-ssl" style="width:14px;height:14px;accent-color:var(--c)" onchange="document.getElementById('smtp-tls').checked = false;">
-            <span style="font-size:10px;font-family:var(--fm);color:var(--txt2)"><strong>SSL</strong> (port 465)</span>
-          </label>
-        </div>
-        <div style="font-size:8px;color:#8ab0d0;margin-top:6px">
-          TLS is more common for port 587. Uncheck one to ensure only one is selected.
-        </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="smtp-tls" checked style="width:14px;height:14px;accent-color:var(--c)">
+          <span style="font-size:10px;font-family:var(--fm);color:var(--txt2)">Use TLS</span>
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="smtp-ssl" style="width:14px;height:14px;accent-color:var(--c)">
+          <span style="font-size:10px;font-family:var(--fm);color:var(--txt2)">Use SSL (port 465)</span>
+        </label>
       </div>
 
       <div>
@@ -3858,46 +3848,25 @@ async function loadSmtpSettings(){
 
 async function saveSmtpSettings(){
   const el=id=>document.getElementById(id);
-  const host = el('smtp-host').value.trim();
-  const from = el('smtp-from').value.trim();
-  const recipients = el('smtp-recipients').value.split(',').map(e=>e.trim()).filter(e=>e);
-
-  // Validate required fields
-  if(!host){
-    el('smtp-status').innerHTML='<span style="color:var(--r)">✗ SMTP Host is required</span>';
-    toast('SMTP Host required','err');
-    return;
-  }
-  if(!from){
-    el('smtp-status').innerHTML='<span style="color:var(--r)">✗ From Address is required</span>';
-    toast('From Address required','err');
-    return;
-  }
-  if(recipients.length===0){
-    el('smtp-status').innerHTML='<span style="color:var(--r)">✗ At least one recipient email is required</span>';
-    toast('Recipients required','err');
-    return;
-  }
-
   const pass = el('smtp-pass').value;
+  // Don't send password if it's masked (***), only if user typed new one
   const config = {
     enabled: el('smtp-enabled').checked,
-    host: host,
+    host: el('smtp-host').value,
     port: parseInt(el('smtp-port').value)||587,
-    from_address: from,
-    user: el('smtp-user').value.trim(),
+    from_address: el('smtp-from').value,
+    user: el('smtp-user').value,
     password: pass && pass!=='***' ? pass : '',
     use_tls: el('smtp-tls').checked,
     use_ssl: el('smtp-ssl').checked,
-    recipients: recipients
+    recipients: el('smtp-recipients').value.split(',').map(e=>e.trim()).filter(e=>e)
   };
 
-  el('smtp-status').innerHTML='<span style="color:var(--txt3)">Saving...</span>';
   const res = await P('/api/settings/smtp', config);
   if(res?.ok){
-    el('smtp-status').innerHTML='<span style="color:var(--g)">✓ Configuration saved successfully</span>';
+    el('smtp-status').innerHTML='<span style="color:var(--g)">✓ Configuration saved</span>';
     toast('SMTP settings updated','ok');
-    setTimeout(()=>{el('smtp-status').innerHTML='';}, 4000);
+    setTimeout(()=>{el('smtp-status').innerHTML='';}, 3000);
   } else {
     el('smtp-status').innerHTML=`<span style="color:var(--r)">✗ ${res?.error||'Failed to save'}</span>`;
     toast('Failed to save SMTP settings','err');
@@ -3905,45 +3874,16 @@ async function saveSmtpSettings(){
 }
 
 async function testSmtpConnection(){
-  const el=id=>document.getElementById(id);
-  const host = el('smtp-host').value.trim();
-  const from = el('smtp-from').value.trim();
-  const recipients = el('smtp-recipients').value.split(',').map(e=>e.trim()).filter(e=>e);
-  const statusEl = el('smtp-status');
-
-  // Validate required fields before testing
-  if(!host){
-    statusEl.innerHTML='<span style="color:var(--r)">✗ SMTP Host is required before testing</span>';
-    toast('Configure SMTP Host first','err');
-    return;
-  }
-  if(!from){
-    statusEl.innerHTML='<span style="color:var(--r)">✗ From Address is required before testing</span>';
-    toast('Configure From Address first','err');
-    return;
-  }
-  if(recipients.length===0){
-    statusEl.innerHTML='<span style="color:var(--r)">✗ At least one recipient email is required before testing</span>';
-    toast('Add recipient emails first','err');
-    return;
-  }
-
-  statusEl.innerHTML='<span style="color:var(--txt3)">Testing SMTP connection...</span>';
   const res = await P('/api/settings/smtp/test', {});
-
+  const el=document.getElementById('smtp-status');
   if(res?.ok){
-    statusEl.innerHTML=`<span style="color:var(--g)">✓ Test email sent successfully!</span>`;
-    toast(`Test email sent to ${res.message?.match(/\S+@\S+/)?.[0]||'recipients'}`,'ok');
-    setTimeout(()=>{statusEl.innerHTML='';}, 6000);
-  } else if(res?._timeout){
-    statusEl.innerHTML='<span style="color:var(--r)">✗ Connection timeout (160s) - check SMTP server accessibility</span>';
-    toast('SMTP connection timeout','err');
+    el.innerHTML=`<span style="color:var(--g)">✓ Test email sent to ${res.message?.match(/\S+@\S+/)?.[0]||'recipients'}</span>`;
+    toast('Test email sent successfully','ok');
   } else {
-    const errMsg = res?.error||'Failed to send test email';
-    statusEl.innerHTML=`<span style="color:var(--r)">✗ ${errMsg}</span>`;
-    toast(`SMTP Error: ${errMsg}`,'err');
-    setTimeout(()=>{statusEl.innerHTML='';}, 8000);
+    el.innerHTML=`<span style="color:var(--r)">✗ ${res?.error||'Failed to send test email'}</span>`;
+    toast('Test email failed','err');
   }
+  setTimeout(()=>{el.innerHTML='';}, 5000);
 }
 
 // ── INVESTIGATION TRUE/FALSE POSITIVE STATUS ──────────────

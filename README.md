@@ -81,7 +81,7 @@ Access the UI at `http://YOUR_SERVER_IP:3000`
 
 | Directory | Description |
 |---|---|
-| `Socpilots-webapp/` | Main web UI (Node.js + Vue) |
+| `Socpilots/` | Main web UI (Node.js + Vue) |
 | `automation/` | n8n automation engine |
 | `MCP-WAZUH/` | Wazuh AI bridge (MCP server) |
 | `thehive-mcp-new/` | TheHive MCP server |

@@ -69,7 +69,7 @@ services:
   # ── SOCPilots Webapp ───────────────────────────────────────────
   webapp:
     build:
-      context: ./Socpilots-webapp
+      context: ./Socpilots
       dockerfile: Dockerfile
     container_name: socpilots
     restart: unless-stopped
@@ -111,6 +111,9 @@ services:
       LANGCHAIN_INTERNAL_TOKEN: ${LANGCHAIN_INTERNAL_TOKEN:-}
       # RAG Vector Search
       RAG_URL:        http://rag-retrieval:5005
+      # Dark SOC — Wazuh MCP active response (playbook engine)
+      MCP_WAZUH_URL:  http://mcp-wazuh:3001
+      MCP_AUTH_SECRET: ${AUTH_SECRET_KEY:-}
     depends_on:
       postgres:
         condition: service_healthy
