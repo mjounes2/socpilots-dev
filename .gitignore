@@ -24,10 +24,15 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# Go binaries
-thehive-mcp-new/thehive-mcp
-thehive-mcp-new/thehive-mcp-server
-thehive-mcp-new/main
+# Go binaries — never commit compiled artifacts
+thehive-mcp-new/**/thehive-mcp
+thehive-mcp-new/**/thehive-mcp-server
+thehive-mcp-new/**/main
+
+# Tarballs / release bundles — build artefacts, not source
+*.tar
+*.tar.gz
+*.zip
 
 # OS
 .DS_Store

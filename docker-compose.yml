@@ -225,8 +225,6 @@ services:
       THEHIVE_URL: ${THEHIVE_URL}
       THEHIVE_API_KEY: ${THEHIVE_API_KEY}
       PORT: 8080
-      # URL returned in SSE endpoint event — must be reachable by n8n (internal service name)
-      MCP_BASE_URL: http://thehive-mcp:8080
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/health || exit 1"]
       interval: 30s
