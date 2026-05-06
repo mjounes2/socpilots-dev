@@ -2132,7 +2132,7 @@ const CONTINENTS=[
 const GEO_HEURISTIC=ip=>{
   const cache=GEO_HEURISTIC._c||(GEO_HEURISTIC._c={});
   if(cache[ip])return cache[ip];
-  const known={'2.57.122.189':{lat:48.86,lon:2.35,c:'France'},'45.148.10.157':{lat:52.37,lon:4.90,c:'Netherlands'},'178.238.230.45':{lat:48.21,lon:16.37,c:'Austria'},'37.60.237.66':{lat:51.51,lon:-0.13,c:'UK'},'172.31.73.231':{lat:39.04,lon:-76.64,c:'USA'}};
+  const known={};
   if(known[ip])return cache[ip]=known[ip];
   const f=parseInt((ip||'0').split('.')[0]);
   let g;

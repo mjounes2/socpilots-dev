@@ -34,17 +34,17 @@ services:
       # Authentication mode: oauth (recommended), bearer (default), none (dev only)
       AUTH_MODE: ${AUTH_MODE:-bearer}
       # Wazuh connection settings
-      WAZUH_HOST: localhost
-      WAZUH_USER: wazuh-wui
-      WAZUH_PASS: MyS3cr37P450r.*-
-      WAZUH_PORT: 55000
-      WAZUH_VERIFY_SSL: "false"
+      WAZUH_HOST: ${WAZUH_HOST:-localhost}
+      WAZUH_USER: ${WAZUH_USER:-wazuh-wui}
+      WAZUH_PASS: ${WAZUH_PASS}
+      WAZUH_PORT: ${WAZUH_PORT:-55000}
+      WAZUH_VERIFY_SSL: ${WAZUH_VERIFY_SSL:-false}
       # Indexer settings
-      WAZUH_INDEXER_HOST: localhost
-      WAZUH_INDEXER_PORT: 9200
-      WAZUH_INDEXER_USER: admin
-      WAZUH_INDEXER_PASS: SecretPassword
-      WAZUH_INDEXER_VERIFY_SSL: "false"
+      WAZUH_INDEXER_HOST: ${WAZUH_INDEXER_HOST:-localhost}
+      WAZUH_INDEXER_PORT: ${WAZUH_INDEXER_PORT:-9200}
+      WAZUH_INDEXER_USER: ${WAZUH_INDEXER_USER:-admin}
+      WAZUH_INDEXER_PASS: ${WAZUH_INDEXER_PASS}
+      WAZUH_INDEXER_VERIFY_SSL: ${WAZUH_INDEXER_VERIFY_SSL:-false}
       
     # Ports are exposed via network_mode: host
     
