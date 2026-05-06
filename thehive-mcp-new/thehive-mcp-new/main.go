@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"strings"
 
@@ -456,8 +457,26 @@ func main() {
 		}, nil
 	})
 
-	// Start the MCP server using stdio transport
-	if err := server.ServeStdio(s); err != nil {
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	mcpBaseURL := os.Getenv("MCP_BASE_URL")
+	if mcpBaseURL == "" {
+		mcpBaseURL = "http://localhost:" + port
+	}
+
+	sseServer := server.NewSSEServer(s, server.WithBaseURL(mcpBaseURL))
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"status":"ok"}`))
+	})
+	mux.Handle("/", sseServer)
+
+	log.Printf("TheHive MCP server listening on :%s (SSE at %s/sse)", port, mcpBaseURL)
+	if err := http.ListenAndServe(":"+port, mux); err != nil {
 		log.Fatalf("Server error: %v", err)
 	}
 }

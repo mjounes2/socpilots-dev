@@ -141,7 +141,7 @@ async function initSchema() {
     // ── Dark SOC — Automated Playbooks ─────────────────────────
     `CREATE TABLE IF NOT EXISTS playbooks (
       id                    SERIAL PRIMARY KEY,
-      name                  VARCHAR(100) NOT NULL,
+      name                  VARCHAR(100) NOT NULL UNIQUE,
       description           TEXT,
       mitre_techniques      TEXT[]       DEFAULT '{}',
       min_rule_level        INT          DEFAULT 12,
@@ -152,6 +152,7 @@ async function initSchema() {
       enabled               BOOLEAN      DEFAULT true,
       created_at            TIMESTAMPTZ  DEFAULT NOW()
     )`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_pb_name_unique ON playbooks(name)`,
     `CREATE INDEX IF NOT EXISTS idx_pb_enabled ON playbooks(enabled)`,
 
     // ── Dark SOC — Playbook Execution Log ──────────────────────

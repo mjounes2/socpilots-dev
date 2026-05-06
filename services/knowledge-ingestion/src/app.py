@@ -19,7 +19,7 @@ _svc: KnowledgeIngestionService | None = None
 def _get_service() -> KnowledgeIngestionService:
     global _svc
     if _svc is None:
-        _svc = KnowledgeIngestionService(NEO4J_URI, NEO4J_USER, NEO4J_PASS)
+        _svc = KnowledgeIngestionService()
     return _svc
 
 
