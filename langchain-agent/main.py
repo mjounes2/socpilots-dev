@@ -48,6 +48,7 @@ INTERNAL_TOKEN   = os.getenv("LANGCHAIN_INTERNAL_TOKEN", "")
 REDIS_URL        = os.getenv("REDIS_URL", "")
 RAG_URL          = os.getenv("RAG_URL", "http://rag-retrieval:5005")
 RAG_API_KEY      = os.getenv("RAG_API_KEY", "")
+SHODAN_API_KEY   = os.getenv("SHODAN_API_KEY", "")
 
 # ── Redis IOC Cache ───────────────────────────────────────────
 _redis = None
@@ -190,10 +191,98 @@ def enrich_ip(ip_address: str) -> str:
         except Exception as e:
             results.append(f"AbuseIPDB error: {e}")
 
+    if SHODAN_API_KEY:
+        try:
+            r = _sync_client.get(
+                f"https://api.shodan.io/shodan/host/{ip}",
+                params={"key": SHODAN_API_KEY}
+            )
+            if r.status_code == 200:
+                d = r.json()
+                ports = d.get("ports", [])
+                vulns = list(d.get("vulns", {}).keys())
+                results.append(
+                    f"Shodan: ports={','.join(str(p) for p in ports[:20])} "
+                    f"org={d.get('org','')} "
+                    f"os={d.get('os','unknown')} "
+                    f"country={d.get('country_name','')} "
+                    f"hostnames={','.join(d.get('hostnames',[])[:5])} "
+                    f"vulns={','.join(vulns[:10]) if vulns else 'none'}"
+                )
+            elif r.status_code == 404:
+                results.append(f"Shodan: no data found for {ip}")
+        except Exception as e:
+            results.append(f"Shodan error: {e}")
+
     result_text = "\n".join(results) if results else f"No threat intel API keys configured — cannot enrich {ip}"
     if results:
         _cache_set(f"ioc:ip:{ip}", result_text)
     return result_text
+
+
+@tool
+def query_shodan(ip_address: str) -> str:
+    """
+    Query Shodan for detailed host information: open ports, running services,
+    known CVEs/vulnerabilities, OS, organisation, and banners.
+    Input: an IPv4 address like '1.2.3.4'.
+    Use this for deep infrastructure analysis during investigations.
+    Returns: ports, services, CVEs, OS, ISP, hostnames.
+    """
+    if not SHODAN_API_KEY:
+        return "Shodan not configured (SHODAN_API_KEY missing)"
+    ip = ip_address.strip()
+    if not re.match(r'^\d{1,3}(\.\d{1,3}){3}$', ip):
+        return f"Invalid IP format: {ip}"
+
+    cache_key = f"shodan:{ip}"
+    cached = _cache_get(cache_key)
+    if cached:
+        log.info(f"Cache HIT query_shodan: {ip}")
+        return cached
+
+    try:
+        r = _sync_client.get(
+            f"https://api.shodan.io/shodan/host/{ip}",
+            params={"key": SHODAN_API_KEY}
+        )
+        if r.status_code == 404:
+            return f"Shodan: no indexed data for {ip}"
+        if r.status_code != 200:
+            return f"Shodan error: HTTP {r.status_code}"
+
+        d = r.json()
+        ports   = d.get("ports", [])
+        vulns   = list(d.get("vulns", {}).keys())
+        banners = []
+        for svc in (d.get("data") or [])[:5]:
+            transport = svc.get("transport", "tcp")
+            port      = svc.get("port", "?")
+            product   = svc.get("product", "")
+            version   = svc.get("version", "")
+            banner    = svc.get("data", "")[:100].replace("\n", " ")
+            banners.append(f"  {port}/{transport} {product} {version}: {banner}")
+
+        lines = [
+            f"Shodan host report for {ip}:",
+            f"  Organisation : {d.get('org','—')}",
+            f"  ISP          : {d.get('isp','—')}",
+            f"  Country      : {d.get('country_name','—')} ({d.get('country_code','—')})",
+            f"  OS           : {d.get('os','unknown')}",
+            f"  Hostnames    : {', '.join(d.get('hostnames',[])[:8]) or 'none'}",
+            f"  Open ports   : {', '.join(str(p) for p in sorted(ports)[:30]) or 'none'}",
+            f"  CVEs         : {', '.join(vulns[:15]) if vulns else 'none'}",
+            f"  Last update  : {d.get('last_update','—')}",
+        ]
+        if banners:
+            lines.append("  Services:")
+            lines.extend(banners)
+
+        result = "\n".join(lines)
+        _cache_set(cache_key, result)
+        return result
+    except Exception as e:
+        return f"Shodan query error: {e}"
 
 
 @tool
@@ -375,7 +464,7 @@ Final Answer: [your structured report]
 
 {agent_scratchpad}""")
 
-TOOLS = [search_alerts, enrich_ip, check_cases, query_ueba, query_assets, query_knowledge_base]
+TOOLS = [search_alerts, enrich_ip, query_shodan, check_cases, query_ueba, query_assets, query_knowledge_base]
 
 # ── Request Models ────────────────────────────────────────────
 class InvestigateRequest(BaseModel):
@@ -417,6 +506,7 @@ def health():
         "redis":      redis_ok,
         "vt":         bool(os.getenv("VIRUSTOTAL_API_KEY")),
         "abuseipdb":  bool(os.getenv("ABUSEIPDB_API_KEY")),
+        "shodan":     bool(SHODAN_API_KEY),
         "model": "gpt-4o-mini" if OPENAI_API_KEY else ("mistral-small-latest" if MISTRAL_API_KEY else "none"),
     }
 
@@ -515,7 +605,7 @@ def enrich_direct(req: EnrichRequest):
         data["cached"] = True
         return data
 
-    result: dict = {"indicator": indicator, "type": ioc_type, "vt": None, "abuse": None, "cached": False}
+    result: dict = {"indicator": indicator, "type": ioc_type, "vt": None, "abuse": None, "shodan": None, "cached": False}
     vt_key = os.getenv("VIRUSTOTAL_API_KEY", "")
     ab_key  = os.getenv("ABUSEIPDB_API_KEY", "")
 
@@ -575,6 +665,45 @@ def enrich_direct(req: EnrichRequest):
                 result["abuse"] = {"error": f"AbuseIPDB HTTP {r.status_code}"}
         except Exception as e:
             result["abuse"] = {"error": str(e)}
+
+    # ── Shodan (IPs only) ──
+    if SHODAN_API_KEY and ioc_type == "ip":
+        try:
+            r = _sync_client.get(
+                f"https://api.shodan.io/shodan/host/{indicator}",
+                params={"key": SHODAN_API_KEY}
+            )
+            if r.status_code == 200:
+                d = r.json()
+                services = []
+                for svc in (d.get("data") or [])[:10]:
+                    services.append({
+                        "port":      svc.get("port"),
+                        "transport": svc.get("transport", "tcp"),
+                        "product":   svc.get("product", ""),
+                        "version":   svc.get("version", ""),
+                        "cpe":       svc.get("cpe", []),
+                    })
+                result["shodan"] = {
+                    "org":       d.get("org", ""),
+                    "isp":       d.get("isp", ""),
+                    "country":   d.get("country_name", ""),
+                    "city":      d.get("city", ""),
+                    "os":        d.get("os"),
+                    "ports":     sorted(d.get("ports", [])),
+                    "hostnames": d.get("hostnames", []),
+                    "domains":   d.get("domains", []),
+                    "vulns":     list(d.get("vulns", {}).keys()),
+                    "tags":      d.get("tags", []),
+                    "services":  services,
+                    "last_update": d.get("last_update", ""),
+                }
+            elif r.status_code == 404:
+                result["shodan"] = {"error": "No Shodan data for this IP"}
+            else:
+                result["shodan"] = {"error": f"Shodan HTTP {r.status_code}"}
+        except Exception as e:
+            result["shodan"] = {"error": str(e)}
 
     _cache_set(cache_key, json.dumps(result))
     return result

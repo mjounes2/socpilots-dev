@@ -325,6 +325,7 @@ services:
       THEHIVE_API_KEY:  ${THEHIVE_API_KEY}
       VIRUSTOTAL_API_KEY:  ${VIRUSTOTAL_API_KEY}
       ABUSEIPDB_API_KEY:   ${ABUSEIPDB_API_KEY}
+      SHODAN_API_KEY:      ${SHODAN_API_KEY:-}
       WEBAPP_URL:          http://webapp:3000
       LANGCHAIN_INTERNAL_TOKEN: ${LANGCHAIN_INTERNAL_TOKEN:-}
       REDIS_URL:           redis://redis:6379

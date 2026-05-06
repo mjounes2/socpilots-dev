@@ -3001,7 +3001,11 @@ async function doIOC(){
     const ab=enrich.abuse;
     aiMsg+=`AbuseIPDB Results:\n- Abuse confidence: ${ab.score}%\n- Total reports: ${ab.reports}\n- Country: ${ab.country||'unknown'}\n- ISP: ${ab.isp||'unknown'}\n- Usage type: ${ab.usage||'unknown'}\n\n`;
   }
-  if(!enrich?.vt && !enrich?.abuse){
+  if(enrich?.shodan && !enrich.shodan.error){
+    const sh=enrich.shodan;
+    aiMsg+=`Shodan Results:\n- Organisation: ${sh.org||'unknown'}\n- ISP: ${sh.isp||'unknown'}\n- Country: ${sh.country||'unknown'}\n- OS: ${sh.os||'unknown'}\n- Open ports: ${(sh.ports||[]).join(', ')||'none'}\n- Hostnames: ${(sh.hostnames||[]).join(', ')||'none'}\n- Known CVEs: ${(sh.vulns||[]).join(', ')||'none'}\n- Tags: ${(sh.tags||[]).join(', ')||'none'}\n\n`;
+  }
+  if(!enrich?.vt && !enrich?.abuse && !enrich?.shodan){
     aiMsg+=`No enrichment API data available. Analyze based on indicator value only.\n\n`;
   }
   aiMsg+=`Based on this data, provide:\n1. Risk level (Critical/High/Medium/Low)\n2. Threat actor association if known\n3. Likely attack type / MITRE technique\n4. Recommended immediate action\n\nBe concise — max 5 sentences.`;
@@ -3011,7 +3015,7 @@ async function doIOC(){
   const aiText = aiRes?.response || aiRes?.output || aiRes?.text || '';
 
   // Build structured display
-  let vtHtml='', abuseHtml='', cacheHtml='';
+  let vtHtml='', abuseHtml='', shodanHtml='', cacheHtml='';
   if(enrich){
     if(enrich.cached) cacheHtml=`<span style="font-size:8px;color:var(--g);font-family:var(--fm);padding:2px 6px;background:var(--gdim);border:1px solid rgba(0,230,118,.2);border-radius:3px">CACHED</span>`;
     if(enrich.vt&&!enrich.vt.error){
@@ -3049,10 +3053,32 @@ async function doIOC(){
     } else if(enrich.abuse?.error){
       abuseHtml=`<div class="ioc-section"><div class="ioc-lbl">AbuseIPDB</div><span style="color:var(--txt2);font-size:11px">${esc(enrich.abuse.error)}</span></div>`;
     }
+    if(enrich.shodan&&!enrich.shodan.error){
+      const sh=enrich.shodan;
+      const vulnBadges=(sh.vulns||[]).slice(0,8).map(v=>`<span class="badge crit" style="font-size:8px;cursor:pointer" title="${esc(v)}">${esc(v)}</span>`).join('');
+      const portBadges=(sh.ports||[]).slice(0,20).map(p=>`<span class="badge low" style="font-size:8px">${p}</span>`).join('');
+      const svcRows=(sh.services||[]).slice(0,5).map(s=>`<div style="font-size:10px;color:var(--txt2);font-family:var(--fm);padding:2px 0">${s.port}/${s.transport} <span style="color:var(--c)">${esc(s.product||'unknown')} ${esc(s.version||'')}</span></div>`).join('');
+      shodanHtml=`<div class="ioc-section">
+        <div class="ioc-lbl" style="display:flex;align-items:center;gap:6px">Shodan<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:10px;height:10px;color:var(--r)"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 16px;margin-bottom:8px">
+          ${sh.org?`<div style="font-size:11px;color:var(--txt2);font-family:var(--fm)">🏢 ${esc(sh.org)}</div>`:''}
+          ${sh.country?`<div style="font-size:11px;color:var(--txt2);font-family:var(--fm)">📍 ${esc(sh.country)}${sh.city?', '+esc(sh.city):''}</div>`:''}
+          ${sh.isp?`<div style="font-size:11px;color:var(--txt2);font-family:var(--fm)">ISP: ${esc(sh.isp)}</div>`:''}
+          ${sh.os?`<div style="font-size:11px;color:var(--y);font-family:var(--fm)">OS: ${esc(sh.os)}</div>`:''}
+        </div>
+        ${sh.hostnames?.length?`<div style="font-size:10px;color:var(--txt3);font-family:var(--fm);margin-bottom:6px">Hostnames: ${sh.hostnames.slice(0,4).map(h=>esc(h)).join(' · ')}</div>`:''}
+        ${portBadges?`<div style="margin-bottom:6px"><div style="font-size:9px;color:#8ab0d0;font-family:var(--fm);letter-spacing:1px;margin-bottom:4px">OPEN PORTS (${(sh.ports||[]).length})</div><div style="display:flex;flex-wrap:wrap;gap:3px">${portBadges}</div></div>`:''}
+        ${svcRows?`<div style="margin-bottom:6px"><div style="font-size:9px;color:#8ab0d0;font-family:var(--fm);letter-spacing:1px;margin-bottom:4px">SERVICES</div>${svcRows}</div>`:''}
+        ${vulnBadges?`<div><div style="font-size:9px;color:var(--r);font-family:var(--fm);letter-spacing:1px;margin-bottom:4px">⚠ CVEs (${(sh.vulns||[]).length})</div><div style="display:flex;flex-wrap:wrap;gap:3px">${vulnBadges}</div></div>`:'<div style="font-size:10px;color:var(--g);font-family:var(--fm)">No known CVEs</div>'}
+        ${sh.last_update?`<div style="font-size:9px;color:var(--txt3);font-family:var(--fm);margin-top:6px">Last indexed: ${esc(sh.last_update)}</div>`:''}
+      </div>`;
+    } else if(enrich.shodan?.error){
+      shodanHtml=`<div class="ioc-section"><div class="ioc-lbl">Shodan</div><span style="color:var(--txt2);font-size:11px">${esc(enrich.shodan.error)}</span></div>`;
+    }
   }
 
-  const noEnrichMsg = (!enrich||(!vtHtml&&!abuseHtml)) ?
-    `<div class="banner info" style="margin-bottom:10px">Direct enrichment unavailable — check VIRUSTOTAL_API_KEY / ABUSEIPDB_API_KEY in .env</div>` : '';
+  const noEnrichMsg = (!enrich||(!vtHtml&&!abuseHtml&&!shodanHtml)) ?
+    `<div class="banner info" style="margin-bottom:10px">Direct enrichment unavailable — check VIRUSTOTAL_API_KEY / ABUSEIPDB_API_KEY / SHODAN_API_KEY in .env</div>` : '';
 
   document.getElementById('ioc-result').innerHTML=`
     <div style="padding:10px;background:var(--bg2);border:1px solid var(--b1);border-radius:4px;margin-bottom:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
@@ -3061,7 +3087,7 @@ async function doIOC(){
       ${geo.c?`<span style="font-size:11px;color:var(--txt2);font-family:var(--fm)">📍 ${esc(geo.c)}</span>`:''}
       ${cacheHtml}
     </div>
-    ${noEnrichMsg}${vtHtml}${abuseHtml}
+    ${noEnrichMsg}${vtHtml}${abuseHtml}${shodanHtml}
     ${aiText?`<div class="ioc-section"><div class="ioc-lbl">AI Analysis</div><div style="font-size:12px;line-height:1.7;font-family:var(--fm);color:var(--txt2)">${fmtAI(aiText)}</div></div>`:''}`;
 
   if(_iocMap&&type==='ip'){
