@@ -1,7 +1,9 @@
 """
 SOCPilots — Knowledge Ingestion Service
-Ingests MITRE ATT&CK techniques, TheHive historical incidents, and Wazuh
-detection rules into Neo4j as KnowledgeItem nodes with 384-dim embeddings.
+Ingests MITRE ATT&CK techniques, TheHive historical incidents, Wazuh
+detection rules, post-incident reports, and SOC response procedures
+into Qdrant ("socpilots_knowledge") with 384-dim bge-small-en-v1.5 embeddings.
+Neo4j is no longer used by this service.
 """
 
 import os
@@ -9,7 +11,16 @@ import json
 import logging
 import requests
 from datetime import datetime, timezone
-from neo4j import GraphDatabase
+from qdrant_client import QdrantClient
+from qdrant_client.models import (
+    Distance,
+    VectorParams,
+    PointStruct,
+    Filter,
+    FieldCondition,
+    MatchValue,
+    CountRequest,
+)
 from sentence_transformers import SentenceTransformer
 
 log = logging.getLogger(__name__)
@@ -187,70 +198,251 @@ SOC_DETECTION_RULES = [
      "description": "Large data transfer via HTTP/HTTPS to external IPs not previously seen, potential data exfiltration. Related MITRE: T1041, T1048, T1567."},
 ]
 
+# ── Hardcoded SOC response procedures ───────────────────────────
+
+SOC_RESPONSE_PROCEDURES = [
+    {
+        "id": "RP001",
+        "name": "Phishing Email Response Procedure",
+        "content": (
+            "1. Quarantine the reported email and all copies across mail gateways. "
+            "2. Identify all recipients using message-trace tools. "
+            "3. Check if any recipient clicked links or opened attachments — correlate with proxy/endpoint logs. "
+            "4. If payload executed: isolate affected endpoints immediately. "
+            "5. Extract IOCs (URLs, hashes, sender domains) and block in email gateway, proxy, and EDR. "
+            "6. Reset credentials for any user who entered credentials on a phishing page. "
+            "7. Notify affected users and their managers. "
+            "8. Submit phishing sample to threat intel feeds. "
+            "9. Document timeline and update playbook with new IOC patterns. "
+            "Related MITRE: T1566, T1078, T1204."
+        ),
+    },
+    {
+        "id": "RP002",
+        "name": "Ransomware Incident Response Procedure",
+        "content": (
+            "1. Immediately isolate infected hosts from the network — disable NICs or move to quarantine VLAN. "
+            "2. Identify the ransomware family via file extension, ransom note, and hash lookups (ID Ransomware, VirusTotal). "
+            "3. Determine patient zero and initial infection vector. "
+            "4. Assess backup integrity — verify ransomware did not reach backup systems. "
+            "5. Identify lateral movement scope — how many hosts affected. "
+            "6. Notify leadership and legal as per IR plan. "
+            "7. Engage law enforcement if warranted. "
+            "8. Do NOT pay ransom without legal and executive approval. "
+            "9. Restore from clean backups after re-imaging affected systems. "
+            "10. Implement detection rules for specific ransomware TTPs. "
+            "Related MITRE: T1486, T1490, T1489, T1059."
+        ),
+    },
+    {
+        "id": "RP003",
+        "name": "Credential Compromise Response Procedure",
+        "content": (
+            "1. Immediately disable or reset compromised account credentials. "
+            "2. Invalidate all active sessions and OAuth tokens for the account. "
+            "3. Enable MFA if not already configured. "
+            "4. Review account activity for the past 30 days — look for privilege escalation, data access, forwarding rules. "
+            "5. Check for persistence mechanisms: new OAuth apps, inbox rules, forwarding, new admin accounts. "
+            "6. Determine how credentials were obtained: phishing, credential stuffing, password spray, malware. "
+            "7. Check for lateral movement using the compromised account. "
+            "8. Notify the user and require password change across all systems. "
+            "9. Block source IPs used by attacker. "
+            "Related MITRE: T1078, T1110, T1539, T1552."
+        ),
+    },
+    {
+        "id": "RP004",
+        "name": "Malware/Endpoint Compromise Response Procedure",
+        "content": (
+            "1. Isolate the endpoint immediately — disconnect from network, disable Wi-Fi. "
+            "2. Capture memory dump and disk image for forensic analysis before remediation. "
+            "3. Identify the malware family — run hash against VirusTotal, sandbox detonation. "
+            "4. Collect forensic artifacts: prefetch, event logs, registry hives, scheduled tasks, startup entries. "
+            "5. Identify persistence mechanisms and lateral movement attempts. "
+            "6. Extract IOCs and hunt across all endpoints using EDR. "
+            "7. Scope the incident — identify all affected systems. "
+            "8. Re-image the endpoint; do not attempt disinfection in place. "
+            "9. Restore from backup or rebuild with hardened baseline image. "
+            "10. Update EDR/AV signatures with extracted IOCs. "
+            "Related MITRE: T1055, T1547, T1543, T1036."
+        ),
+    },
+    {
+        "id": "RP005",
+        "name": "Data Exfiltration Response Procedure",
+        "content": (
+            "1. Identify the exfiltration channel: HTTP/S, DNS, email, cloud storage, FTP. "
+            "2. Block outbound connections to the destination IPs/domains immediately. "
+            "3. Quantify data exfiltrated — review DLP alerts, proxy logs, email gateway logs. "
+            "4. Determine what data was exfiltrated — classify sensitivity (PII, IP, credentials). "
+            "5. Identify the source host and user account involved. "
+            "6. Preserve logs and evidence for forensic and legal purposes. "
+            "7. Notify legal, privacy, and compliance teams — assess breach notification requirements. "
+            "8. Engage law enforcement if sensitive data or regulated data is involved. "
+            "9. Notify affected individuals if PII was exfiltrated per applicable regulations. "
+            "Related MITRE: T1041, T1048, T1567, T1071."
+        ),
+    },
+    {
+        "id": "RP006",
+        "name": "Insider Threat Response Procedure",
+        "content": (
+            "1. Treat investigation with strict need-to-know — do not alert the subject. "
+            "2. Preserve all evidence without tipping off the subject. "
+            "3. Collect logs: DLP alerts, email, file access, badge access, VPN logs. "
+            "4. Coordinate with HR and Legal before taking any action against the employee. "
+            "5. Conduct covert monitoring only as authorized by legal counsel. "
+            "6. Document the timeline of suspicious activities. "
+            "7. Assess data accessed, copied, or exfiltrated. "
+            "8. When ready to act: simultaneously disable access, recover assets, conduct interview with HR/Legal present. "
+            "9. Preserve chain of custody for all digital evidence. "
+            "Related MITRE: T1078, T1005, T1074, T1048."
+        ),
+    },
+    {
+        "id": "RP007",
+        "name": "DDoS/Availability Attack Response Procedure",
+        "content": (
+            "1. Confirm attack type: volumetric, protocol, or application-layer DDoS. "
+            "2. Engage upstream ISP or CDN provider DDoS mitigation services immediately. "
+            "3. Activate DDoS scrubbing center or null-route attack traffic if available. "
+            "4. Implement rate limiting and geo-blocking on edge firewalls. "
+            "5. Enable WAF rules to filter application-layer attack patterns. "
+            "6. Communicate status to stakeholders and affected users. "
+            "7. Monitor for follow-on attacks that may use the DDoS as a distraction. "
+            "8. Capture attack traffic samples for analysis and ISP reporting. "
+            "9. Post-incident: implement BCP/DRP improvements and upstream mitigation agreements. "
+            "Related MITRE: T1499, T1498."
+        ),
+    },
+    {
+        "id": "RP008",
+        "name": "Privilege Escalation Response Procedure",
+        "content": (
+            "1. Identify the account that escalated privileges and the mechanism used. "
+            "2. Revoke elevated privileges immediately; reset credentials. "
+            "3. Determine what actions were taken with elevated access. "
+            "4. Check for persistence installed while elevated (new accounts, services, scheduled tasks, backdoors). "
+            "5. Audit all privileged account activity for the past 72 hours. "
+            "6. Patch the vulnerability or misconfiguration exploited for escalation. "
+            "7. Review and tighten sudo rules, UAC settings, or RBAC permissions. "
+            "8. Hunt for similar escalation attempts across other endpoints. "
+            "9. Verify integrity of critical system files and security tools. "
+            "Related MITRE: T1548, T1134, T1068, T1053."
+        ),
+    },
+    {
+        "id": "RP009",
+        "name": "Lateral Movement Containment Procedure",
+        "content": (
+            "1. Identify source and destination hosts involved in lateral movement. "
+            "2. Isolate all confirmed compromised hosts from the network. "
+            "3. Block the specific techniques used: disable SMB shares, restrict WMI/WinRM, block PsExec. "
+            "4. Reset credentials for all accounts used in lateral movement — assume all touched accounts are compromised. "
+            "5. Audit active sessions and forcibly terminate suspicious remote sessions. "
+            "6. Segment the network to limit further spread — implement emergency VLAN changes if needed. "
+            "7. Hunt across the environment for additional footholds using same TTPs. "
+            "8. Review jump host and PAM logs for unauthorized use. "
+            "9. Update EDR detection for the specific lateral movement technique observed. "
+            "Related MITRE: T1021, T1550, T1534, T1210."
+        ),
+    },
+    {
+        "id": "RP010",
+        "name": "Cloud Account Compromise Response Procedure",
+        "content": (
+            "1. Immediately revoke compromised IAM credentials (access keys, service account tokens). "
+            "2. Review CloudTrail / Azure Activity Log / GCP Audit Log for all actions taken with the compromised credentials. "
+            "3. Identify resources created, modified, or accessed by the attacker. "
+            "4. Check for persistence: new IAM users/roles, new access keys, Lambda backdoors, new cloud resources. "
+            "5. Revoke all sessions associated with the compromised identity. "
+            "6. Assess data access: S3 buckets, storage blobs, databases accessed or exfiltrated. "
+            "7. Terminate any attacker-created compute instances (crypto miners are common). "
+            "8. Enable MFA enforcement for all privileged cloud accounts. "
+            "9. Review and tighten IAM policies — apply least privilege. "
+            "10. Enable GuardDuty/Defender for Cloud/Security Command Center for ongoing monitoring. "
+            "Related MITRE: T1078, T1552, T1530, T1537."
+        ),
+    },
+]
+
 
 class KnowledgeIngestionService:
     def __init__(self):
-        self.neo4j_uri  = os.getenv("NEO4J_URI",      "bolt://neo4j:7687")
-        self.neo4j_user = os.getenv("NEO4J_USER",     "neo4j")
-        self.neo4j_pass = os.getenv("NEO4J_PASSWORD", "")
+        self.qdrant_url  = os.getenv("QDRANT_URL", "http://qdrant:6333")
+        self.collection  = "socpilots_knowledge"
+
         self.thehive_url = (os.getenv("THEHIVE_URL", "")).rstrip("/")
         self.thehive_key = os.getenv("THEHIVE_API_KEY", "")
+
         self.opensearch_url  = (os.getenv("OPENSEARCH_URL", "")).rstrip("/")
         self.opensearch_user = os.getenv("OPENSEARCH_USER", "admin")
         self.opensearch_pass = os.getenv("OPENSEARCH_PASS", "")
-        self.wazuh_index = os.getenv("WAZUH_INDEX", "wazuh-alerts-*")
+        self.wazuh_index     = os.getenv("WAZUH_INDEX", "wazuh-alerts-*")
 
-        log.info("Loading sentence-transformers model (all-MiniLM-L6-v2)…")
-        self.model = SentenceTransformer("all-MiniLM-L6-v2")
+        log.info("Loading sentence-transformers model BAAI/bge-small-en-v1.5…")
+        self.model = SentenceTransformer("BAAI/bge-small-en-v1.5")
         log.info("Embedding model ready — 384 dimensions")
 
-        self._driver = GraphDatabase.driver(
-            self.neo4j_uri,
-            auth=(self.neo4j_user, self.neo4j_pass),
-            max_connection_pool_size=5,
-        )
+        self.client = QdrantClient(url=self.qdrant_url)
 
-    def _run(self, cypher: str, **params):
-        with self._driver.session() as session:
-            return list(session.run(cypher, **params))
+    def _embed(self, text: str) -> list[float]:
+        """Embed a document (not a query) — no prefix needed for BGE documents."""
+        return self.model.encode(text, normalize_embeddings=True).tolist()
 
-    def setup_vector_index(self):
-        """Create Neo4j vector index for KnowledgeItem nodes (idempotent)."""
+    @staticmethod
+    def _point_id(item_id: str) -> int:
+        """Convert a string item_id to a stable uint64 Qdrant point ID."""
+        return abs(hash(item_id)) % (2 ** 63)
+
+    def setup_vector_index(self) -> None:
+        """Create Qdrant collection 'socpilots_knowledge' (idempotent)."""
         try:
-            self._run("""
-                CREATE VECTOR INDEX knowledgeIndex IF NOT EXISTS
-                FOR (n:KnowledgeItem) ON n.embedding
-                OPTIONS {indexConfig: {
-                  `vector.dimensions`: 384,
-                  `vector.similarity_metric`: 'cosine'
-                }}
-            """)
-            log.info("Neo4j vector index 'knowledgeIndex' ready")
+            self.client.create_collection(
+                collection_name=self.collection,
+                vectors_config=VectorParams(size=384, distance=Distance.COSINE),
+            )
+            log.info(f"Qdrant collection '{self.collection}' created")
         except Exception as e:
-            log.warning(f"Vector index setup: {e}")
+            # Collection already exists — this is expected on re-runs
+            err = str(e).lower()
+            if "already exists" in err or "conflict" in err:
+                log.info(f"Qdrant collection '{self.collection}' already exists — skipping creation")
+            else:
+                log.warning(f"Collection setup warning: {e}")
 
-    def _embed(self, text: str) -> list:
-        return self.model.encode(text, convert_to_numpy=True).tolist()
-
-    def _upsert_knowledge_item(self, item_id: str, title: str, description: str,
-                               item_type: str, source: str, metadata: dict):
+    def _upsert_knowledge_item(
+        self,
+        item_id: str,
+        title: str,
+        description: str,
+        item_type: str,
+        source: str,
+        metadata: dict,
+    ) -> None:
         text_for_embedding = f"{title}. {description}"
         embedding = self._embed(text_for_embedding)
-        self._run("""
-            MERGE (n:KnowledgeItem {id: $id})
-            SET n.title       = $title,
-                n.description = $description,
-                n.type        = $type,
-                n.source      = $source,
-                n.metadata    = $metadata,
-                n.embedding   = $embedding,
-                n.updated_at  = $updated_at
-        """,
-            id=item_id, title=title, description=description,
-            type=item_type, source=source,
-            metadata=json.dumps(metadata),
-            embedding=embedding,
-            updated_at=datetime.now(timezone.utc).isoformat(),
+        point_id  = self._point_id(item_id)
+
+        payload = {
+            "id":         item_id,
+            "title":      title,
+            "content":    description,
+            "type":       item_type,
+            "source":     source,
+            "metadata":   metadata,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+        self.client.upsert(
+            collection_name=self.collection,
+            points=[
+                PointStruct(
+                    id=point_id,
+                    vector=embedding,
+                    payload=payload,
+                )
+            ],
         )
 
     # ── Phase 1: MITRE ATT&CK ─────────────────────────────────
@@ -274,6 +466,7 @@ class KnowledgeIngestionService:
 
     def ingest_detection_rules(self) -> int:
         count = 0
+
         # Built-in SOC rules
         for rule in SOC_DETECTION_RULES:
             self._upsert_knowledge_item(
@@ -301,8 +494,8 @@ class KnowledgeIngestionService:
                                 "terms": {"field": "rule.id", "size": 200,
                                           "order": {"doc_count": "desc"}},
                                 "aggs": {
-                                    "desc":  {"terms": {"field": "rule.description", "size": 1}},
-                                    "level": {"max": {"field": "rule.level"}},
+                                    "desc":   {"terms": {"field": "rule.description", "size": 1}},
+                                    "level":  {"max":   {"field": "rule.level"}},
                                     "groups": {"terms": {"field": "rule.groups", "size": 3}},
                                 },
                             }
@@ -311,10 +504,10 @@ class KnowledgeIngestionService:
                 )
                 buckets = resp.json().get("aggregations", {}).get("rules", {}).get("buckets", [])
                 for b in buckets[:100]:
-                    rule_id  = b["key"]
-                    desc     = b.get("desc", {}).get("buckets", [{}])[0].get("key", "")
-                    level    = int(b.get("level", {}).get("value") or 0)
-                    groups   = [g["key"] for g in b.get("groups", {}).get("buckets", [])]
+                    rule_id = b["key"]
+                    desc    = b.get("desc", {}).get("buckets", [{}])[0].get("key", "")
+                    level   = int(b.get("level", {}).get("value") or 0)
+                    groups  = [g["key"] for g in b.get("groups", {}).get("buckets", [])]
                     if not desc:
                         continue
                     self._upsert_knowledge_item(
@@ -323,8 +516,12 @@ class KnowledgeIngestionService:
                         description=f"Detection: {desc}. Groups: {', '.join(groups)}.",
                         item_type="DetectionRule",
                         source="wazuh",
-                        metadata={"rule_id": rule_id, "level": level, "groups": groups,
-                                  "count": b.get("doc_count", 0)},
+                        metadata={
+                            "rule_id": rule_id,
+                            "level":   level,
+                            "groups":  groups,
+                            "count":   b.get("doc_count", 0),
+                        },
                     )
                     count += 1
                 log.info(f"Ingested {len(buckets[:100])} Wazuh rules from OpenSearch")
@@ -343,8 +540,10 @@ class KnowledgeIngestionService:
         try:
             resp = requests.post(
                 f"{self.thehive_url}/api/v1/query",
-                headers={"Authorization": f"Bearer {self.thehive_key}",
-                         "Content-Type": "application/json"},
+                headers={
+                    "Authorization": f"Bearer {self.thehive_key}",
+                    "Content-Type":  "application/json",
+                },
                 verify=False,
                 timeout=20,
                 json={"query": [
@@ -360,7 +559,7 @@ class KnowledgeIngestionService:
                 if not title:
                     continue
                 sev_map = {1: "Low", 2: "Medium", 3: "High", 4: "Critical"}
-                sev = sev_map.get(c.get("severity", 2), "Medium")
+                sev  = sev_map.get(c.get("severity", 2), "Medium")
                 text = f"{title}. Severity: {sev}. Status: {c.get('status', '')}. {desc[:500]}"
                 self._upsert_knowledge_item(
                     item_id=f"thehive:{c.get('_id', title[:30])}",
@@ -369,10 +568,10 @@ class KnowledgeIngestionService:
                     item_type="IncidentCase",
                     source="thehive",
                     metadata={
-                        "case_id":   c.get("caseId"),
-                        "severity":  sev,
-                        "status":    c.get("status"),
-                        "tags":      c.get("tags", []),
+                        "case_id":    c.get("caseId"),
+                        "severity":   sev,
+                        "status":     c.get("status"),
+                        "tags":       c.get("tags", []),
                         "created_at": c.get("_createdAt"),
                     },
                 )
@@ -382,34 +581,153 @@ class KnowledgeIngestionService:
             log.warning(f"TheHive incident ingestion failed: {e}")
         return count
 
+    # ── Phase 4: Post-Incident Reports from TheHive ───────────
+
+    def ingest_incident_reports(self) -> int:
+        """
+        Ingest post-incident analysis from resolved TheHive cases tagged with
+        'post-incident' or 'lessons-learned'. Item type: IncidentReport.
+        """
+        if not self.thehive_url or not self.thehive_key:
+            log.warning("TheHive not configured — skipping incident report ingestion")
+            return 0
+        count = 0
+        try:
+            resp = requests.post(
+                f"{self.thehive_url}/api/v1/query",
+                headers={
+                    "Authorization": f"Bearer {self.thehive_key}",
+                    "Content-Type":  "application/json",
+                },
+                verify=False,
+                timeout=20,
+                json={"query": [
+                    {"_name": "listCase"},
+                    {
+                        "_name": "filter",
+                        "_field": "status",
+                        "_value": "Resolved",
+                    },
+                    {"_name": "sort", "_fields": [{"_createdAt": "desc"}]},
+                    {"_name": "page", "from": 0, "to": 500},
+                ]},
+            )
+            cases = resp.json() if isinstance(resp.json(), list) else []
+            for c in cases:
+                tags = [str(t).lower() for t in c.get("tags", [])]
+                if not any(tag in tags for tag in ("post-incident", "lessons-learned")):
+                    continue
+                title = c.get("title", "")
+                desc  = c.get("description", "") or ""
+                if not title:
+                    continue
+                sev_map = {1: "Low", 2: "Medium", 3: "High", 4: "Critical"}
+                sev = sev_map.get(c.get("severity", 2), "Medium")
+                text = (
+                    f"Post-Incident Report: {title}. "
+                    f"Severity: {sev}. Status: {c.get('status', '')}. "
+                    f"Tags: {', '.join(c.get('tags', []))}. "
+                    f"{desc[:800]}"
+                )
+                self._upsert_knowledge_item(
+                    item_id=f"report:thehive:{c.get('_id', title[:30])}",
+                    title=f"[PostIncident/{sev}] {title}",
+                    description=text,
+                    item_type="IncidentReport",
+                    source="thehive_reports",
+                    metadata={
+                        "case_id":    c.get("caseId"),
+                        "severity":   sev,
+                        "status":     c.get("status"),
+                        "tags":       c.get("tags", []),
+                        "created_at": c.get("_createdAt"),
+                    },
+                )
+                count += 1
+            log.info(f"Ingested {count} post-incident reports from TheHive")
+        except Exception as e:
+            log.warning(f"TheHive incident report ingestion failed: {e}")
+        return count
+
+    # ── Phase 5: SOC Response Procedures ─────────────────────
+
+    def ingest_response_procedures(self) -> int:
+        """Ingest hardcoded SOC response procedures."""
+        count = 0
+        for proc in SOC_RESPONSE_PROCEDURES:
+            self._upsert_knowledge_item(
+                item_id=f"procedure:{proc['id']}",
+                title=proc["name"],
+                description=proc["content"],
+                item_type="ResponseProcedure",
+                source="soc_procedures",
+                metadata={"procedure_id": proc["id"]},
+            )
+            count += 1
+        log.info(f"Ingested {count} SOC response procedures")
+        return count
+
+    # ── Orchestration ─────────────────────────────────────────
+
     def run_ingestion(self, sources: list[str] | None = None) -> dict:
-        """Orchestrate knowledge base ingestion. sources: list of 'mitre'|'rules'|'incidents'."""
+        """
+        Orchestrate knowledge base ingestion.
+        sources: list of 'mitre' | 'rules' | 'incidents' | 'incident_reports' | 'response_procedures'
+        """
         if sources is None:
-            sources = ["mitre", "rules", "incidents"]
+            sources = ["mitre", "rules", "incidents", "incident_reports", "response_procedures"]
         log.info(f"Starting ingestion for sources: {sources}")
         self.setup_vector_index()
-        mitre     = self.ingest_mitre_attack_patterns()    if "mitre"     in sources else 0
-        rules     = self.ingest_detection_rules()          if "rules"     in sources else 0
-        incidents = self.ingest_historical_incidents()     if "incidents" in sources else 0
-        total     = mitre + rules + incidents
+
+        mitre              = self.ingest_mitre_attack_patterns() if "mitre"              in sources else 0
+        rules              = self.ingest_detection_rules()        if "rules"              in sources else 0
+        incidents          = self.ingest_historical_incidents()   if "incidents"          in sources else 0
+        incident_reports   = self.ingest_incident_reports()       if "incident_reports"   in sources else 0
+        response_procs     = self.ingest_response_procedures()    if "response_procedures" in sources else 0
+
+        total = mitre + rules + incidents + incident_reports + response_procs
         log.info(f"Ingestion complete — {total} items total")
         return {
-            "mitre_techniques":     mitre,
-            "detection_rules":      rules,
-            "historical_incidents": incidents,
-            "total":                total,
+            "mitre_techniques":       mitre,
+            "detection_rules":        rules,
+            "historical_incidents":   incidents,
+            "incident_reports":       incident_reports,
+            "response_procedures":    response_procs,
+            "total":                  total,
         }
 
     def get_stats(self) -> dict:
-        records = self._run("""
-            MATCH (n:KnowledgeItem)
-            RETURN n.type AS type, count(n) AS cnt
-        """)
-        stats = {}
-        for r in records:
-            stats[r["type"]] = r["cnt"]
-        stats["total"] = sum(stats.values())
+        """Return per-type point counts from Qdrant."""
+        ITEM_TYPES = [
+            "AttackPattern",
+            "DetectionRule",
+            "IncidentCase",
+            "IncidentReport",
+            "ResponseProcedure",
+        ]
+        stats: dict[str, int] = {}
+        for itype in ITEM_TYPES:
+            try:
+                result = self.client.count(
+                    collection_name=self.collection,
+                    count_filter=Filter(
+                        must=[FieldCondition(key="type", match=MatchValue(value=itype))]
+                    ),
+                    exact=True,
+                )
+                stats[itype] = result.count
+            except Exception as e:
+                log.warning(f"Could not count type {itype}: {e}")
+                stats[itype] = 0
+
+        try:
+            info = self.client.get_collection(self.collection)
+            stats["total"] = info.points_count or sum(stats.values())
+        except Exception:
+            stats["total"] = sum(stats.values())
+
         return stats
 
-    def close(self):
-        self._driver.close()
+    def close(self) -> None:
+        # QdrantClient manages its own connection pool; no explicit close needed.
+        pass

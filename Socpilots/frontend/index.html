@@ -255,6 +255,60 @@ body.dim .led.g{box-shadow:0 0 3px var(--g)}
 body.dim .led.r{box-shadow:0 0 2px var(--r)}
 body.dim .kpi::after{opacity:.5}
 body.dim .live-dot{box-shadow:0 0 3px var(--g)}
+
+/* ─── NOTIFICATIONS ──────────────────────────────────── */
+.notif-bell{position:relative;cursor:pointer;padding:5px 8px;background:transparent;border:1px solid var(--b1);border-radius:var(--r3);color:var(--txt2);display:flex;align-items:center;gap:4px;transition:all .12s;font-family:var(--fm);font-size:10px}
+.notif-bell:hover{border-color:var(--c);color:var(--c)}
+.notif-bell svg{width:13px;height:13px}
+.notif-badge{position:absolute;top:-4px;right:-4px;background:var(--r);color:#fff;font-size:8px;font-weight:700;min-width:14px;height:14px;border-radius:7px;display:flex;align-items:center;justify-content:center;padding:0 3px;font-family:var(--fm);line-height:1}
+.notif-badge.hidden{display:none}
+.notif-drop{position:absolute;top:calc(100% + 8px);right:0;width:360px;background:var(--bg2);border:1px solid var(--b2);border-radius:6px;box-shadow:0 8px 32px rgba(0,0,0,.6);z-index:999;display:none;flex-direction:column;overflow:hidden}
+.notif-drop.open{display:flex}
+.notif-drop-hd{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--b1)}
+.notif-drop-hd-ttl{font-family:var(--fw);font-size:12px;font-weight:600;letter-spacing:1px;color:var(--txt)}
+.notif-mark-all{font-size:9px;color:var(--c);cursor:pointer;font-family:var(--fm);background:none;border:none;padding:0}
+.notif-drop-hd-ttl span{color:var(--c)}
+.notif-list{max-height:380px;overflow-y:auto;flex:1}
+.notif-item{padding:10px 14px;border-bottom:1px solid var(--b1);cursor:pointer;transition:background .1s;display:flex;gap:10px;align-items:flex-start}
+.notif-item:hover{background:rgba(0,229,255,.04)}
+.notif-item.unread{border-left:2px solid var(--c)}
+.notif-item.unread.crit{border-left-color:var(--r)}
+.notif-item.unread.warn{border-left-color:var(--y)}
+.notif-dot{width:8px;height:8px;border-radius:50%;background:var(--c);flex-shrink:0;margin-top:4px}
+.notif-dot.crit{background:var(--r)}
+.notif-dot.warn{background:var(--y)}
+.notif-dot.read{background:var(--b2)}
+.notif-info{flex:1;min-width:0}
+.notif-ttl{font-size:11px;font-weight:600;color:var(--txt);font-family:var(--fb);margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.notif-msg{font-size:10px;color:var(--txt2);font-family:var(--fm);overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.notif-time{font-size:9px;color:var(--txt3);font-family:var(--fm);margin-top:3px}
+.notif-empty{padding:24px;text-align:center;color:var(--txt2);font-size:11px;font-family:var(--fm)}
+.notif-drop-ft{padding:8px 14px;border-top:1px solid var(--b1);text-align:center}
+.notif-drop-ft a{font-size:10px;color:var(--c);cursor:pointer;font-family:var(--fm);text-decoration:none}
+
+/* ─── USERS PAGE ─────────────────────────────────────── */
+.user-table{width:100%;border-collapse:collapse;font-size:12px}
+.user-table th{text-align:left;padding:8px 12px;border-bottom:1px solid var(--b1);font-size:9px;color:var(--txt2);letter-spacing:1.5px;font-family:var(--fm);text-transform:uppercase}
+.user-table td{padding:9px 12px;border-bottom:1px solid rgba(26,47,74,.5);font-family:var(--fm)}
+.user-table tr:hover td{background:rgba(0,229,255,.03)}
+.role-badge{display:inline-block;padding:2px 7px;border-radius:2px;font-size:9px;letter-spacing:1px;font-family:var(--fm);text-transform:uppercase;font-weight:600}
+.role-badge.admin{background:var(--pdim);color:var(--p);border:1px solid rgba(213,0,249,.25)}
+.role-badge.l3{background:var(--rdim);color:var(--r);border:1px solid rgba(255,23,68,.25)}
+.role-badge.l2{background:var(--ydim);color:var(--y);border:1px solid rgba(255,171,0,.25)}
+.role-badge.l1{background:var(--cdim);color:var(--c);border:1px solid rgba(0,229,255,.25)}
+
+/* ─── DARK SOC AUTONOMOUS PAGE ───────────────────────── */
+.dark-soc-status-ring{width:120px;height:120px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-direction:column;border:3px solid;margin:0 auto 20px;transition:all .3s}
+.dark-soc-status-ring.active{border-color:var(--g);box-shadow:0 0 30px rgba(0,230,118,.2);background:rgba(0,230,118,.05)}
+.dark-soc-status-ring.inactive{border-color:var(--r);box-shadow:0 0 20px rgba(255,23,68,.1);background:rgba(255,23,68,.03)}
+.audit-row{display:flex;gap:10px;padding:8px 12px;border-bottom:1px solid var(--b1);font-size:11px;font-family:var(--fm);align-items:center}
+.audit-row:hover{background:rgba(0,229,255,.03)}
+.audit-time{color:var(--txt3);min-width:130px;font-size:9px}
+.audit-action{flex:1;color:var(--txt)}
+.audit-result{padding:2px 6px;border-radius:2px;font-size:9px;letter-spacing:.5px}
+.audit-result.ok{background:var(--gdim);color:var(--g)}
+.audit-result.skip{background:var(--cdim);color:var(--c)}
+.audit-result.fail{background:var(--rdim);color:var(--r)}
 </style>
 </head>
 <body>
@@ -303,6 +357,8 @@ if(localStorage.getItem("soc_dim")==="1")document.body.classList.add("dim");
     <div class="sbi" onclick="go('reports')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg><span class="sbi-lbl">Reports</span></div>
   </div>
   <div class="sb-bot">
+    <div class="sbi" onclick="go('darksoc')" id="nav-darksoc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/><path d="M8.5 8.5l7 7M15.5 8.5l-7 7"/></svg><span class="sbi-lbl">Dark SOC</span><span class="sbi-n" id="n-darksoc" style="display:none">ON</span></div>
+    <div class="sbi admin-only" onclick="go('users')" id="nav-users" style="display:none"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg><span class="sbi-lbl">User Management</span></div>
     <div class="sbi" onclick="go('settings')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg><span class="sbi-lbl">Settings</span></div>
     <div class="sbi" onclick="logout()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg><span class="sbi-lbl">Logout</span></div>
   </div>
@@ -326,6 +382,20 @@ if(localStorage.getItem("soc_dim")==="1")document.body.classList.add("dim");
   <div class="tb-flex"></div>
   <button class="tb-btn" id="dim-btn" onclick="toggleDim()" title="Toggle dim mode for eye strain reduction"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:11px;height:11px"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg><span id="dim-label">DIM</span></button>
   <button class="tb-btn" onclick="refresh()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>Refresh</button>
+  <div style="position:relative" id="notif-wrap">
+    <div class="notif-bell" onclick="toggleNotifDrop()" title="Notifications">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
+      <span id="notif-badge" class="notif-badge hidden">0</span>
+    </div>
+    <div class="notif-drop" id="notif-drop">
+      <div class="notif-drop-hd">
+        <div class="notif-drop-hd-ttl">NOTIFICATIONS <span id="notif-unread-count"></span></div>
+        <button class="notif-mark-all" onclick="markAllNotifRead()">Mark all read</button>
+      </div>
+      <div class="notif-list" id="notif-list"><div class="notif-empty">No notifications</div></div>
+      <div class="notif-drop-ft"><a onclick="go('notifications')">View all</a></div>
+    </div>
+  </div>
   <div class="tb-user"><div class="tb-av" id="tb-av">Y</div><span class="tb-uname" id="tb-un">—</span></div>
 </header>
 
@@ -1500,6 +1570,105 @@ sshd: Failed" style="min-height:80px"></textarea></div>
         <span id="cnt-rare" class="sbi-n">—</span>
       </div>
       <div id="ueba-rare" style="font-size:12px;color:#8ab0d0;font-family:var(--fm)"><div class="loading"><div class="spin"></div></div></div>
+    </div>
+  </div>
+</div>
+
+<!-- DARK SOC AUTONOMOUS MODE PAGE -->
+<div class="page" id="p-darksoc">
+  <div style="margin-bottom:16px;display:flex;align-items:center;justify-content:space-between">
+    <div>
+      <h2 style="font-family:var(--fw);font-size:20px;font-weight:700;letter-spacing:2px;color:var(--r);text-transform:uppercase">⚠ Dark SOC — Autonomous Mode</h2>
+      <p style="font-size:11px;color:var(--txt2);margin-top:4px;font-family:var(--fm)">Autonomous AI response engine · Requires L3+ access to modify</p>
+    </div>
+    <div id="darksoc-page-badge" style="font-size:11px;font-family:var(--fm);padding:5px 14px;background:var(--rdim);color:var(--r);border:1px solid rgba(255,23,68,.3);border-radius:3px;letter-spacing:2px;font-weight:700">INACTIVE</div>
+  </div>
+  <div class="grid g3" style="margin-bottom:16px">
+    <div class="card" style="grid-column:1/2;text-align:center;padding:28px 16px">
+      <div class="dark-soc-status-ring inactive" id="darksoc-ring">
+        <div style="font-family:var(--fw);font-size:28px;font-weight:700;color:var(--r)" id="darksoc-ring-txt">OFF</div>
+        <div style="font-size:9px;color:var(--txt2);font-family:var(--fm);margin-top:4px">AUTONOMOUS</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">
+        <label style="display:flex;align-items:center;justify-content:space-between;font-size:11px;font-family:var(--fm);color:var(--txt2);padding:6px 12px;background:var(--bg3);border-radius:4px">
+          <span>Auto-Response Engine</span>
+          <input type="checkbox" id="ds-enabled" onchange="saveDarkSocSettings()" style="accent-color:var(--r)">
+        </label>
+        <label style="display:flex;align-items:center;justify-content:space-between;font-size:11px;font-family:var(--fm);color:var(--txt2);padding:6px 12px;background:var(--bg3);border-radius:4px">
+          <span>Threat Hunt Automation</span>
+          <input type="checkbox" id="ds-hunt" onchange="saveDarkSocSettings()" style="accent-color:var(--y)">
+        </label>
+        <label style="display:flex;align-items:center;justify-content:space-between;font-size:11px;font-family:var(--fm);color:var(--txt2);padding:6px 12px;background:var(--bg3);border-radius:4px">
+          <span>Lateral Movement Monitor</span>
+          <input type="checkbox" id="ds-lateral" onchange="saveDarkSocSettings()" style="accent-color:var(--y)">
+        </label>
+      </div>
+    </div>
+    <div class="card" style="grid-column:2/4">
+      <div class="card-hd"><div class="card-ttl"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>EXECUTION STATS</div></div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px" id="ds-stats">
+        <div class="kpi cl"><div class="kpi-lbl">Total Runs</div><div class="kpi-val" id="ds-total">—</div></div>
+        <div class="kpi cg"><div class="kpi-lbl">Executed</div><div class="kpi-val" id="ds-exec">—</div></div>
+        <div class="kpi cy"><div class="kpi-lbl">Skipped</div><div class="kpi-val" id="ds-skip">—</div></div>
+        <div class="kpi cr"><div class="kpi-lbl">Pending</div><div class="kpi-val" id="ds-pend">—</div></div>
+      </div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-hd">
+      <div class="card-ttl"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>AUDIT LOG — RECENT ACTIONS</div>
+      <button class="btn btn-sm" onclick="loadDarkSocPage()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:10px;height:10px"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg> Refresh</button>
+    </div>
+    <div id="ds-audit-list" style="max-height:400px;overflow-y:auto">
+      <div class="notif-empty">Loading audit log…</div>
+    </div>
+  </div>
+</div>
+
+<!-- USER MANAGEMENT PAGE -->
+<div class="page" id="p-users">
+  <div style="margin-bottom:16px;display:flex;align-items:center;justify-content:space-between">
+    <div>
+      <h2 style="font-family:var(--fw);font-size:20px;font-weight:700;letter-spacing:2px;color:var(--c);text-transform:uppercase">User Management</h2>
+      <p style="font-size:11px;color:var(--txt2);margin-top:4px;font-family:var(--fm)">Manage analyst accounts and role assignments · Admin only</p>
+    </div>
+    <button class="btn btn-p" onclick="openAddUser()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px"><path d="M12 5v14M5 12h14"/></svg> Add User</button>
+  </div>
+  <div class="card">
+    <table class="user-table">
+      <thead>
+        <tr>
+          <th>Username</th><th>Display Name</th><th>Role</th><th>Email</th><th>Last Login</th><th>Status</th><th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="users-tbody">
+        <tr><td colspan="7" style="text-align:center;padding:24px;color:var(--txt2);font-family:var(--fm)">Loading users…</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ADD/EDIT USER MODAL -->
+<div id="user-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:2000;align-items:center;justify-content:center">
+  <div style="background:var(--bg2);border:1px solid var(--b2);border-radius:8px;padding:24px;width:400px;max-width:90vw">
+    <h3 style="font-family:var(--fw);font-size:16px;font-weight:700;letter-spacing:2px;margin-bottom:16px;color:var(--txt)" id="user-modal-title">ADD USER</h3>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <div><label style="font-size:9px;color:var(--txt2);font-family:var(--fm);letter-spacing:1px;display:block;margin-bottom:4px">USERNAME</label><input id="um-username" class="inp" style="width:100%"></div>
+      <div><label style="font-size:9px;color:var(--txt2);font-family:var(--fm);letter-spacing:1px;display:block;margin-bottom:4px">DISPLAY NAME</label><input id="um-display" class="inp" style="width:100%"></div>
+      <div><label style="font-size:9px;color:var(--txt2);font-family:var(--fm);letter-spacing:1px;display:block;margin-bottom:4px">EMAIL</label><input id="um-email" class="inp" type="email" style="width:100%"></div>
+      <div><label style="font-size:9px;color:var(--txt2);font-family:var(--fm);letter-spacing:1px;display:block;margin-bottom:4px">ROLE</label>
+        <select id="um-role" class="inp" style="width:100%">
+          <option value="l1">L1 — Analyst (Read Only)</option>
+          <option value="l2">L2 — Analyst (Investigation)</option>
+          <option value="l3">L3 — Senior Analyst (Response Actions)</option>
+          <option value="admin">Admin (Full Access)</option>
+        </select>
+      </div>
+      <div id="um-pass-wrap"><label style="font-size:9px;color:var(--txt2);font-family:var(--fm);letter-spacing:1px;display:block;margin-bottom:4px">PASSWORD</label><input id="um-password" class="inp" type="password" style="width:100%" placeholder="Leave empty to auto-generate"></div>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:16px;justify-content:flex-end">
+      <button class="btn" onclick="closeUserModal()">Cancel</button>
+      <button class="btn btn-p" onclick="saveUser()" id="um-save-btn">Save</button>
     </div>
   </div>
 </div>
@@ -4556,6 +4725,288 @@ function toggleDim(){
 checkStatus();
 loadDashboard();
 setInterval(()=>{checkStatus();if(CUR==='dashboard')loadDashboard();if(CUR==='threatmap')loadThreatMap();},90000);
+</script>
+<script>
+// ─── NOTIFICATIONS ────────────────────────────────────────────────────
+let _notifOpen = false;
+let _notifInterval = null;
+
+function toggleNotifDrop() {
+  _notifOpen = !_notifOpen;
+  document.getElementById('notif-drop').classList.toggle('open', _notifOpen);
+  if (_notifOpen) loadNotifDrop();
+  document.addEventListener('click', closeNotifOnOutside, {once: true, capture: true});
+}
+
+function closeNotifOnOutside(e) {
+  const wrap = document.getElementById('notif-wrap');
+  if (wrap && !wrap.contains(e.target)) {
+    _notifOpen = false;
+    document.getElementById('notif-drop').classList.remove('open');
+  } else if (_notifOpen) {
+    document.addEventListener('click', closeNotifOnOutside, {once: true, capture: true});
+  }
+}
+
+async function loadNotifDrop() {
+  const list = document.getElementById('notif-list');
+  try {
+    const data = await G('/api/notifications?limit=20');
+    const items = data.notifications || [];
+    if (!items.length) {
+      list.innerHTML = '<div class="notif-empty">No notifications yet</div>';
+      return;
+    }
+    list.innerHTML = items.map(n => {
+      const cls = !n.read ? 'unread ' + (n.severity === 'critical' ? 'crit' : n.severity === 'warning' ? 'warn' : '') : '';
+      const dotCls = !n.read ? (n.severity === 'critical' ? 'crit' : n.severity === 'warning' ? 'warn' : '') : 'read';
+      const time = new Date(n.created_at).toLocaleString();
+      return `<div class="notif-item ${cls}" onclick="markNotifRead(${n.id},this)">
+        <div class="notif-dot ${dotCls}"></div>
+        <div class="notif-info">
+          <div class="notif-ttl">${e(n.title)}</div>
+          <div class="notif-msg">${e(n.message||'')}</div>
+          <div class="notif-time">${time}</div>
+        </div>
+      </div>`;
+    }).join('');
+  } catch(err) {
+    list.innerHTML = '<div class="notif-empty">Failed to load notifications</div>';
+  }
+}
+
+async function pollNotifCount() {
+  try {
+    const data = await G('/api/notifications/count').catch(()=>null);
+    if (!data) return;
+    const badge = document.getElementById('notif-badge');
+    const count = data.unread || 0;
+    if (count > 0) {
+      badge.textContent = count > 99 ? '99+' : count;
+      badge.classList.remove('hidden');
+    } else {
+      badge.classList.add('hidden');
+    }
+    const countEl = document.getElementById('notif-unread-count');
+    if (countEl) countEl.textContent = count > 0 ? `(${count})` : '';
+  } catch(e) {}
+}
+
+async function markNotifRead(id, el) {
+  await P(`/api/notifications/${id}/read`, {}).catch(()=>null);
+  el.classList.remove('unread', 'crit', 'warn');
+  el.querySelector('.notif-dot').className = 'notif-dot read';
+  pollNotifCount();
+}
+
+async function markAllNotifRead() {
+  await P('/api/notifications/read-all', {}).catch(()=>null);
+  document.getElementById('notif-drop').classList.remove('open');
+  _notifOpen = false;
+  pollNotifCount();
+}
+
+function e(s){ const d=document.createElement('div');d.textContent=s;return d.innerHTML; }
+
+// Poll every 30 seconds
+_notifInterval = setInterval(pollNotifCount, 30000);
+document.addEventListener('DOMContentLoaded', ()=>{ setTimeout(pollNotifCount, 2000); });
+
+// ─── DARK SOC PAGE ─────────────────────────────────────────────────────
+async function loadDarkSocPage() {
+  const [s, ds] = await Promise.allSettled([G('/api/settings'), G('/api/darksoc/status')]);
+  const settings = s.status==='fulfilled' ? s.value : {};
+  const dsStat   = ds.status==='fulfilled' ? ds.value : {};
+
+  const mainOn = settings.darksoc_enabled === 'true';
+  const huntOn = settings.darksoc_hunt_enabled === 'true';
+  const latOn  = settings.darksoc_lateral_monitor_enabled === 'true';
+  const anyOn  = mainOn || huntOn || latOn;
+
+  const badge = document.getElementById('darksoc-page-badge');
+  const ring  = document.getElementById('darksoc-ring');
+  const rtxt  = document.getElementById('darksoc-ring-txt');
+  if (badge) { badge.textContent = anyOn ? 'ACTIVE' : 'INACTIVE'; badge.style.color = anyOn ? 'var(--g)' : 'var(--r)'; badge.style.background = anyOn ? 'var(--gdim)' : 'var(--rdim)'; badge.style.borderColor = anyOn ? 'rgba(0,230,118,.3)' : 'rgba(255,23,68,.3)'; }
+  if (ring)  { ring.className = 'dark-soc-status-ring ' + (anyOn ? 'active' : 'inactive'); }
+  if (rtxt)  { rtxt.textContent = anyOn ? 'ON' : 'OFF'; rtxt.style.color = anyOn ? 'var(--g)' : 'var(--r)'; }
+
+  const dsEl = document.getElementById('ds-enabled'); if (dsEl) dsEl.checked = mainOn;
+  const dhEl = document.getElementById('ds-hunt');    if (dhEl) dhEl.checked = huntOn;
+  const dlEl = document.getElementById('ds-lateral'); if (dlEl) dlEl.checked = latOn;
+
+  const stats = dsStat.stats || {};
+  const setT = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v ?? '—'; };
+  setT('ds-total', stats.total_executions || 0);
+  setT('ds-exec',  stats.executed || 0);
+  setT('ds-skip',  stats.skipped  || 0);
+  setT('ds-pend',  stats.pending_approvals || 0);
+
+  // Load audit log
+  const auditEl = document.getElementById('ds-audit-list');
+  if (auditEl) {
+    try {
+      const execs = await G('/api/playbook-executions?limit=30');
+      const rows = execs.executions || execs || [];
+      if (!rows.length) { auditEl.innerHTML = '<div class="notif-empty">No autonomous actions yet</div>'; return; }
+      auditEl.innerHTML = rows.map(r => {
+        const ts = new Date(r.created_at).toLocaleString();
+        const resultCls = r.outcome === 'executed' ? 'ok' : r.outcome === 'skipped' ? 'skip' : 'fail';
+        const actions = (r.actions_taken || []).join(', ') || r.playbook_name || '—';
+        return `<div class="audit-row">
+          <span class="audit-time">${ts}</span>
+          <span class="audit-action"><strong>${e(r.playbook_name||'—')}</strong> — ${e(r.agent||'')}</span>
+          <span class="audit-result ${resultCls}">${r.outcome?.toUpperCase()||'—'}</span>
+        </div>`;
+      }).join('');
+    } catch(err) {
+      auditEl.innerHTML = '<div class="notif-empty">Failed to load audit log</div>';
+    }
+  }
+}
+
+async function saveDarkSocSettings() {
+  const mainOn = document.getElementById('ds-enabled')?.checked;
+  const huntOn = document.getElementById('ds-hunt')?.checked;
+  const latOn  = document.getElementById('ds-lateral')?.checked;
+  await P('/api/settings', {
+    darksoc_enabled: String(mainOn),
+    darksoc_hunt_enabled: String(huntOn),
+    darksoc_lateral_monitor_enabled: String(latOn),
+  });
+  loadDarkSocPage();
+}
+
+// ─── USER MANAGEMENT ──────────────────────────────────────────────────
+let _editUserId = null;
+
+async function loadUsersPage() {
+  const tbody = document.getElementById('users-tbody');
+  if (!tbody) return;
+  try {
+    const data = await G('/api/users');
+    const users = data.users || [];
+    if (!users.length) { tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--txt2)">No users found</td></tr>'; return; }
+    tbody.innerHTML = users.map(u => `
+      <tr>
+        <td style="font-family:var(--fm);color:var(--txt)">${e(u.username)}</td>
+        <td style="color:var(--txt2)">${e(u.display_name||'—')}</td>
+        <td><span class="role-badge ${u.role}">${u.role.toUpperCase()}</span></td>
+        <td style="color:var(--txt2)">${e(u.email||'—')}</td>
+        <td style="color:var(--txt3);font-size:10px">${u.last_login ? new Date(u.last_login).toLocaleString() : 'Never'}</td>
+        <td><span style="color:${u.active?'var(--g)':'var(--r)'};font-size:10px;font-family:var(--fm)">${u.active?'ACTIVE':'INACTIVE'}</span></td>
+        <td style="display:flex;gap:6px">
+          <button class="btn btn-sm" onclick="openEditUser(${JSON.stringify(u).replace(/"/g,'&quot;')})">Edit</button>
+          <button class="btn btn-sm" style="border-color:var(--r);color:var(--r)" onclick="deleteUser(${u.id},'${e(u.username)}')" ${u.username===CU?.username?'disabled title="Cannot delete yourself"':''}>Del</button>
+        </td>
+      </tr>`).join('');
+  } catch(err) {
+    tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--r)">Error loading users: ${e(err.message)}</td></tr>`;
+  }
+}
+
+function openAddUser() {
+  _editUserId = null;
+  document.getElementById('user-modal-title').textContent = 'ADD USER';
+  document.getElementById('um-username').value = '';
+  document.getElementById('um-display').value = '';
+  document.getElementById('um-email').value = '';
+  document.getElementById('um-role').value = 'l1';
+  document.getElementById('um-password').value = '';
+  document.getElementById('um-username').disabled = false;
+  document.getElementById('um-pass-wrap').style.display = '';
+  document.getElementById('user-modal').style.display = 'flex';
+}
+
+function openEditUser(u) {
+  _editUserId = u.id;
+  document.getElementById('user-modal-title').textContent = 'EDIT USER — ' + u.username;
+  document.getElementById('um-username').value = u.username;
+  document.getElementById('um-display').value = u.display_name || '';
+  document.getElementById('um-email').value = u.email || '';
+  document.getElementById('um-role').value = u.role;
+  document.getElementById('um-password').value = '';
+  document.getElementById('um-username').disabled = true;
+  document.getElementById('um-pass-wrap').style.display = '';
+  document.getElementById('user-modal').style.display = 'flex';
+}
+
+function closeUserModal() {
+  document.getElementById('user-modal').style.display = 'none';
+}
+
+async function saveUser() {
+  const btn = document.getElementById('um-save-btn');
+  btn.disabled = true; btn.textContent = 'Saving…';
+  try {
+    const payload = {
+      display_name: document.getElementById('um-display').value.trim(),
+      email:        document.getElementById('um-email').value.trim(),
+      role:         document.getElementById('um-role').value,
+    };
+    const pw = document.getElementById('um-password').value;
+    if (pw) payload.password = pw;
+
+    if (_editUserId) {
+      await P(`/api/users/${_editUserId}`, payload, 'PATCH');
+    } else {
+      payload.username = document.getElementById('um-username').value.trim();
+      if (!payload.username) { alert('Username required'); return; }
+      if (!pw) { alert('Password required for new user'); return; }
+      await P('/api/users', payload);
+    }
+    closeUserModal();
+    loadUsersPage();
+  } catch(err) {
+    alert('Error: ' + err.message);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Save';
+  }
+}
+
+async function deleteUser(id, username) {
+  if (!confirm(`Delete user "${username}"? This cannot be undone.`)) return;
+  try {
+    await P(`/api/users/${id}`, {}, 'DELETE');
+    loadUsersPage();
+  } catch(err) {
+    alert('Error: ' + err.message);
+  }
+}
+
+// ─── ROLE-BASED UI ────────────────────────────────────────────────────
+function applyRoleUI() {
+  const role = CU?.role || 'l1';
+  const level = {admin:4, l3:3, l2:2, l1:1}[role] || 1;
+  // Show Users nav only for admin
+  const navUsers = document.getElementById('nav-users');
+  if (navUsers) navUsers.style.display = role === 'admin' ? '' : 'none';
+  // Update sidebar role badge
+  const badge = document.querySelector('.sb-badge');
+  if (badge) { badge.textContent = role.toUpperCase(); }
+}
+
+// ─── PAGE LOAD HOOKS ──────────────────────────────────────────────────
+const _origGo = typeof go === 'function' ? go : null;
+// Hook into page navigation to load data
+const _pageLoadHooks = {
+  darksoc: loadDarkSocPage,
+  users:   loadUsersPage,
+};
+
+// Override the global go() function to add page-specific data loading
+const _goOriginal = window.go;
+window.go = function(p) {
+  if (_goOriginal) _goOriginal(p);
+  if (_pageLoadHooks[p]) _pageLoadHooks[p]();
+};
+
+// Also apply role UI after login
+document.addEventListener('DOMContentLoaded', () => {
+  setTimeout(() => {
+    applyRoleUI();
+    pollNotifCount();
+  }, 500);
+});
 </script>
 </body>
 </html>

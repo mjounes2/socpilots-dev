@@ -2,11 +2,12 @@
 // SOC PILOTS — Production Backend
 // OpenSearch (Wazuh) + SP-CM (direct) + n8n (AI/Hunt/Rules)
 // ============================================================
-const express = require('express');
-const axios   = require('axios');
-const https   = require('https');
-const crypto  = require('crypto');
-const path    = require('path');
+const express  = require('express');
+const axios    = require('axios');
+const https    = require('https');
+const crypto   = require('crypto');
+const path     = require('path');
+const bcrypt   = require('bcryptjs');
 require('dotenv').config({ path: path.join(__dirname, '../../.env') });
 const db       = require('./db');
 const ueba     = require('./neo4j');
@@ -16,6 +17,20 @@ const email    = require('./email-service');
 const app  = express();
 const PORT = process.env.PORT || 3000;
 app.use(express.json({ limit: '10mb' }));
+
+// ─── PERFORMANCE TRACKING ──────────────────────────────────
+const routeLatencies = new Map();
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on('finish', () => {
+    const key = `${req.method} ${req.route?.path || req.path}`;
+    if (!routeLatencies.has(key)) routeLatencies.set(key, []);
+    const arr = routeLatencies.get(key);
+    arr.push(Date.now() - start);
+    if (arr.length > 1000) arr.shift();
+  });
+  next();
+});
 
 // ─── CONFIG ────────────────────────────────────────────────
 const OS_URL   = (process.env.OPENSEARCH_URL  || '').replace(/\/$/,'');
@@ -36,16 +51,22 @@ const MCP_WAZUH_URL     = process.env.MCP_WAZUH_URL    || 'http://mcp-wazuh:3001
 const httpsAgent = new https.Agent({ rejectUnauthorized: false });
 
 // ─── AUTH ──────────────────────────────────────────────────
-const USERS = (process.env.SOC_USERS || '')
+// In-memory env users (backward compat): admin→admin, analyst→l2
+const ENV_USERS = (process.env.SOC_USERS || '')
   .split(',').map(u => {
     const [username, password, role = 'analyst'] = u.trim().split(':');
-    return { username, password, role };
+    // Map legacy env roles to the new hierarchy
+    const mappedRole = role === 'analyst' ? 'l2' : role;
+    return { username, password, role: mappedRole };
   }).filter(u => u.username && u.password);
 
+// Role hierarchy: admin > l3 > l2 > l1
+const ROLE_HIERARCHY = { admin: 4, l3: 3, l2: 2, l1: 1 };
+
 const sessions = new Map();
-function mkToken(username, role) {
+function mkToken(username, role, displayName) {
   const t = crypto.randomBytes(32).toString('hex');
-  sessions.set(t, { username, role, exp: Date.now() + 8 * 3600 * 1000 });
+  sessions.set(t, { username, role, displayName: displayName || username, exp: Date.now() + 8 * 3600 * 1000 });
   return t;
 }
 function authMW(req, res, next) {
@@ -55,10 +76,36 @@ function authMW(req, res, next) {
   req.user = s; next();
 }
 
+// Role-aware middleware factory
+function requireRole(...roles) {
+  return (req, res, next) => {
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    const userLevel = ROLE_HIERARCHY[req.user.role] || 0;
+    const required  = Math.max(...roles.map(r => ROLE_HIERARCHY[r] || 0));
+    if (userLevel < required) return res.status(403).json({ error: 'Insufficient permissions' });
+    next();
+  };
+}
+
 // Restrict to admin role (used for protected-asset management)
 function adminOnly(req, res, next) {
   if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Admin role required' });
   next();
+}
+
+// ─── SEED DB USERS FROM SOC_USERS ENV ─────────────────────
+async function seedUsersFromEnv() {
+  try {
+    for (const u of ENV_USERS) {
+      const hash = bcrypt.hashSync(u.password, 10);
+      await db.createUser(u.username, hash, u.role, u.username, null);
+    }
+    if (ENV_USERS.length > 0) {
+      console.log(`[AUTH] Seeded ${ENV_USERS.length} user(s) from SOC_USERS env into DB`);
+    }
+  } catch(e) {
+    console.warn('[AUTH] seedUsersFromEnv error:', e.message);
+  }
 }
 
 // ─── OPENSEARCH HELPER ─────────────────────────────────────
@@ -171,16 +218,35 @@ app.get('/health', (req, res) => res.json({
 }));
 
 // ── AUTH ──
-app.post('/api/login', (req, res) => {
+app.post('/api/login', async (req, res) => {
   const { username, password } = req.body || {};
-  const u = USERS.find(u =>
-    u.username.toLowerCase() === (username || '').toLowerCase().trim() &&
-    u.password === password
+  if (!username || !password) return res.status(400).json({ error: 'username and password required' });
+
+  const uname = (username || '').toLowerCase().trim();
+
+  // 1. Try DB user first
+  try {
+    const dbUser = await db.getUserByUsername(uname);
+    if (dbUser) {
+      const valid = bcrypt.compareSync(password, dbUser.password_hash);
+      if (!valid) return res.status(401).json({ error: 'Invalid username or password' });
+      await db.updateLastLogin(uname);
+      const token = mkToken(dbUser.username, dbUser.role, dbUser.display_name);
+      console.log(`[LOGIN] ${dbUser.username} (db, role=${dbUser.role})`);
+      return res.json({ token, username: dbUser.username, role: dbUser.role, display_name: dbUser.display_name });
+    }
+  } catch(e) {
+    console.warn('[LOGIN] DB lookup error:', e.message);
+  }
+
+  // 2. Fall back to env users (backward compat)
+  const u = ENV_USERS.find(u =>
+    u.username.toLowerCase() === uname && u.password === password
   );
   if (!u) return res.status(401).json({ error: 'Invalid username or password' });
-  const token = mkToken(u.username, u.role);
-  console.log(`[LOGIN] ${u.username}`);
-  res.json({ token, username: u.username, role: u.role });
+  const token = mkToken(u.username, u.role, u.username);
+  console.log(`[LOGIN] ${u.username} (env, role=${u.role})`);
+  res.json({ token, username: u.username, role: u.role, display_name: u.username });
 });
 
 app.post('/api/logout', authMW, (req, res) => {
@@ -188,7 +254,11 @@ app.post('/api/logout', authMW, (req, res) => {
   res.json({ success: true });
 });
 
-app.get('/api/me', authMW, (req, res) => res.json(req.user));
+app.get('/api/me', authMW, (req, res) => res.json({
+  username: req.user.username,
+  role: req.user.role,
+  display_name: req.user.displayName || req.user.username,
+}));
 
 // ── STATUS / DIAGNOSTICS ──
 app.get('/api/status', authMW, async (req, res) => {
@@ -820,14 +890,19 @@ app.post('/api/ai/chat', authMW, async (req, res) => {
       rateLimit: true,
     });
   }
-  const r = await n8nAsk(message, session_id || `soc_${req.user.username}`, req.user, {
+  const sid = session_id || `soc_${req.user.username}`;
+  const r = await n8nAsk(message, sid, req.user, {
     history: (history || []).slice(-6), // reduced from 10 to 6
   });
   if (!r.ok) {
     const errMsg = r.error || 'SOCPilots AI unavailable';
     return res.status(r.error?.includes('Rate limit') ? 429 : 502).json({ error: errMsg });
   }
-  res.json(r.raw || { response: r.text });
+  // Persist chat messages to DB (non-blocking)
+  const aiText = r.text || '';
+  db.saveChatMessage(sid, req.user.username, 'user', message, {}).catch(() => {});
+  if (aiText) db.saveChatMessage(sid, req.user.username, 'assistant', aiText, {}).catch(() => {});
+  res.json(r.raw || { response: aiText });
 });
 
 // ── AI INVESTIGATION — Dedicated workflow + DB persistence ──
@@ -1269,6 +1344,13 @@ Use markdown tables. Be concise.`;
           });
           savedId = saved.id;
           triaged++;
+          // Notify about auto-triaged investigation
+          db.createNotification(
+            'alert', 'New Investigation Auto-Triaged',
+            `Alert ${alert.ruleId} (${alert.severity}) on ${alert.agent} was auto-investigated.`,
+            alert.severity === 'critical' ? 'critical' : 'warning',
+            null, { investigation_id: savedId, rule_id: alert.ruleId, agent: alert.agent }
+          ).catch(() => {});
         } catch(e) { console.warn('[AutoTriage] DB save failed:', e.message); }
 
         // ── Step 3: Dark SOC — Triage + Playbook execution ──────
@@ -1312,6 +1394,13 @@ Use markdown tables. Be concise.`;
               outcome,
               error:             execResult.error || null,
             });
+            if (outcome === 'executed') {
+              db.createNotification(
+                'playbook', `Playbook Executed: ${pb.name}`,
+                `Playbook "${pb.name}" ran on alert ${alert.ruleId} (${alert.agent}).`,
+                'warning', null, { playbook_name: pb.name, investigation_id: savedId }
+              ).catch(() => {});
+            }
           } catch(e) {
             console.error(`[DarkSOC] Playbook "${pb.name}" execution error:`, e.message);
           }
@@ -2064,12 +2153,291 @@ app.get('/api/ueba/profile/:user', authMW, async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// ═══════════════════════════════════════════════════════════════
+// ─── USERS API (admin only) ─────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════
+
+app.get('/api/users', authMW, requireRole('admin'), async (req, res) => {
+  try {
+    const users = await db.listUsers();
+    res.json({ users, total: users.length });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/users', authMW, requireRole('admin'), async (req, res) => {
+  const { username, password, role, display_name, email } = req.body || {};
+  if (!username || !password) return res.status(400).json({ error: 'username and password required' });
+  const validRoles = ['admin', 'l3', 'l2', 'l1'];
+  if (role && !validRoles.includes(role)) return res.status(400).json({ error: 'invalid role' });
+  try {
+    const hash = bcrypt.hashSync(password, 10);
+    const user = await db.createUser(username.toLowerCase().trim(), hash, role || 'l1', display_name || username, email || null);
+    if (!user) return res.status(409).json({ error: 'username already exists' });
+    res.json({ user });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.patch('/api/users/:id', authMW, requireRole('admin'), async (req, res) => {
+  const { role, display_name, email, active } = req.body || {};
+  try {
+    const updated = await db.updateUser(parseInt(req.params.id), { role, display_name, email, active });
+    if (!updated) return res.status(404).json({ error: 'user not found' });
+    res.json({ user: updated });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/users/:id', authMW, requireRole('admin'), async (req, res) => {
+  try {
+    const users = await db.listUsers();
+    const target = users.find(u => u.id === parseInt(req.params.id));
+    if (!target) return res.status(404).json({ error: 'user not found' });
+    if (target.username === req.user.username) return res.status(400).json({ error: 'cannot delete yourself' });
+    await db.deleteUser(parseInt(req.params.id));
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/users/:id/password', authMW, async (req, res) => {
+  const targetId = parseInt(req.params.id);
+  const { password } = req.body || {};
+  if (!password || password.length < 6) return res.status(400).json({ error: 'password must be at least 6 characters' });
+  // Admin can reset anyone's password; users can only reset their own
+  try {
+    const users = await db.listUsers();
+    const target = users.find(u => u.id === targetId);
+    if (!target) return res.status(404).json({ error: 'user not found' });
+    const isAdmin = (ROLE_HIERARCHY[req.user.role] || 0) >= ROLE_HIERARCHY.admin;
+    const isSelf  = target.username === req.user.username;
+    if (!isAdmin && !isSelf) return res.status(403).json({ error: 'Insufficient permissions' });
+    const hash = bcrypt.hashSync(password, 10);
+    await db.updateUserPassword(targetId, hash);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// ─── NOTIFICATIONS API ──────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════
+
+app.get('/api/notifications', authMW, async (req, res) => {
+  try {
+    const limit     = Math.min(parseInt(req.query.limit) || 50, 200);
+    const unreadOnly = req.query.unread === 'true';
+    const items = await db.listNotifications(req.user.username, limit, unreadOnly);
+    res.json({ notifications: items, total: items.length });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/notifications/count', authMW, async (req, res) => {
+  try {
+    const unread = await db.countUnreadNotifications(req.user.username);
+    res.json({ unread });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/notifications/read-all', authMW, async (req, res) => {
+  try {
+    const count = await db.markAllNotificationsRead(req.user.username);
+    res.json({ ok: true, marked: count });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/notifications/:id/read', authMW, async (req, res) => {
+  try {
+    const result = await db.markNotificationRead(parseInt(req.params.id), req.user.username);
+    if (!result) return res.status(404).json({ error: 'notification not found' });
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// ─── CHAT HISTORY API ───────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════
+
+app.get('/api/chat/sessions', authMW, async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit) || 20, 100);
+    const sessions = await db.listUserSessions(req.user.username, limit);
+    res.json({ sessions, total: sessions.length });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/chat/sessions/:sid', authMW, async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+    const messages = await db.getChatHistory(req.params.sid, limit);
+    res.json({ messages, total: messages.length });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/chat/sessions/:sid', authMW, async (req, res) => {
+  try {
+    const deleted = await db.deleteSession(req.params.sid, req.user.username);
+    res.json({ ok: true, deleted });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// ─── HUNT SCHEDULES API ─────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════
+
+app.get('/api/hunt/schedules', authMW, async (req, res) => {
+  try {
+    const schedules = await db.listHuntSchedules();
+    res.json({ schedules, total: schedules.length });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/hunt/schedules', authMW, requireRole('l2'), async (req, res) => {
+  const { name, query, cron_expr } = req.body || {};
+  if (!name || !query) return res.status(400).json({ error: 'name and query required' });
+  try {
+    const schedule = await db.createHuntSchedule(name, query, cron_expr || '0 */6 * * *', req.user.username);
+    res.json({ schedule });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.patch('/api/hunt/schedules/:id', authMW, requireRole('l2'), async (req, res) => {
+  try {
+    const updated = await db.updateHuntSchedule(parseInt(req.params.id), req.body);
+    if (!updated) return res.status(404).json({ error: 'schedule not found' });
+    res.json({ schedule: updated });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/hunt/schedules/:id', authMW, requireRole('l2'), async (req, res) => {
+  try {
+    await db.pool.query(`DELETE FROM hunt_schedules WHERE id=$1`, [parseInt(req.params.id)]);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/hunt/schedules/:id/run', authMW, requireRole('l2'), async (req, res) => {
+  try {
+    const schedules = await db.listHuntSchedules();
+    const sched = schedules.find(s => s.id === parseInt(req.params.id));
+    if (!sched) return res.status(404).json({ error: 'schedule not found' });
+    res.json({ ok: true, message: 'Hunt triggered', schedule_id: sched.id });
+    // Run async
+    (async () => {
+      try {
+        const huntResp = await axios.post(`${LANGCHAIN_URL}/hunt-queries`,
+          { type: 'query', value: sched.query, context: `Manual run: ${sched.name}` },
+          { timeout: 60_000, headers: { Authorization: `Bearer ${LANGCHAIN_TOKEN}` }, validateStatus: () => true }
+        );
+        const result = { queries: huntResp.data?.queries || [], triggered_by: req.user.username };
+        await db.updateHuntScheduleResult(sched.id, result);
+        db.createNotification(
+          'threat_hunt', `Hunt Complete: ${sched.name}`,
+          `Hunt schedule "${sched.name}" ran and returned ${result.queries.length} queries.`,
+          'info', req.user.username, { schedule_id: sched.id }
+        ).catch(() => {});
+      } catch(e) {
+        await db.updateHuntScheduleResult(sched.id, { error: e.message }).catch(() => {});
+      }
+    })();
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// ─── PERFORMANCE METRICS API (admin only) ───────────────────────
+// ═══════════════════════════════════════════════════════════════
+
+app.get('/api/metrics/performance', authMW, requireRole('admin'), (req, res) => {
+  const result = [];
+  for (const [route, latencies] of routeLatencies.entries()) {
+    if (!latencies.length) continue;
+    const sorted = [...latencies].sort((a, b) => a - b);
+    const p50 = sorted[Math.floor(sorted.length * 0.5)] || 0;
+    const p95 = sorted[Math.floor(sorted.length * 0.95)] || 0;
+    result.push({ route, p50, p95, count: sorted.length, avg: Math.round(sorted.reduce((a, b) => a + b, 0) / sorted.length) });
+  }
+  result.sort((a, b) => b.p95 - a.p95);
+  res.json({ metrics: result, total: result.length });
+});
+
 // ─── STATIC (last) ─────────────────────────────────────────
 app.use(express.static(path.join(__dirname, '../../frontend')));
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, '../../frontend/index.html')));
 
+// ═══════════════════════════════════════════════════════════════
+// ─── HUNT SCHEDULE RUNNER ───────────────────────────────────────
+// Parses 5-field cron expressions and runs enabled schedules when due
+// ═══════════════════════════════════════════════════════════════
+function cronNextRun(cronExpr) {
+  // Simple cron parser: returns the next run Date based on the expression
+  // Supports basic patterns: numbers and */N
+  const parts = (cronExpr || '0 */6 * * *').split(' ');
+  if (parts.length !== 5) return null;
+  const [min, hour] = parts;
+  const now = new Date();
+  const next = new Date(now);
+  next.setSeconds(0, 0);
+
+  // For */N hour pattern compute interval in ms
+  if (hour.startsWith('*/')) {
+    const n = parseInt(hour.slice(2)) || 6;
+    const intervalMs = n * 3600_000;
+    return new Date(Math.ceil(now.getTime() / intervalMs) * intervalMs);
+  }
+  if (min.startsWith('*/')) {
+    const n = parseInt(min.slice(2)) || 60;
+    const intervalMs = n * 60_000;
+    return new Date(Math.ceil(now.getTime() / intervalMs) * intervalMs);
+  }
+  // Specific hour/min daily
+  const h = parseInt(hour) || 0;
+  const m = parseInt(min) || 0;
+  next.setHours(h, m, 0, 0);
+  if (next <= now) next.setDate(next.getDate() + 1);
+  return next;
+}
+
+async function startHuntScheduler() {
+  setInterval(async () => {
+    try {
+      const schedules = await db.listHuntSchedules();
+      const now = new Date();
+      for (const sched of schedules) {
+        if (!sched.enabled) continue;
+        let isDue = false;
+        if (!sched.last_run) {
+          isDue = true;
+        } else {
+          const next = cronNextRun(sched.cron_expr);
+          if (next && new Date(sched.last_run) < next && now >= next) isDue = true;
+        }
+        if (!isDue) continue;
+        console.log(`[HuntScheduler] Running: ${sched.name}`);
+        try {
+          const huntResp = await axios.post(`${LANGCHAIN_URL}/hunt-queries`,
+            { type: 'query', value: sched.query, context: `Scheduled: ${sched.name}` },
+            { timeout: 60_000, headers: { Authorization: `Bearer ${LANGCHAIN_TOKEN}` }, validateStatus: () => true }
+          );
+          const result = { queries: huntResp.data?.queries || [], scheduled: true };
+          await db.updateHuntScheduleResult(sched.id, result);
+          db.createNotification(
+            'threat_hunt', `Hunt Complete: ${sched.name}`,
+            `Scheduled hunt "${sched.name}" completed with ${result.queries.length} queries.`,
+            'info', null, { schedule_id: sched.id }
+          ).catch(() => {});
+        } catch(e) {
+          console.warn(`[HuntScheduler] ${sched.name} failed:`, e.message);
+          await db.updateHuntScheduleResult(sched.id, { error: e.message }).catch(() => {});
+        }
+      }
+    } catch(e) {
+      console.warn('[HuntScheduler] tick error:', e.message);
+    }
+  }, 60_000); // check every 60 seconds
+  console.log('[HuntScheduler] Started');
+}
+
 // Initialize DB schema on startup (non-blocking)
-db.initSchema().catch(e => console.error('[DB] init failed:', e.message));
+db.initSchema()
+  .then(() => seedUsersFromEnv())
+  .then(() => startHuntScheduler())
+  .catch(e => console.error('[DB] init failed:', e.message));
 ueba.initSchema().catch(e => console.error('[NEO4J] init failed:', e.message));
 
 app.listen(PORT, '0.0.0.0', () => {
@@ -2086,7 +2454,7 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`╠══════════════════════════════════════════════════════════════╣`);
   console.log(`║  To change config: edit .env then: docker compose restart webapp`);
   console.log(`╚══════════════════════════════════════════════════════════════╝\n`);
-  USERS.forEach(u => console.log(`  USER: ${u.username} / ${u.role}`));
+  ENV_USERS.forEach(u => console.log(`  USER: ${u.username} / ${u.role}`));
 });
 
 module.exports = app;

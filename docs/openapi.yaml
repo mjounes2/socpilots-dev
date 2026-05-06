@@ -1,0 +1,713 @@
+openapi: 3.0.3
+info:
+  title: SOCPilots API
+  version: "3.0"
+  description: |
+    SOCPilots backend REST API.
+
+    **Authentication:** All endpoints (except /api/login and /health) require a
+    Bearer token obtained from `POST /api/login`.
+
+    **RBAC Roles:**
+    - `l1` — Read-only analyst
+    - `l2` — Investigation analyst (can run hunts, investigations)
+    - `l3` — Senior analyst (can trigger response actions)
+    - `admin` — Full access (user management, settings, playbooks)
+
+servers:
+  - url: http://localhost:3000
+    description: Local development
+  - url: http://{server_ip}
+    description: Production (via nginx)
+    variables:
+      server_ip:
+        default: YOUR_SERVER_IP
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+    User:
+      type: object
+      properties:
+        id: { type: integer }
+        username: { type: string }
+        display_name: { type: string }
+        role: { type: string, enum: [admin, l3, l2, l1] }
+        email: { type: string }
+        active: { type: boolean }
+        last_login: { type: string, format: date-time }
+    Notification:
+      type: object
+      properties:
+        id: { type: integer }
+        type: { type: string, enum: [alert, ai_decision, threat_hunt, system_warning, playbook] }
+        title: { type: string }
+        message: { type: string }
+        severity: { type: string, enum: [info, warning, critical] }
+        read: { type: boolean }
+        created_at: { type: string, format: date-time }
+    Investigation:
+      type: object
+      properties:
+        id: { type: integer }
+        rule_id: { type: string }
+        severity: { type: string }
+        agent: { type: string }
+        src_ip: { type: string }
+        description: { type: string }
+        report: { type: string }
+        tp_status: { type: string, enum: [confirmed_tp, confirmed_fp, no_action] }
+        created_at: { type: string, format: date-time }
+    Playbook:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        description: { type: string }
+        mitre_techniques: { type: array, items: { type: string } }
+        min_rule_level: { type: integer }
+        fp_confidence_max: { type: integer }
+        require_consensus: { type: boolean }
+        enabled: { type: boolean }
+        actions: { type: array, items: { type: object } }
+    HuntSchedule:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        query: { type: string }
+        cron_expr: { type: string }
+        enabled: { type: boolean }
+        last_run: { type: string, format: date-time }
+
+security:
+  - bearerAuth: []
+
+paths:
+
+  # ── Auth ──────────────────────────────────────────────────────────
+
+  /api/login:
+    post:
+      summary: Login
+      security: []
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: { type: string }
+                password: { type: string }
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token: { type: string }
+                  username: { type: string }
+                  role: { type: string }
+                  display_name: { type: string }
+        '401': { description: Invalid credentials, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /api/logout:
+    post:
+      summary: Logout
+      tags: [Auth]
+      responses:
+        '200': { description: Logged out }
+
+  /api/me:
+    get:
+      summary: Current user info
+      tags: [Auth]
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+
+  # ── Users ────────────────────────────────────────────────────────
+
+  /api/users:
+    get:
+      summary: List all users
+      tags: [Users]
+      description: Requires admin role
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  users: { type: array, items: { $ref: '#/components/schemas/User' } }
+        '403': { description: Insufficient permissions }
+    post:
+      summary: Create user
+      tags: [Users]
+      description: Requires admin role
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password, role]
+              properties:
+                username: { type: string }
+                password: { type: string }
+                role: { type: string, enum: [admin, l3, l2, l1] }
+                display_name: { type: string }
+                email: { type: string }
+      responses:
+        '201': { description: User created }
+        '409': { description: Username already exists }
+
+  /api/users/{id}:
+    patch:
+      summary: Update user
+      tags: [Users]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                role: { type: string, enum: [admin, l3, l2, l1] }
+                display_name: { type: string }
+                email: { type: string }
+                active: { type: boolean }
+      responses:
+        '200': { description: Updated }
+        '404': { description: User not found }
+    delete:
+      summary: Delete user
+      tags: [Users]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: Deleted }
+        '400': { description: Cannot delete yourself }
+
+  /api/users/{id}/password:
+    post:
+      summary: Reset password (admin or self)
+      tags: [Users]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password: { type: string }
+      responses:
+        '200': { description: Password updated }
+
+  # ── Notifications ────────────────────────────────────────────────
+
+  /api/notifications:
+    get:
+      summary: List notifications for current user
+      tags: [Notifications]
+      parameters:
+        - name: unread
+          in: query
+          schema: { type: boolean }
+          description: Return only unread notifications
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50 }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  notifications: { type: array, items: { $ref: '#/components/schemas/Notification' } }
+
+  /api/notifications/count:
+    get:
+      summary: Count unread notifications
+      tags: [Notifications]
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  unread: { type: integer }
+
+  /api/notifications/read-all:
+    post:
+      summary: Mark all notifications read
+      tags: [Notifications]
+      responses:
+        '200': { description: All marked read }
+
+  /api/notifications/{id}/read:
+    post:
+      summary: Mark one notification read
+      tags: [Notifications]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: Marked read }
+
+  # ── Chat / AI ────────────────────────────────────────────────────
+
+  /api/ai/chat:
+    post:
+      summary: Send message to SOCPilots AI
+      tags: [AI]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message]
+              properties:
+                message: { type: string }
+                session_id: { type: string, description: "Session ID for chat history tracking" }
+                history: { type: array, items: { type: object } }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  reply: { type: string }
+        '429': { description: Rate limit exceeded (8 msg/min) }
+
+  /api/ai/investigate:
+    post:
+      summary: Deep investigation of an alert
+      tags: [AI]
+      description: Requires l2+ role
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                alert_id: { type: string }
+                rule_id: { type: string }
+                description: { type: string }
+                severity: { type: string }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Investigation' }
+
+  /api/chat/sessions:
+    get:
+      summary: List user's chat sessions
+      tags: [Chat History]
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sessions: { type: array, items: { type: object } }
+
+  /api/chat/sessions/{sid}:
+    get:
+      summary: Get messages for a session
+      tags: [Chat History]
+      parameters:
+        - name: sid
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  messages: { type: array, items: { type: object } }
+    delete:
+      summary: Delete a chat session
+      tags: [Chat History]
+      parameters:
+        - name: sid
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Deleted }
+
+  # ── Threat Hunt Schedules ────────────────────────────────────────
+
+  /api/hunt/schedules:
+    get:
+      summary: List hunt schedules
+      tags: [Threat Hunting]
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  schedules: { type: array, items: { $ref: '#/components/schemas/HuntSchedule' } }
+    post:
+      summary: Create hunt schedule
+      tags: [Threat Hunting]
+      description: Requires l2+ role
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, query]
+              properties:
+                name: { type: string }
+                query: { type: string }
+                cron_expr: { type: string, example: "0 */6 * * *" }
+      responses:
+        '201': { description: Created }
+
+  /api/hunt/schedules/{id}:
+    patch:
+      summary: Update hunt schedule
+      tags: [Threat Hunting]
+      description: Requires l2+ role
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                query: { type: string }
+                cron_expr: { type: string }
+                enabled: { type: boolean }
+      responses:
+        '200': { description: Updated }
+    delete:
+      summary: Delete hunt schedule
+      tags: [Threat Hunting]
+      description: Requires l2+ role
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: Deleted }
+
+  /api/hunt/schedules/{id}/run:
+    post:
+      summary: Run a hunt schedule immediately
+      tags: [Threat Hunting]
+      description: Requires l2+ role
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result: { type: object }
+
+  /api/hunt:
+    post:
+      summary: Ad-hoc threat hunt
+      tags: [Threat Hunting]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query]
+              properties:
+                query: { type: string }
+                timeframe: { type: string, default: "24h" }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results: { type: array, items: { type: object } }
+                  hunt_queries: { type: array, items: { type: string } }
+                  ai_analysis: { type: string }
+
+  # ── Investigations ────────────────────────────────────────────────
+
+  /api/investigations:
+    get:
+      summary: List investigations
+      tags: [Investigations]
+      parameters:
+        - name: severity
+          in: query
+          schema: { type: string }
+        - name: agent
+          in: query
+          schema: { type: string }
+        - name: q
+          in: query
+          schema: { type: string }
+          description: Full-text search
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50 }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  investigations: { type: array, items: { $ref: '#/components/schemas/Investigation' } }
+
+  /api/investigations/{id}:
+    get:
+      summary: Get investigation detail
+      tags: [Investigations]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Investigation' }
+
+  /api/investigations/{id}/tp-status:
+    post:
+      summary: Mark investigation as TP/FP
+      tags: [Investigations]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [confirmed_tp, confirmed_fp, no_action] }
+      responses:
+        '200': { description: Updated }
+
+  # ── Playbooks / Dark SOC ──────────────────────────────────────────
+
+  /api/playbooks:
+    get:
+      summary: List playbooks
+      tags: [Dark SOC]
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  playbooks: { type: array, items: { $ref: '#/components/schemas/Playbook' } }
+    post:
+      summary: Create playbook
+      tags: [Dark SOC]
+      description: Requires admin role
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Playbook' }
+      responses:
+        '201': { description: Created }
+
+  /api/darksoc/status:
+    get:
+      summary: Dark SOC status and execution statistics
+      tags: [Dark SOC]
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled: { type: boolean }
+                  stats:
+                    type: object
+                    properties:
+                      total_executions: { type: integer }
+                      executed: { type: integer }
+                      skipped: { type: integer }
+                      pending_approvals: { type: integer }
+
+  /api/playbook-executions:
+    get:
+      summary: List playbook execution history
+      tags: [Dark SOC]
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50 }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  executions: { type: array, items: { type: object } }
+
+  # ── Settings ──────────────────────────────────────────────────────
+
+  /api/settings:
+    get:
+      summary: Get all settings
+      tags: [Settings]
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: { type: string }
+    post:
+      summary: Update settings
+      tags: [Settings]
+      description: Requires admin role
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: { type: string }
+      responses:
+        '200': { description: Updated }
+
+  # ── Performance Metrics ───────────────────────────────────────────
+
+  /api/metrics/performance:
+    get:
+      summary: API latency percentiles per route
+      tags: [Metrics]
+      description: Requires admin role. Returns P50/P95 latency for all routes.
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  routes:
+                    type: object
+                    additionalProperties:
+                      type: object
+                      properties:
+                        p50_ms: { type: number }
+                        p95_ms: { type: number }
+                        avg_ms: { type: number }
+                        samples: { type: integer }
+
+  # ── Health ────────────────────────────────────────────────────────
+
+  /health:
+    get:
+      summary: Backend health check
+      security: []
+      tags: [Health]
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  services:
+                    type: object
+                    properties:
+                      postgres: { type: boolean }
+                      opensearch: { type: boolean }
+                      neo4j: { type: boolean }
+
+tags:
+  - name: Auth
+    description: Login, logout, session management
+  - name: Users
+    description: User account and role management (admin only)
+  - name: Notifications
+    description: Real-time notification system
+  - name: AI
+    description: AI investigation and chat endpoints
+  - name: Chat History
+    description: Persistent chat session management
+  - name: Threat Hunting
+    description: Scheduled and ad-hoc threat hunting
+  - name: Investigations
+    description: Saved investigation reports
+  - name: Dark SOC
+    description: Autonomous response engine (playbooks)
+  - name: Settings
+    description: Platform configuration
+  - name: Metrics
+    description: Performance monitoring
+  - name: Health
+    description: Health check endpoints

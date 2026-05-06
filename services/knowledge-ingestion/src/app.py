@@ -1,5 +1,6 @@
 import os
 import logging
+from functools import wraps
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from knowledge_ingest import KnowledgeIngestionService
@@ -10,11 +11,12 @@ log = logging.getLogger(__name__)
 app = Flask(__name__)
 CORS(app)
 
-NEO4J_URI  = os.environ.get("NEO4J_URI",  "bolt://neo4j:7687")
-NEO4J_USER = os.environ.get("NEO4J_USER", "neo4j")
-NEO4J_PASS = os.environ.get("NEO4J_PASS", "socpilots")
+# ── Configuration ────────────────────────────────────────────────
+QDRANT_URL  = os.environ.get("QDRANT_URL", "http://qdrant:6333")
+RAG_API_KEY = os.environ.get("RAG_API_KEY", "")
 
 _svc: KnowledgeIngestionService | None = None
+
 
 def _get_service() -> KnowledgeIngestionService:
     global _svc
@@ -23,24 +25,52 @@ def _get_service() -> KnowledgeIngestionService:
     return _svc
 
 
+# ── API key auth ─────────────────────────────────────────────────
+
+def require_api_key(f):
+    """Enforce X-API-Key header when RAG_API_KEY is set."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if RAG_API_KEY:
+            client_key = request.headers.get("X-API-Key", "")
+            if client_key != RAG_API_KEY:
+                return jsonify({"error": "Unauthorized — invalid or missing X-API-Key"}), 401
+        return f(*args, **kwargs)
+    return decorated
+
+
+# ── Routes ───────────────────────────────────────────────────────
+
 @app.route("/health")
 def health():
+    """Health check — verifies Qdrant connectivity."""
     try:
         svc = _get_service()
-        stats = svc.get_stats()
-        return jsonify({"status": "ok", "neo4j": True, "stats": stats})
+        collections = svc.client.get_collections()
+        names = [c.name for c in collections.collections]
+        qdrant_ok = svc.collection in names
+        return jsonify({
+            "status":            "ok" if qdrant_ok else "degraded",
+            "qdrant":            True,
+            "collection":        svc.collection,
+            "collection_exists": qdrant_ok,
+        })
     except Exception as e:
         log.error(f"Health check failed: {e}")
-        return jsonify({"status": "error", "neo4j": False, "error": str(e)}), 503
+        return jsonify({"status": "error", "qdrant": False, "error": str(e)}), 503
 
 
 @app.route("/ingest", methods=["POST"])
+@require_api_key
 def ingest():
-    body = request.get_json(silent=True) or {}
-    sources = body.get("sources", ["mitre", "rules", "incidents"])
+    body    = request.get_json(silent=True) or {}
+    sources = body.get(
+        "sources",
+        ["mitre", "rules", "incidents", "incident_reports", "response_procedures"],
+    )
 
     try:
-        svc = _get_service()
+        svc     = _get_service()
         results = svc.run_ingestion(sources=sources)
         return jsonify({"status": "ok", "results": results})
     except Exception as e:
@@ -50,10 +80,12 @@ def ingest():
 
 @app.route("/stats")
 def stats():
+    """Return per-type point counts from Qdrant."""
     try:
         svc = _get_service()
         return jsonify({"status": "ok", "stats": svc.get_stats()})
     except Exception as e:
+        log.error(f"Stats error: {e}")
         return jsonify({"status": "error", "error": str(e)}), 500
 
 

@@ -218,6 +218,64 @@ async function initSchema() {
       ('isolation_approval_timeout_min','30','system')
      ON CONFLICT(key) DO NOTHING`,
 
+    // ── Users table — DB-backed accounts ──────────────────────
+    `CREATE TABLE IF NOT EXISTS users (
+      id            SERIAL PRIMARY KEY,
+      username      VARCHAR(50) NOT NULL UNIQUE,
+      password_hash VARCHAR(255) NOT NULL,
+      role          VARCHAR(20) NOT NULL DEFAULT 'l1',
+      display_name  VARCHAR(100),
+      email         VARCHAR(100),
+      active        BOOLEAN DEFAULT true,
+      last_login    TIMESTAMPTZ,
+      created_at    TIMESTAMPTZ DEFAULT NOW(),
+      updated_at    TIMESTAMPTZ DEFAULT NOW()
+    )`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username)`,
+
+    // ── Notifications ──────────────────────────────────────────
+    `CREATE TABLE IF NOT EXISTS notifications (
+      id         SERIAL PRIMARY KEY,
+      type       VARCHAR(30) NOT NULL,
+      title      VARCHAR(255) NOT NULL,
+      message    TEXT,
+      severity   VARCHAR(20) DEFAULT 'info',
+      read       BOOLEAN DEFAULT false,
+      username   VARCHAR(50),
+      metadata   JSONB DEFAULT '{}',
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_notifications_username ON notifications(username)`,
+    `CREATE INDEX IF NOT EXISTS idx_notifications_created  ON notifications(created_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_notifications_read     ON notifications(read) WHERE read = false`,
+
+    // ── Chat sessions ───────────────────────────────────────────
+    `CREATE TABLE IF NOT EXISTS chat_sessions (
+      id         SERIAL PRIMARY KEY,
+      session_id VARCHAR(100) NOT NULL,
+      username   VARCHAR(50) NOT NULL,
+      role       VARCHAR(20) DEFAULT 'user',
+      content    TEXT NOT NULL,
+      metadata   JSONB DEFAULT '{}',
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_chat_sessions_session ON chat_sessions(session_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_chat_sessions_user    ON chat_sessions(username)`,
+    `CREATE INDEX IF NOT EXISTS idx_chat_sessions_created ON chat_sessions(created_at DESC)`,
+
+    // ── Hunt schedules ──────────────────────────────────────────
+    `CREATE TABLE IF NOT EXISTS hunt_schedules (
+      id          SERIAL PRIMARY KEY,
+      name        VARCHAR(100) NOT NULL,
+      query       TEXT NOT NULL,
+      cron_expr   VARCHAR(50) NOT NULL DEFAULT '0 */6 * * *',
+      enabled     BOOLEAN DEFAULT true,
+      last_run    TIMESTAMPTZ,
+      last_result JSONB,
+      created_by  VARCHAR(50),
+      created_at  TIMESTAMPTZ DEFAULT NOW()
+    )`,
+
     // ── Seed Default Playbooks (5 built-in) ────────────────────
     `INSERT INTO playbooks(name,description,mitre_techniques,min_rule_level,fp_confidence_max,actions,require_consensus,enabled)
      VALUES
@@ -268,6 +326,7 @@ async function initSchema() {
     try { await pool.query(q); }
     catch(e) { console.error('[DB] Schema error:', e.message, q.slice(0,60)); }
   }
+  await seedDefaultHuntSchedules();
   console.log('[DB] Schema initialized');
 }
 
@@ -761,6 +820,225 @@ async function backfillHostnamesFromAgents() {
   return r.rowCount || 0;
 }
 
+// ── Users CRUD ───────────────────────────────────────────────
+async function createUser(username, passwordHash, role, displayName, email) {
+  const r = await pool.query(
+    `INSERT INTO users(username, password_hash, role, display_name, email)
+     VALUES($1,$2,$3,$4,$5)
+     ON CONFLICT(username) DO NOTHING
+     RETURNING *`,
+    [username, passwordHash, role || 'l1', displayName || null, email || null]
+  );
+  return r.rows[0] || null;
+}
+
+async function getUserByUsername(username) {
+  const r = await pool.query(
+    `SELECT * FROM users WHERE username=$1 AND active=true`, [username]
+  );
+  return r.rows[0] || null;
+}
+
+async function listUsers() {
+  const r = await pool.query(
+    `SELECT id, username, role, display_name, email, active, last_login, created_at, updated_at
+     FROM users ORDER BY created_at`
+  );
+  return r.rows;
+}
+
+async function updateUser(id, fields) {
+  const allowed = ['role', 'display_name', 'email', 'active'];
+  const sets = [], vals = [];
+  for (const [k, v] of Object.entries(fields)) {
+    if (!allowed.includes(k)) continue;
+    vals.push(v);
+    sets.push(`${k}=$${vals.length}`);
+  }
+  if (!sets.length) return null;
+  sets.push(`updated_at=NOW()`);
+  vals.push(id);
+  const r = await pool.query(
+    `UPDATE users SET ${sets.join(',')} WHERE id=$${vals.length}
+     RETURNING id, username, role, display_name, email, active, last_login, created_at, updated_at`,
+    vals
+  );
+  return r.rows[0] || null;
+}
+
+async function updateUserPassword(id, passwordHash) {
+  const r = await pool.query(
+    `UPDATE users SET password_hash=$1, updated_at=NOW() WHERE id=$2 RETURNING id`,
+    [passwordHash, id]
+  );
+  return r.rows[0] || null;
+}
+
+async function deleteUser(id) {
+  await pool.query(`DELETE FROM users WHERE id=$1`, [id]);
+}
+
+async function updateLastLogin(username) {
+  await pool.query(
+    `UPDATE users SET last_login=NOW() WHERE username=$1`, [username]
+  );
+}
+
+// ── Notifications CRUD ───────────────────────────────────────
+async function createNotification(type, title, message, severity, username, metadata) {
+  const r = await pool.query(
+    `INSERT INTO notifications(type, title, message, severity, username, metadata)
+     VALUES($1,$2,$3,$4,$5,$6) RETURNING *`,
+    [type, title, message || null, severity || 'info', username || null, JSON.stringify(metadata || {})]
+  );
+  return r.rows[0];
+}
+
+async function listNotifications(username, limit = 50, unreadOnly = false) {
+  const params = [username, limit];
+  let unreadClause = unreadOnly ? 'AND read=false' : '';
+  const r = await pool.query(
+    `SELECT * FROM notifications
+     WHERE (username=$1 OR username IS NULL) ${unreadClause}
+     ORDER BY created_at DESC LIMIT $2`,
+    params
+  );
+  return r.rows;
+}
+
+async function markNotificationRead(id, username) {
+  const r = await pool.query(
+    `UPDATE notifications SET read=true
+     WHERE id=$1 AND (username=$2 OR username IS NULL) RETURNING id`,
+    [id, username]
+  );
+  return r.rows[0] || null;
+}
+
+async function markAllNotificationsRead(username) {
+  const r = await pool.query(
+    `UPDATE notifications SET read=true
+     WHERE (username=$1 OR username IS NULL) AND read=false`,
+    [username]
+  );
+  return r.rowCount || 0;
+}
+
+async function countUnreadNotifications(username) {
+  const r = await pool.query(
+    `SELECT COUNT(*) AS count FROM notifications
+     WHERE (username=$1 OR username IS NULL) AND read=false`,
+    [username]
+  );
+  return parseInt(r.rows[0]?.count || '0');
+}
+
+// ── Chat sessions CRUD ───────────────────────────────────────
+async function saveChatMessage(sessionId, username, role, content, metadata) {
+  const r = await pool.query(
+    `INSERT INTO chat_sessions(session_id, username, role, content, metadata)
+     VALUES($1,$2,$3,$4,$5) RETURNING *`,
+    [sessionId, username, role || 'user', content, JSON.stringify(metadata || {})]
+  );
+  return r.rows[0];
+}
+
+async function getChatHistory(sessionId, limit = 50) {
+  const r = await pool.query(
+    `SELECT * FROM chat_sessions WHERE session_id=$1
+     ORDER BY created_at ASC LIMIT $2`,
+    [sessionId, limit]
+  );
+  return r.rows;
+}
+
+async function listUserSessions(username, limit = 20) {
+  const r = await pool.query(
+    `SELECT session_id,
+            MAX(created_at) AS last_message,
+            COUNT(*) AS count,
+            (ARRAY_AGG(content ORDER BY created_at DESC))[1] AS last_content
+     FROM chat_sessions WHERE username=$1
+     GROUP BY session_id ORDER BY last_message DESC LIMIT $2`,
+    [username, limit]
+  );
+  return r.rows;
+}
+
+async function deleteSession(sessionId, username) {
+  const r = await pool.query(
+    `DELETE FROM chat_sessions WHERE session_id=$1 AND username=$2`,
+    [sessionId, username]
+  );
+  return r.rowCount || 0;
+}
+
+// ── Hunt schedules CRUD ──────────────────────────────────────
+async function listHuntSchedules() {
+  const r = await pool.query(`SELECT * FROM hunt_schedules ORDER BY id`);
+  return r.rows;
+}
+
+async function createHuntSchedule(name, query, cronExpr, createdBy) {
+  const r = await pool.query(
+    `INSERT INTO hunt_schedules(name, query, cron_expr, created_by)
+     VALUES($1,$2,$3,$4) RETURNING *`,
+    [name, query, cronExpr || '0 */6 * * *', createdBy || 'system']
+  );
+  return r.rows[0];
+}
+
+async function updateHuntSchedule(id, fields) {
+  const allowed = ['name', 'query', 'cron_expr', 'enabled'];
+  const sets = [], vals = [];
+  for (const [k, v] of Object.entries(fields)) {
+    if (!allowed.includes(k)) continue;
+    vals.push(v);
+    sets.push(`${k}=$${vals.length}`);
+  }
+  if (!sets.length) return null;
+  vals.push(id);
+  const r = await pool.query(
+    `UPDATE hunt_schedules SET ${sets.join(',')} WHERE id=$${vals.length} RETURNING *`, vals
+  );
+  return r.rows[0] || null;
+}
+
+async function updateHuntScheduleResult(id, result) {
+  const r = await pool.query(
+    `UPDATE hunt_schedules SET last_run=NOW(), last_result=$1 WHERE id=$2 RETURNING *`,
+    [JSON.stringify(result || {}), id]
+  );
+  return r.rows[0] || null;
+}
+
+// ── Seed Default Hunt Schedules ──────────────────────────────
+async function seedDefaultHuntSchedules() {
+  try {
+    const count = await pool.query(`SELECT COUNT(*) AS c FROM hunt_schedules`);
+    if (parseInt(count.rows[0].c) > 0) return; // already seeded
+
+    const defaults = [
+      ['Lateral Movement Detection',   'Find lateral movement in the last 24 hours',                                                          '0 */6 * * *'],
+      ['Abnormal Authentication',      'Detect abnormal authentication patterns and failed logins',                                           '0 */4 * * *'],
+      ['Ransomware Indicators',        'Hunt for ransomware indicators including shadow copy deletion and mass file encryption',               '0 8 * * *'],
+      ['C2 Beaconing',                 'Identify command and control beaconing patterns and DNS tunneling',                                   '0 */12 * * *'],
+      ['Privilege Escalation Hunt',    'Find privilege escalation attempts and suspicious sudo usage',                                        '0 6 * * *'],
+    ];
+
+    for (const [name, query, cron_expr] of defaults) {
+      await pool.query(
+        `INSERT INTO hunt_schedules(name, query, cron_expr, created_by)
+         VALUES($1,$2,$3,'system') ON CONFLICT DO NOTHING`,
+        [name, query, cron_expr]
+      );
+    }
+    console.log('[DB] Default hunt schedules seeded');
+  } catch(e) {
+    console.error('[DB] seedDefaultHuntSchedules error:', e.message);
+  }
+}
+
 // ── Health check ─────────────────────────────────────────────
 async function ping() {
   try {
@@ -820,4 +1098,28 @@ module.exports = {
   listIsolationApprovals,
   resolveIsolationApproval,
   listExpiredApprovals,
+  // Users CRUD
+  createUser,
+  getUserByUsername,
+  listUsers,
+  updateUser,
+  updateUserPassword,
+  deleteUser,
+  updateLastLogin,
+  // Notifications CRUD
+  createNotification,
+  listNotifications,
+  markNotificationRead,
+  markAllNotificationsRead,
+  countUnreadNotifications,
+  // Chat sessions CRUD
+  saveChatMessage,
+  getChatHistory,
+  listUserSessions,
+  deleteSession,
+  // Hunt schedules CRUD
+  listHuntSchedules,
+  createHuntSchedule,
+  updateHuntSchedule,
+  updateHuntScheduleResult,
 };
