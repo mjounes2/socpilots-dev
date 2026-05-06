@@ -210,7 +210,7 @@ services:
   # Accessed internally by n8n via http://thehive-mcp:8080
   thehive-mcp:
     build:
-      context: ./thehive-mcp-new
+      context: ./thehive-mcp-new/thehive-mcp-new
       dockerfile: Dockerfile
     image: thehive-mcp:latest
     container_name: thehive-mcp

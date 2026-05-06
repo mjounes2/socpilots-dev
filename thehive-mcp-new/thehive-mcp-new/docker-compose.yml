@@ -1,0 +1,10 @@
+services:
+  thehive-mcp:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - THEHIVE_URL=https://app.socpilots.com/api
+      - THEHIVE_API_KEY=S0+5fYWCnpiFkp1ndicOJuZkpEpOIWtB
+      - PORT=8080
+    restart: unless-stopped
