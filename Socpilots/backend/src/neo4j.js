@@ -663,6 +663,7 @@ module.exports = {
   initSchema, ingestEvent, recalcBaselines,
   getRiskLeaderboard, getUserProfile,
   getAllAnomalies, getEntityGraph, getUebaStats, ping,
+  detectLateralMovement,
 };
 
 // Decay risk scores every hour

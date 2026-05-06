@@ -3393,6 +3393,24 @@ async function invEscalateCase(){
 
 // ─── AI COPILOT ───────────────────────────────────────────────
 let _hist=[];
+let _chatLoaded=false;
+
+async function loadChatHistory(){
+  if(_chatLoaded)return;
+  _chatLoaded=true;
+  try{
+    const sid=`soc_${CU.username}`;
+    const data=await G(`/api/chat/sessions/${sid}?limit=40`).catch(()=>null);
+    const msgs=data?.messages||[];
+    if(!msgs.length)return;
+    msgs.forEach(m=>{
+      _hist.push({role:m.role==='assistant'?'assistant':'user',content:m.content});
+      addMsg(m.role==='assistant'?'ai':'u',m.content);
+    });
+    document.getElementById('ctx-msgs').textContent=`${_hist.length} msgs`;
+  }catch(e){}
+}
+
 function chatKey(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendChat();}}
 async function sendChat(){
   const inp=document.getElementById('chat-in'),msg=inp.value.trim();if(!msg)return;
@@ -3433,7 +3451,8 @@ async function sendChat(){
       reply='⚠️ **SOCPilots AI not responding**\n\nCheck n8n is running on vmi3254460:5678';
     }
   }
-  addMsg('ai',reply,'',false); // false = parse as markdown_hist.push({role:'assistant',content:reply});
+  addMsg('ai',reply,'',false);
+  _hist.push({role:'assistant',content:reply});
   document.getElementById('ctx-msgs').textContent=`${_hist.length} msgs`;
 }
 function addMsg(role,content,id='',isHTML=false){
@@ -4989,8 +5008,9 @@ function applyRoleUI() {
 const _origGo = typeof go === 'function' ? go : null;
 // Hook into page navigation to load data
 const _pageLoadHooks = {
-  darksoc: loadDarkSocPage,
-  users:   loadUsersPage,
+  darksoc:  loadDarkSocPage,
+  users:    loadUsersPage,
+  copilot:  loadChatHistory,
 };
 
 // Override the global go() function to add page-specific data loading
