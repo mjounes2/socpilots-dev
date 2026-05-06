@@ -47,6 +47,7 @@ MISTRAL_API_KEY  = os.getenv("MISTRAL_API_KEY", "")
 INTERNAL_TOKEN   = os.getenv("LANGCHAIN_INTERNAL_TOKEN", "")
 REDIS_URL        = os.getenv("REDIS_URL", "")
 RAG_URL          = os.getenv("RAG_URL", "http://rag-retrieval:5005")
+RAG_API_KEY      = os.getenv("RAG_API_KEY", "")
 
 # ── Redis IOC Cache ───────────────────────────────────────────
 _redis = None
@@ -269,9 +270,11 @@ def query_knowledge_base(query: str) -> str:
     Use this to enrich investigation context with threat intelligence.
     """
     try:
+        rag_headers = {"X-API-Key": RAG_API_KEY} if RAG_API_KEY else {}
         r = _sync_client.post(
             f"{RAG_URL}/search/investigation",
             json={"query": query, "limit": 5},
+            headers=rag_headers,
             timeout=15
         )
         if r.status_code != 200:

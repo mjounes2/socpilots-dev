@@ -329,6 +329,7 @@ services:
       LANGCHAIN_INTERNAL_TOKEN: ${LANGCHAIN_INTERNAL_TOKEN:-}
       REDIS_URL:           redis://redis:6379
       RAG_URL:             http://rag-retrieval:5005
+      RAG_API_KEY:         ${RAG_API_KEY:-}
     depends_on:
       rag-retrieval:
         condition: service_healthy

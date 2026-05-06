@@ -71,6 +71,11 @@ function mkToken(username, role, displayName) {
 }
 function authMW(req, res, next) {
   const t = (req.headers.authorization || '').replace('Bearer ', '').trim();
+  // Static service-account token for internal services (LangChain agent, etc.)
+  if (t && t === LANGCHAIN_TOKEN) {
+    req.user = { username: 'langchain-service', role: 'l2', displayName: 'LangChain Agent', service: true };
+    return next();
+  }
   const s = sessions.get(t);
   if (!s || s.exp < Date.now()) { sessions.delete(t); return res.status(401).json({ error: 'Unauthorized' }); }
   req.user = s; next();
@@ -2097,9 +2102,11 @@ app.post('/api/langchain/hunt-queries', authMW, async (req, res) => {
 });
 
 // ── RAG / Vector Search endpoints ──────────────────────────────
+const RAG_HEADERS = () => process.env.RAG_API_KEY ? { 'X-API-Key': process.env.RAG_API_KEY } : {};
+
 app.post('/api/investigation/search-similar', authMW, async (req, res) => {
   try {
-    const r = await axios.post(`${RAG_URL}/search/investigation`, req.body, { timeout: 15_000 });
+    const r = await axios.post(`${RAG_URL}/search/investigation`, req.body, { timeout: 15_000, headers: RAG_HEADERS() });
     res.json(r.data);
   } catch(e) {
     res.status(502).json({ error: `RAG investigation search failed: ${e.message}` });
@@ -2108,7 +2115,7 @@ app.post('/api/investigation/search-similar', authMW, async (req, res) => {
 
 app.post('/api/hunting/search-patterns', authMW, async (req, res) => {
   try {
-    const r = await axios.post(`${RAG_URL}/search/hunting`, req.body, { timeout: 15_000 });
+    const r = await axios.post(`${RAG_URL}/search/hunting`, req.body, { timeout: 15_000, headers: RAG_HEADERS() });
     res.json(r.data);
   } catch(e) {
     res.status(502).json({ error: `RAG hunting search failed: ${e.message}` });
@@ -2124,7 +2131,7 @@ app.post('/api/ueba/analyze-anomaly', authMW, async (req, res) => {
     const [ragResult, uebaProfile] = await Promise.allSettled([
       axios.post(`${RAG_URL}/search/investigation`,
         { query: anomaly_description, limit: 5 },
-        { timeout: 15_000 }
+        { timeout: 15_000, headers: RAG_HEADERS() }
       ),
       entity ? ueba.getUserProfile(entity).catch(() => null) : Promise.resolve(null),
     ]);
