@@ -3874,8 +3874,12 @@ async function saveSmtpSettings(){
 }
 
 async function testSmtpConnection(){
-  const res = await P('/api/settings/smtp/test', {});
   const el=document.getElementById('smtp-status');
+  el.innerHTML='<span style="color:var(--txt3)">Saving settings…</span>';
+  // Save current form values first so the backend tests the latest config.
+  await saveSmtpSettings();
+  el.innerHTML='<span style="color:var(--txt3)">Sending test email…</span>';
+  const res = await P('/api/settings/smtp/test', {});
   if(res?.ok){
     el.innerHTML=`<span style="color:var(--g)">✓ Test email sent to ${res.message?.match(/\S+@\S+/)?.[0]||'recipients'}</span>`;
     toast('Test email sent successfully','ok');

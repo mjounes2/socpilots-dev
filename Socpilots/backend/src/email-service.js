@@ -105,11 +105,16 @@ async function sendToRecipients(subject, htmlBody) {
 }
 
 // Test SMTP connection by sending test email
+// Bypasses the enabled flag — testing is how you verify config before enabling.
 async function testSmtpConnection() {
   try {
+    // Force-flush the 5-min cache so we pick up the latest saved values.
+    smtpConfig = null;
+    lastConfigFetch = 0;
+
     const config = await getSmtpConfig();
     if (!config || !config.host) {
-      return { success: false, error: 'SMTP not configured' };
+      return { success: false, error: 'SMTP host not configured' };
     }
 
     if (!config.from_address) {
@@ -120,10 +125,19 @@ async function testSmtpConnection() {
       return { success: false, error: 'No recipients configured' };
     }
 
-    const transporter = await createTransporter();
-    if (!transporter) {
-      return { success: false, error: 'Failed to create SMTP transporter' };
-    }
+    // Build transporter directly — do NOT check config.enabled here.
+    const auth = config.auth_required
+      ? { user: config.user, pass: config.password }
+      : undefined;
+
+    const transporter = nodemailer.createTransport({
+      host: config.host,
+      port: config.port,
+      secure: config.use_ssl,
+      requireTLS: config.use_tls && !config.use_ssl,
+      auth: auth,
+      tls: { rejectUnauthorized: false },
+    });
 
     const primaryRecipient = config.recipients[0];
     const info = await transporter.sendMail({
