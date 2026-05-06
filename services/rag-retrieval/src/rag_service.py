@@ -25,9 +25,10 @@ app = Flask(__name__)
 CORS(app)
 
 # ── Configuration ────────────────────────────────────────────────
-QDRANT_URL  = os.environ.get("QDRANT_URL", "http://qdrant:6333")
-RAG_API_KEY = os.environ.get("RAG_API_KEY", "")
-COLLECTION  = "socpilots_knowledge"
+QDRANT_URL     = os.environ.get("QDRANT_URL", "http://qdrant:6333")
+QDRANT_API_KEY = os.environ.get("QDRANT_API_KEY", "") or None
+RAG_API_KEY    = os.environ.get("RAG_API_KEY", "")
+COLLECTION     = "socpilots_knowledge"
 
 # BGE query prefix — required for retrieval queries (not for documents)
 BGE_QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
@@ -50,7 +51,7 @@ _qdrant: QdrantClient | None = None
 def _get_qdrant() -> QdrantClient:
     global _qdrant
     if _qdrant is None:
-        _qdrant = QdrantClient(url=QDRANT_URL)
+        _qdrant = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY)
     return _qdrant
 
 

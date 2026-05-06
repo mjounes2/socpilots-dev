@@ -370,6 +370,7 @@ SOC_RESPONSE_PROCEDURES = [
 class KnowledgeIngestionService:
     def __init__(self):
         self.qdrant_url  = os.getenv("QDRANT_URL", "http://qdrant:6333")
+        self.qdrant_key  = os.getenv("QDRANT_API_KEY", "") or None
         self.collection  = "socpilots_knowledge"
 
         self.thehive_url = (os.getenv("THEHIVE_URL", "")).rstrip("/")
@@ -384,7 +385,7 @@ class KnowledgeIngestionService:
         self.model = SentenceTransformer("BAAI/bge-small-en-v1.5")
         log.info("Embedding model ready — 384 dimensions")
 
-        self.client = QdrantClient(url=self.qdrant_url)
+        self.client = QdrantClient(url=self.qdrant_url, api_key=self.qdrant_key)
 
     def _embed(self, text: str) -> list[float]:
         """Embed a document (not a query) — no prefix needed for BGE documents."""
