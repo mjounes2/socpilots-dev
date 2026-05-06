@@ -461,21 +461,17 @@ func main() {
 	if port == "" {
 		port = "8080"
 	}
-	mcpBaseURL := os.Getenv("MCP_BASE_URL")
-	if mcpBaseURL == "" {
-		mcpBaseURL = "http://localhost:" + port
-	}
 
-	sseServer := server.NewSSEServer(s, server.WithBaseURL(mcpBaseURL))
+	streamServer := server.NewStreamableHTTPServer(s)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"status":"ok"}`))
 	})
-	mux.Handle("/", sseServer)
+	mux.Handle("/mcp", streamServer)
 
-	log.Printf("TheHive MCP server listening on :%s (SSE at %s/sse)", port, mcpBaseURL)
+	log.Printf("TheHive MCP server listening on :%s (Streamable HTTP at /mcp)", port)
 	if err := http.ListenAndServe(":"+port, mux); err != nil {
 		log.Fatalf("Server error: %v", err)
 	}
