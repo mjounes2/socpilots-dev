@@ -634,16 +634,24 @@ async function getGraphNodes(entity) {
   const records = await run(
     `MATCH (e)-[r]-(n)
      WHERE e.name = $name OR e.address = $name
-     RETURN labels(e)[0] AS src_type,
+     RETURN labels(e)[0]                AS src_type,
             coalesce(e.name, e.address) AS src,
-            coalesce(e.risk_score, 0)  AS src_risk,
-            type(r)                    AS rel,
-            labels(n)[0]              AS dst_type,
+            coalesce(e.risk_score, 0)   AS src_risk,
+            coalesce(e.total_events, 0) AS src_events,
+            coalesce(e.anomaly_count, 0) AS src_anomalies,
+            e.last_seen                 AS src_last_seen,
+            e.last_anomaly              AS src_last_anomaly,
+            type(r)                     AS rel,
+            labels(n)[0]               AS dst_type,
             coalesce(n.name, n.address) AS dst,
-            coalesce(n.risk_score, 0)  AS dst_risk,
-            r.deviation_score          AS deviation,
-            r.flags                    AS flags,
-            r.time                     AS time
+            coalesce(n.risk_score, 0)   AS dst_risk,
+            coalesce(n.total_events, 0) AS dst_events,
+            coalesce(n.anomaly_count, 0) AS dst_anomalies,
+            n.last_seen                 AS dst_last_seen,
+            n.last_anomaly              AS dst_last_anomaly,
+            r.deviation_score           AS deviation,
+            r.flags                     AS flags,
+            r.time                      AS time
      ORDER BY r.time DESC LIMIT 120`,
     { name: entity }
   );
@@ -651,17 +659,29 @@ async function getGraphNodes(entity) {
   const nodesMap = new Map();
   const edges = [];
 
-  const addNode = (id, type, risk) => {
+  const addNode = (id, type, risk, events, anomalies, last_seen, last_anomaly) => {
     if (!nodesMap.has(id)) {
-      nodesMap.set(id, { id, type: type || 'Unknown', risk: risk?.toNumber?.() ?? risk ?? 0 });
+      nodesMap.set(id, {
+        id,
+        type:        type || 'Unknown',
+        risk:        risk?.toNumber?.()       ?? risk       ?? 0,
+        events:      events?.toNumber?.()     ?? events     ?? 0,
+        anomalies:   anomalies?.toNumber?.()  ?? anomalies  ?? 0,
+        last_seen:   last_seen   || null,
+        last_anomaly: last_anomaly || null,
+      });
     }
   };
 
   for (const r of records) {
     const src = r.get('src'); const dst = r.get('dst');
     if (!src || !dst) continue;
-    addNode(src, r.get('src_type'), r.get('src_risk'));
-    addNode(dst, r.get('dst_type'), r.get('dst_risk'));
+    addNode(src, r.get('src_type'), r.get('src_risk'),
+            r.get('src_events'), r.get('src_anomalies'),
+            r.get('src_last_seen'), r.get('src_last_anomaly'));
+    addNode(dst, r.get('dst_type'), r.get('dst_risk'),
+            r.get('dst_events'), r.get('dst_anomalies'),
+            r.get('dst_last_seen'), r.get('dst_last_anomaly'));
     edges.push({
       source:    src,
       target:    dst,

@@ -6,6 +6,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"></script>
 <style>
 /* ───────────────────────────────────────────────────────
    SOC PILOTS v3 — Full Redesign
@@ -1415,13 +1416,35 @@ sshd: Failed" style="min-height:80px"></textarea></div>
       <div id="ueba-leaderboard" style="font-size:12px;color:#8ab0d0;font-family:var(--fm)"><div class="loading"><div class="spin"></div></div></div>
     </div>
     <div class="card">
-      <div class="card-hd"><div class="card-ttl">ENTITY PROFILE &amp; GRAPH</div></div>
+      <div class="card-hd"><div class="card-ttl">ENTITY LOOKUP</div></div>
       <div style="display:flex;gap:10px;margin-bottom:10px">
-        <input class="fi" id="ueba-entity" placeholder="username / hostname / IP..." style="flex:1">
-        <button class="btn btn-p" onclick="loadEntityGraph()">Lookup</button>
+        <input class="fi" id="ueba-entity" placeholder="username / hostname / IP address..." style="flex:1" onkeydown="if(event.key==='Enter')loadEntityGraph()">
+        <button class="btn btn-p" onclick="loadEntityGraph()">Graph</button>
       </div>
       <div id="ueba-graph-result" style="font-size:12px;color:#8ab0d0;font-family:var(--fm)"></div>
     </div>
+  </div>
+
+  <!-- Entity Force Graph — full width, revealed after lookup -->
+  <div id="ueba-graph-card" class="card" style="display:none;margin-bottom:14px">
+    <div class="card-hd" style="flex-wrap:wrap;gap:6px">
+      <div style="display:flex;align-items:center;gap:8px;min-width:0">
+        <div class="card-ttl" id="ueba-graph-title">ENTITY GRAPH</div>
+        <span id="ueba-graph-stats" style="font-size:10px;color:#8ab0d0;font-family:var(--fm)"></span>
+      </div>
+      <div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">
+        <button class="btn btn-sm ueba-fbtn active-filter" id="filter-all"        onclick="uebaFilter('all')">All</button>
+        <button class="btn btn-sm ueba-fbtn" id="filter-high-risk" onclick="uebaFilter('high-risk')">⚠ High Risk</button>
+        <button class="btn btn-sm ueba-fbtn" id="filter-User"      onclick="uebaFilter('User')">👤 Users</button>
+        <button class="btn btn-sm ueba-fbtn" id="filter-Host"      onclick="uebaFilter('Host')">🖥 Hosts</button>
+        <button class="btn btn-sm ueba-fbtn" id="filter-IP"        onclick="uebaFilter('IP')">🌐 IPs</button>
+        <input  id="ueba-graph-search" class="fi" placeholder="search…" style="width:100px;font-size:10px;padding:3px 7px" oninput="uebaSearchNodes(this.value)">
+        <button class="btn btn-sm btn-h" onclick="uebaResetZoom()">⊙ Reset</button>
+        <button class="btn btn-sm btn-p" onclick="uebaExpandGraph()">⛶ Fullscreen</button>
+      </div>
+    </div>
+    <div id="ueba-force-container" style="width:100%;height:520px;position:relative;overflow:hidden;border-radius:4px;background:var(--bg2)"></div>
+    <div style="font-size:9px;color:var(--txt3);font-family:var(--fm);margin-top:6px;padding:0 2px">Drag nodes · Scroll to zoom · Click node to highlight connections · Double-click node to explore</div>
   </div>
 
   <!-- Anomaly Panels Row 1 -->
@@ -4914,130 +4937,319 @@ async function loadEntityGraph(){
   const el=document.getElementById('ueba-graph-result');
   if(el)el.innerHTML='<div class="loading"><div class="spin"></div></div>';
 
-  const [graphNodesD, profileD] = await Promise.all([
+  const [graphNodesD, profileD]=await Promise.all([
     G(`/api/ueba/graph-nodes/${encodeURIComponent(name)}`),
     G(`/api/ueba/profile/${encodeURIComponent(name)}`),
   ]);
 
-  if(!el)return;
-  let html='';
-
-  if(profileD?.profile){
-    const p=profileD.profile;
-    const typeIcon=p.entity_type==='ip'?'🌐':p.entity_type==='host'?'🖥':'👤';
-    const typeLabel=p.entity_type||'user';
-    const knownLabel=p.entity_type==='host'?'Users: '+(p.all_users||[]).join(', '):'Hosts: '+(p.all_hosts||[]).join(', ');
-    html+=`<div style="padding:10px;background:var(--bg2);border-radius:4px;margin-bottom:10px;font-size:12px">
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
-        <span style="font-size:10px;color:#8ab0d0">${typeIcon} ${typeLabel.toUpperCase()}</span>
-        <span style="font-weight:700;color:var(--c)">${p.name}</span>
-        ${riskBadge(p.risk_score||0)}
-        ${p.total_events?`<span style="color:#8ab0d0;font-size:10px">${p.total_events} events · ${p.anomaly_count||0} anomalies</span>`:''}
-        ${p.entity_type==='ip'&&p.is_internal!==undefined?`<span style="font-size:9px;padding:2px 6px;border-radius:3px;background:${p.is_internal?'rgba(76,175,80,.2)':'rgba(244,67,54,.2)'};color:${p.is_internal?'var(--g)':'var(--r)'}">${p.is_internal?'INTERNAL':'EXTERNAL'}</span>`:''}
-      </div>
-      <div style="font-size:10px;color:var(--txt2)">
-        ${knownLabel||'none'} ·
-        ${p.first_seen?'First seen: '+new Date(p.first_seen).toLocaleString()+' · ':''}
-        Last seen: ${p.last_seen?new Date(p.last_seen).toLocaleString():'—'}
-        ${p.last_anomaly?` · Last anomaly: ${new Date(p.last_anomaly).toLocaleString()}`:''}
-      </div>
-    </div>`;
+  // Profile summary in the lookup card
+  if(el){
+    if(profileD?.profile){
+      const p=profileD.profile;
+      const typeIcon=p.entity_type==='ip'?'🌐':p.entity_type==='host'?'🖥':'👤';
+      const knownLabel=p.entity_type==='host'?'Users: '+(p.all_users||[]).slice(0,5).join(', '):'Hosts: '+(p.all_hosts||[]).slice(0,5).join(', ');
+      el.innerHTML=`<div style="padding:10px;background:var(--bg2);border-radius:4px;font-size:11px">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:5px;flex-wrap:wrap">
+          <span style="color:#8ab0d0">${typeIcon} ${(p.entity_type||'user').toUpperCase()}</span>
+          <span style="font-weight:700;color:var(--c)">${esc(p.name)}</span>
+          ${riskBadge(p.risk_score||0)}
+          ${p.entity_type==='ip'&&p.is_internal!==undefined?`<span style="font-size:9px;padding:1px 5px;border-radius:3px;background:${p.is_internal?'rgba(76,175,80,.2)':'rgba(244,67,54,.2)'};color:${p.is_internal?'var(--g)':'var(--r)'}">${p.is_internal?'INTERNAL':'EXTERNAL'}</span>`:''}
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:2px 8px;font-size:10px;color:var(--txt2)">
+          <span>Events</span><span style="color:var(--txt)">${p.total_events||0}</span>
+          <span>Anomalies</span><span style="color:${(p.anomaly_count||0)>0?'#ff9800':'var(--txt)'}">${p.anomaly_count||0}</span>
+          <span>Last seen</span><span style="color:var(--txt)">${p.last_seen?new Date(p.last_seen).toLocaleString():'—'}</span>
+          ${p.last_anomaly?`<span>Last anomaly</span><span style="color:#ff9800">${new Date(p.last_anomaly).toLocaleString()}</span>`:''}
+        </div>
+        ${knownLabel?`<div style="margin-top:4px;font-size:10px;color:#8ab0d0">${esc(knownLabel)}</div>`:''}
+      </div>`;
+    } else {
+      el.innerHTML='<div style="color:#8ab0d0;font-size:11px;padding:4px 0">Entity not found in UEBA graph.</div>';
+    }
   }
 
-  if(!graphNodesD?.nodes?.length){
-    html+='<div style="color:#8ab0d0;font-size:11px;padding:6px 0">No graph relationships found for this entity</div>';
-    el.innerHTML=html;return;
-  }
+  const graphCard=document.getElementById('ueba-graph-card');
+  if(!graphNodesD?.nodes?.length){ if(graphCard)graphCard.style.display='none'; return; }
 
-  // Force-directed SVG graph (hand-rolled, no CDN)
-  el.innerHTML=html;
-  el.insertAdjacentHTML('beforeend','<div id="ueba-force-graph"></div>');
-  renderForceGraph(document.getElementById('ueba-force-graph'), graphNodesD.nodes, graphNodesD.edges);
+  // Reveal graph card and set header
+  if(graphCard)graphCard.style.display='';
+  const titleEl=document.getElementById('ueba-graph-title');
+  if(titleEl)titleEl.textContent=`ENTITY GRAPH — ${name.toUpperCase()}`;
+  const statsEl=document.getElementById('ueba-graph-stats');
+  if(statsEl)statsEl.textContent=`${graphNodesD.nodes.length} nodes · ${graphNodesD.edges.length} edges`;
+
+  // Store globally for filter/resize
+  window._uebaGraph={nodes:graphNodesD.nodes, edges:graphNodesD.edges};
+  uebaFilter('all'); // renders into the inline container
 }
 
-function renderForceGraph(container, nodes, edges){
-  const W=container.clientWidth||600, H=320;
-  const nodeColor={User:'#00e5ff',Host:'#66bb6a',IP:'#ff9800',Process:'#ab47bc'};
-  const nodeR=n=>n.risk>=70?12:n.risk>=40?9:7;
+// ── D3 Force Graph ────────────────────────────────────────────
+function renderForceGraphD3(container, allNodes, allEdges, isFullscreen){
+  if(typeof d3==='undefined'){ container.innerHTML='<div style="color:#ff9800;padding:20px;font-size:11px;font-family:var(--fm)">D3.js not loaded — check network.</div>'; return; }
+  container.innerHTML='';
 
-  // Simple force simulation (Euler integration, no library)
-  const pos={};
-  nodes.forEach((n,i)=>{
-    const angle=(i/nodes.length)*2*Math.PI;
-    pos[n.id]={x:W/2+Math.cos(angle)*120,y:H/2+Math.sin(angle)*90,vx:0,vy:0};
-  });
+  const W=container.clientWidth||800;
+  const H=isFullscreen?(container.clientHeight||window.innerHeight-46):(container.clientHeight||520);
 
-  function tick(){
-    // Repulsion
-    nodes.forEach(a=>{
-      nodes.forEach(b=>{
-        if(a.id===b.id)return;
-        const dx=pos[a.id].x-pos[b.id].x, dy=pos[a.id].y-pos[b.id].y;
-        const d=Math.max(Math.sqrt(dx*dx+dy*dy),1);
-        const f=800/(d*d);
-        pos[a.id].vx+=f*dx/d; pos[a.id].vy+=f*dy/d;
-      });
-    });
-    // Spring attraction along edges
-    edges.forEach(e=>{
-      const s=pos[e.source], t=pos[e.target];
-      if(!s||!t)return;
-      const dx=t.x-s.x, dy=t.y-s.y;
-      const d=Math.max(Math.sqrt(dx*dx+dy*dy),1);
-      const f=(d-80)*0.05;
-      s.vx+=f*dx/d; s.vy+=f*dy/d;
-      t.vx-=f*dx/d; t.vy-=f*dy/d;
-    });
-    // Center gravity
-    nodes.forEach(n=>{
-      pos[n.id].vx+=(W/2-pos[n.id].x)*0.01;
-      pos[n.id].vy+=(H/2-pos[n.id].y)*0.01;
-    });
-    // Integrate + dampen + clamp
-    nodes.forEach(n=>{
-      const p=pos[n.id];
-      p.vx*=0.7; p.vy*=0.7;
-      p.x=Math.max(20,Math.min(W-20,p.x+p.vx));
-      p.y=Math.max(20,Math.min(H-20,p.y+p.vy));
-    });
-  }
+  const NODE_COLORS={User:'#00e5ff',Host:'#66bb6a',IP:'#ff9800',Process:'#ab47bc',Unknown:'#8ab0d0'};
+  const nodeColor=n=>{
+    if(n.risk>=80)return'#ff1744';
+    if(n.risk>=50)return'#ff9800';
+    return NODE_COLORS[n.type]||'#8ab0d0';
+  };
+  const nodeR=n=>Math.max(8,Math.min(26, 8+(n.risk/100)*10+Math.log1p(n.events||0)*2));
 
-  for(let i=0;i<120;i++)tick();
+  // Deep-copy nodes so D3 can mutate x/y without corrupting source data
+  const nodes=allNodes.map(n=>({...n}));
+  const edges=allEdges.map(e=>({...e}));
 
-  const edgeSvg=edges.map(e=>{
-    const s=pos[e.source],t=pos[e.target];
-    if(!s||!t)return'';
-    const dev=e.deviation||0;
-    const col=dev>=70?'rgba(255,23,68,.6)':dev>=40?'rgba(255,152,0,.5)':'rgba(138,176,208,.25)';
-    return`<line x1="${s.x}" y1="${s.y}" x2="${t.x}" y2="${t.y}" stroke="${col}" stroke-width="1.5"/>
-      <text x="${(s.x+t.x)/2}" y="${(s.y+t.y)/2-3}" fill="#8ab0d0" font-size="8" font-family="monospace" text-anchor="middle">${e.rel}</text>`;
-  }).join('');
+  const svg=d3.create('svg')
+    .attr('width','100%').attr('height','100%')
+    .style('display','block').style('cursor','grab');
 
-  const nodeSvg=nodes.map(n=>{
-    const p=pos[n.id];const r=nodeR(n);const col=nodeColor[n.type]||'#8ab0d0';
-    const glow=n.risk>=70?`filter:drop-shadow(0 0 5px ${col})`:'';
-    return`<g style="cursor:pointer" onclick="uebaLookup('${esc(n.id)}')">
-      <circle cx="${p.x}" cy="${p.y}" r="${r}" fill="${col}33" stroke="${col}" stroke-width="1.5" style="${glow}"/>
-      <text x="${p.x}" y="${p.y-r-3}" fill="${col}" font-size="9" font-family="monospace" text-anchor="middle">${n.id.length>14?n.id.slice(0,13)+'…':n.id}</text>
-      ${n.risk>0?`<text x="${p.x}" y="${p.y+3}" fill="${col}" font-size="8" font-family="monospace" text-anchor="middle">${n.risk}</text>`:''}
-    </g>`;
-  }).join('');
+  // Defs — arrowhead marker
+  const defs=svg.append('defs');
+  defs.append('marker').attr('id','arr').attr('viewBox','0 -4 8 8').attr('refX',8).attr('refY',0)
+    .attr('markerWidth',6).attr('markerHeight',6).attr('orient','auto')
+    .append('path').attr('d','M0,-4L8,0L0,4').attr('fill','rgba(138,176,208,.4)');
+
+  const g=svg.append('g');
+  const zoom=d3.zoom().scaleExtent([0.08,10])
+    .on('zoom',ev=>{ g.attr('transform',ev.transform); svg.style('cursor',ev.transform.k>1?'move':'grab'); });
+  svg.call(zoom).on('dblclick.zoom',null);
+
+  // Layers
+  const linkG=g.append('g');
+  const labelG=g.append('g');
+  const nodeG=g.append('g');
+
+  // Links
+  const link=linkG.selectAll('line').data(edges).join('line')
+    .attr('stroke',e=>e.deviation>=70?'rgba(255,23,68,.65)':e.deviation>=40?'rgba(255,152,0,.55)':'rgba(138,176,208,.18)')
+    .attr('stroke-width',e=>e.deviation>=70?2.5:1.5)
+    .attr('marker-end','url(#arr)')
+    .attr('class','ueba-edge');
+
+  // Edge labels (rel type, shown at mid-point)
+  const edgeLbl=labelG.selectAll('text').data(edges).join('text')
+    .text(e=>e.rel).attr('fill','#3a5f7a').attr('font-size',8)
+    .attr('font-family','monospace').attr('text-anchor','middle')
+    .style('pointer-events','none').style('user-select','none');
+
+  // Node groups
+  const node=nodeG.selectAll('g').data(nodes).join('g')
+    .attr('class','ueba-node').style('cursor','pointer')
+    .call(d3.drag()
+      .on('start',(ev,d)=>{ if(!ev.active)sim.alphaTarget(.3).restart(); d.fx=d.x;d.fy=d.y; })
+      .on('drag', (ev,d)=>{ d.fx=ev.x;d.fy=ev.y; })
+      .on('end',  (ev,d)=>{ if(!ev.active)sim.alphaTarget(0); d.fx=null;d.fy=null; }))
+    .on('mouseover', showTip)
+    .on('mousemove', moveTip)
+    .on('mouseout',  ()=>{ const t=document.getElementById('ueba-tooltip'); if(t)t.style.display='none'; })
+    .on('click',     (ev,d)=>{ ev.stopPropagation(); selectNode(ev,d); })
+    .on('dblclick',  (ev,d)=>{ ev.stopPropagation(); uebaLookup(d.id); });
+
+  // Circle
+  node.append('circle')
+    .attr('r',nodeR)
+    .attr('fill',n=>nodeColor(n)+'2a')
+    .attr('stroke',nodeColor)
+    .attr('stroke-width',n=>n.risk>=70?2.5:1.5)
+    .style('filter',n=>n.risk>=70?`drop-shadow(0 0 7px ${nodeColor(n)})`:'none');
+
+  // Label above node
+  node.append('text')
+    .text(n=>n.id.length>18?n.id.slice(0,17)+'…':n.id)
+    .attr('dy',n=>-nodeR(n)-5)
+    .attr('fill',nodeColor).attr('font-size',9).attr('font-family','monospace')
+    .attr('text-anchor','middle').style('pointer-events','none').style('user-select','none');
+
+  // Risk score inside circle
+  node.filter(n=>n.risk>0).append('text')
+    .text(n=>n.risk)
+    .attr('dy',4).attr('fill',nodeColor).attr('font-size',8)
+    .attr('font-family','monospace').attr('text-anchor','middle')
+    .style('pointer-events','none').style('user-select','none');
+
+  // Type badge below circle (small)
+  node.append('text')
+    .text(n=>n.type)
+    .attr('dy',n=>nodeR(n)+12)
+    .attr('fill',n=>nodeColor(n)+'99').attr('font-size',7)
+    .attr('font-family','monospace').attr('text-anchor','middle')
+    .style('pointer-events','none').style('user-select','none');
 
   // Legend
-  const legend=Object.entries(nodeColor).map(([t,c],i)=>
-    `<g transform="translate(${8+i*68},0)"><circle r="4" cx="4" cy="4" fill="${c}33" stroke="${c}" stroke-width="1"/><text x="11" y="8" fill="${c}" font-size="8" font-family="monospace">${t}</text></g>`
-  ).join('');
+  const legData=[
+    {l:'User',c:'#00e5ff'},{l:'Host',c:'#66bb6a'},{l:'IP',c:'#ff9800'},
+    {l:'Process',c:'#ab47bc'},{l:'Risk ≥80',c:'#ff1744'},
+  ];
+  const leg=svg.append('g').attr('transform',`translate(10,${H-20})`);
+  legData.forEach((d,i)=>{
+    const lg=leg.append('g').attr('transform',`translate(${i*76},0)`);
+    lg.append('circle').attr('r',5).attr('cx',5).attr('cy',0)
+      .attr('fill',d.c+'33').attr('stroke',d.c).attr('stroke-width',1.5);
+    lg.append('text').text(d.l).attr('x',13).attr('y',4)
+      .attr('fill',d.c+'cc').attr('font-size',9).attr('font-family','monospace');
+  });
 
-  container.innerHTML=`<svg width="${W}" height="${H}" style="background:var(--bg2);border-radius:4px;display:block">
-    ${edgeSvg}${nodeSvg}
-    <g transform="translate(4,${H-14})">${legend}</g>
-  </svg>`;
+  // Force simulation
+  const sim=d3.forceSimulation(nodes)
+    .force('link', d3.forceLink(edges).id(d=>d.id).distance(n=>120+nodeR(n.source||n)*2).strength(.5))
+    .force('charge', d3.forceManyBody().strength(-500))
+    .force('center', d3.forceCenter(W/2,H/2).strength(.05))
+    .force('collide', d3.forceCollide().radius(n=>nodeR(n)+14).strength(.8))
+    .on('tick',()=>{
+      link.attr('x1',d=>d.source.x).attr('y1',d=>d.source.y)
+          .attr('x2',d=>d.target.x).attr('y2',d=>d.target.y);
+      edgeLbl.attr('x',d=>(d.source.x+d.target.x)/2)
+              .attr('y',d=>(d.source.y+d.target.y)/2-3);
+      node.attr('transform',d=>`translate(${d.x},${d.y})`);
+    });
+
+  // Tooltip
+  function showTip(event,d){
+    const t=document.getElementById('ueba-tooltip');
+    if(!t)return;
+    const riskColor=d.risk>=70?'var(--r)':d.risk>=40?'#ff9800':d.risk>0?'var(--y)':'var(--g)';
+    t.innerHTML=`
+      <div style="font-size:9px;color:#8ab0d0;margin-bottom:3px;letter-spacing:1px">${(d.type||'').toUpperCase()}</div>
+      <div style="font-size:13px;font-weight:700;color:var(--c);margin-bottom:7px">${esc(d.id)}</div>
+      <div style="display:grid;grid-template-columns:max-content 1fr;gap:3px 10px;font-size:10px;font-family:var(--fm)">
+        <span style="color:#8ab0d0">Risk Score</span>
+        <span style="color:${riskColor};font-weight:600">${d.risk||0}/100</span>
+        <span style="color:#8ab0d0">Total Events</span>
+        <span style="color:var(--txt)">${d.events||0}</span>
+        <span style="color:#8ab0d0">Anomalies</span>
+        <span style="color:${(d.anomalies||0)>0?'#ff9800':'var(--txt)'}">${d.anomalies||0}</span>
+        <span style="color:#8ab0d0">Last Seen</span>
+        <span style="color:var(--txt2)">${d.last_seen?new Date(d.last_seen).toLocaleString():'—'}</span>
+        ${d.last_anomaly?`<span style="color:#8ab0d0">Last Anomaly</span><span style="color:#ff9800">${new Date(d.last_anomaly).toLocaleString()}</span>`:''}
+      </div>
+      <div style="margin-top:7px;font-size:9px;color:var(--txt3)">Click to highlight · Dbl-click to explore</div>`;
+    t.style.display='block';
+    moveTip(event);
+  }
+  function moveTip(event){
+    const t=document.getElementById('ueba-tooltip');
+    if(!t||t.style.display==='none')return;
+    const x=event.clientX+16, y=event.clientY-10;
+    const r=t.getBoundingClientRect();
+    t.style.left=(x+r.width>window.innerWidth?event.clientX-r.width-16:x)+'px';
+    t.style.top =(y+r.height>window.innerHeight?event.clientY-r.height-10:y)+'px';
+  }
+
+  // Node selection
+  let _sel=null;
+  function selectNode(ev,d){
+    if(_sel===d.id){ _sel=null; link.attr('opacity',1).attr('stroke-width',e=>e.deviation>=70?2.5:1.5); node.attr('opacity',1); return; }
+    _sel=d.id;
+    const connected=new Set([d.id]);
+    edges.forEach(e=>{
+      const s=e.source?.id||e.source, tt=e.target?.id||e.target;
+      if(s===d.id||tt===d.id){ connected.add(s); connected.add(tt); }
+    });
+    link.attr('opacity',e=>{ const s=e.source?.id||e.source,tt=e.target?.id||e.target; return(s===d.id||tt===d.id)?1:.05; })
+        .attr('stroke-width',e=>{ const s=e.source?.id||e.source,tt=e.target?.id||e.target; return(s===d.id||tt===d.id)?3:.5; });
+    node.attr('opacity',n=>connected.has(n.id)?1:.15);
+    // Update entity input for easy follow-up lookup
+    const inp=document.getElementById('ueba-entity');
+    if(inp)inp.value=d.id;
+  }
+  svg.on('click',()=>{ _sel=null; link.attr('opacity',1).attr('stroke-width',e=>e.deviation>=70?2.5:1.5); node.attr('opacity',1); });
+
+  container.appendChild(svg.node());
+
+  // Store refs for zoom reset / search / filter re-renders
+  const key=isFullscreen?'_fs':'_inline';
+  if(window._uebaGraph){ window._uebaGraph[key+'Sim']=sim; window._uebaGraph[key+'Zoom']=zoom; window._uebaGraph[key+'Svg']=svg.node(); }
 }
 
 function uebaLookup(entity){
-  document.getElementById('ueba-entity').value=entity;
+  const inp=document.getElementById('ueba-entity');
+  if(inp)inp.value=entity;
   go('ueba');
-  setTimeout(loadEntityGraph,100);
+  setTimeout(loadEntityGraph,80);
+}
+
+// ── UEBA Graph Controls ───────────────────────────────────────
+function uebaFilter(type, isFullscreen=false){
+  if(!window._uebaGraph)return;
+  const {nodes,edges}=window._uebaGraph;
+  let fn=nodes, fe=edges;
+
+  if(type==='high-risk'){
+    const ids=new Set(nodes.filter(n=>n.risk>=50).map(n=>n.id));
+    fn=nodes.filter(n=>ids.has(n.id));
+    fe=edges.filter(e=>ids.has(e.source)&&ids.has(e.target));
+  } else if(type!=='all'){
+    const typeIds=new Set(nodes.filter(n=>n.type===type).map(n=>n.id));
+    fe=edges.filter(e=>typeIds.has(e.source)||typeIds.has(e.target));
+    const all2=new Set([...typeIds]); fe.forEach(e=>{all2.add(e.source);all2.add(e.target);});
+    fn=nodes.filter(n=>all2.has(n.id));
+  }
+
+  window._uebaGraph._filteredNodes=fn;
+  window._uebaGraph._filteredEdges=fe;
+
+  const prefix=isFullscreen?'fs-filter-':'filter-';
+  ['all','high-risk','User','Host','IP','Process'].forEach(t=>{
+    const b=document.getElementById(prefix+t);
+    if(!b)return;
+    b.classList.toggle('active-filter',t===type);
+  });
+
+  const cid=isFullscreen?'ueba-fs-container':'ueba-force-container';
+  const c=document.getElementById(cid);
+  if(c)renderForceGraphD3(c,fn,fe,isFullscreen);
+}
+
+function uebaSearchNodes(query, isFullscreen=false){
+  if(!window._uebaGraph)return;
+  const key=isFullscreen?'_fsSvg':'_inlineSvg';
+  const svgEl=window._uebaGraph[key];
+  if(!svgEl)return;
+  const q=(query||'').toLowerCase().trim();
+  d3.select(svgEl).selectAll('.ueba-node')
+    .attr('opacity',d=>!q||d.id.toLowerCase().includes(q)?1:.08);
+}
+
+function uebaResetZoom(isFullscreen=false){
+  if(!window._uebaGraph)return;
+  const svgEl=window._uebaGraph[isFullscreen?'_fsSvg':'_inlineSvg'];
+  const zoom=window._uebaGraph[isFullscreen?'_fsZoom':'_inlineZoom'];
+  if(svgEl&&zoom)d3.select(svgEl).transition().duration(500).call(zoom.transform,d3.zoomIdentity);
+}
+
+function uebaExpandGraph(){
+  if(!window._uebaGraph)return;
+  const overlay=document.getElementById('ueba-fullscreen');
+  if(!overlay)return;
+  overlay.style.display='block';
+  const t=document.getElementById('ueba-fs-title'),s=document.getElementById('ueba-fs-stats');
+  const it=document.getElementById('ueba-graph-title'),is=document.getElementById('ueba-graph-stats');
+  if(t&&it)t.textContent=it.textContent;
+  if(s&&is)s.textContent=is.textContent;
+  // Sync active filter button
+  const active=document.querySelector('#ueba-graph-card .active-filter');
+  if(active){
+    const type=active.id.replace('filter-','');
+    uebaFilter(type,true);
+  } else {
+    const fn=window._uebaGraph._filteredNodes||window._uebaGraph.nodes;
+    const fe=window._uebaGraph._filteredEdges||window._uebaGraph.edges;
+    const c=document.getElementById('ueba-fs-container');
+    if(c)renderForceGraphD3(c,fn,fe,true);
+  }
+}
+
+function uebaCollapseGraph(){
+  const overlay=document.getElementById('ueba-fullscreen');
+  if(overlay)overlay.style.display='none';
+  const t=document.getElementById('ueba-tooltip');
+  if(t)t.style.display='none';
+  // Stop FS simulation to free resources
+  if(window._uebaGraph?._fsSim)window._uebaGraph._fsSim.stop();
 }
 
 // ─── LANGCHAIN AGENT ─────────────────────────────────────────
@@ -5712,6 +5924,51 @@ document.addEventListener('DOMContentLoaded', () => {
     pollNotifCount();
   }, 500);
 });
+
+// UEBA graph resize handler (debounced)
+let _uebaResizeTimer = null;
+window.addEventListener('resize', () => {
+  clearTimeout(_uebaResizeTimer);
+  _uebaResizeTimer = setTimeout(() => {
+    if (!window._uebaGraph) return;
+    const card = document.getElementById('ueba-graph-card');
+    if (card && card.style.display !== 'none') {
+      const c = document.getElementById('ueba-force-container');
+      if (c) renderForceGraphD3(c, window._uebaGraph._filteredNodes || window._uebaGraph.nodes, window._uebaGraph._filteredEdges || window._uebaGraph.edges, false);
+    }
+    const fs = document.getElementById('ueba-fullscreen');
+    if (fs && fs.style.display !== 'none') {
+      const c = document.getElementById('ueba-fs-container');
+      if (c) renderForceGraphD3(c, window._uebaGraph._filteredNodes || window._uebaGraph.nodes, window._uebaGraph._filteredEdges || window._uebaGraph.edges, true);
+    }
+  }, 250);
+});
 </script>
+
+<!-- UEBA Graph Tooltip -->
+<div id="ueba-tooltip" style="position:fixed;z-index:8500;display:none;background:var(--bg3);border:1px solid var(--b2);border-radius:6px;padding:10px 13px;font-size:11px;font-family:var(--fm);max-width:290px;pointer-events:none;box-shadow:0 6px 24px rgba(0,0,0,.6);transition:opacity .1s"></div>
+
+<!-- UEBA Full-Screen Graph Overlay -->
+<div id="ueba-fullscreen" style="display:none;position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:9000;background:var(--bg0);flex-direction:column">
+  <div style="position:absolute;top:0;left:0;right:0;height:46px;background:var(--bg1);border-bottom:1px solid var(--b1);display:flex;align-items:center;padding:0 14px;gap:10px;z-index:1">
+    <span style="font-size:11px;font-family:var(--fw);letter-spacing:2px;color:var(--c)" id="ueba-fs-title">ENTITY GRAPH</span>
+    <span id="ueba-fs-stats" style="font-size:10px;color:#8ab0d0;font-family:var(--fm)"></span>
+    <div style="flex:1"></div>
+    <button class="btn btn-sm ueba-fbtn active-filter" id="fs-filter-all"       onclick="uebaFilter('all',true)">All</button>
+    <button class="btn btn-sm ueba-fbtn" id="fs-filter-high-risk" onclick="uebaFilter('high-risk',true)">⚠ High Risk</button>
+    <button class="btn btn-sm ueba-fbtn" id="fs-filter-User"      onclick="uebaFilter('User',true)">👤 Users</button>
+    <button class="btn btn-sm ueba-fbtn" id="fs-filter-Host"      onclick="uebaFilter('Host',true)">🖥 Hosts</button>
+    <button class="btn btn-sm ueba-fbtn" id="fs-filter-IP"        onclick="uebaFilter('IP',true)">🌐 IPs</button>
+    <input  id="ueba-fs-search" class="fi" placeholder="search…" style="width:110px;font-size:10px;padding:3px 7px" oninput="uebaSearchNodes(this.value,true)">
+    <button class="btn btn-sm btn-h" onclick="uebaResetZoom(true)">⊙ Reset</button>
+    <button class="btn btn-sm btn-p" onclick="uebaCollapseGraph()">✕ Close</button>
+  </div>
+  <div id="ueba-fs-container" style="position:absolute;top:46px;left:0;right:0;bottom:0"></div>
+</div>
+
+<style>
+.ueba-fbtn{background:rgba(255,255,255,.04);color:var(--txt2);border:1px solid var(--b1)}
+.ueba-fbtn:hover,.ueba-fbtn.active-filter{background:rgba(0,229,255,.15);color:var(--c);border-color:rgba(0,229,255,.3)}
+</style>
 </body>
 </html>
