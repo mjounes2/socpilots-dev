@@ -5067,9 +5067,9 @@ async function loadDarkSocPage() {
   const dhEl = document.getElementById('ds-hunt');    if (dhEl) dhEl.checked = huntOn;
   const dlEl = document.getElementById('ds-lateral'); if (dlEl) dlEl.checked = latOn;
 
-  const stats = dsStat.stats || {};
+  const stats = dsStat.execution_stats || {};
   const setT = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v ?? '—'; };
-  setT('ds-total', stats.total_executions || 0);
+  setT('ds-total', stats.total || 0);
   setT('ds-exec',  stats.executed || 0);
   setT('ds-skip',  stats.skipped  || 0);
   setT('ds-pend',  stats.pending_approvals || 0);
@@ -5080,17 +5080,19 @@ async function loadDarkSocPage() {
     try {
       const execs = await G('/api/playbook-executions?limit=30');
       const rows = execs.executions || execs || [];
-      if (!rows.length) { auditEl.innerHTML = '<div class="notif-empty">No autonomous actions yet</div>'; return; }
-      auditEl.innerHTML = rows.map(r => {
-        const ts = new Date(r.created_at).toLocaleString();
-        const resultCls = r.outcome === 'executed' ? 'ok' : r.outcome === 'skipped' ? 'skip' : 'fail';
-        const actions = (r.actions_taken || []).join(', ') || r.playbook_name || '—';
-        return `<div class="audit-row">
-          <span class="audit-time">${ts}</span>
-          <span class="audit-action"><strong>${e(r.playbook_name||'—')}</strong> — ${e(r.agent||'')}</span>
-          <span class="audit-result ${resultCls}">${r.outcome?.toUpperCase()||'—'}</span>
-        </div>`;
-      }).join('');
+      if (!rows.length) {
+        auditEl.innerHTML = '<div class="notif-empty">No autonomous actions yet</div>';
+      } else {
+        auditEl.innerHTML = rows.map(r => {
+          const ts = new Date(r.created_at).toLocaleString();
+          const resultCls = r.outcome === 'executed' ? 'ok' : r.outcome === 'skipped' ? 'skip' : 'fail';
+          return `<div class="audit-row">
+            <span class="audit-time">${ts}</span>
+            <span class="audit-action"><strong>${e(r.playbook_name||'—')}</strong> — ${e(r.agent||'')}</span>
+            <span class="audit-result ${resultCls}">${r.outcome?.toUpperCase()||'—'}</span>
+          </div>`;
+        }).join('');
+      }
     } catch(err) {
       auditEl.innerHTML = '<div class="notif-empty">Failed to load audit log</div>';
     }

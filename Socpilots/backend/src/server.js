@@ -1252,18 +1252,23 @@ app.post('/api/playbooks/:id/run', authMW, async (req, res) => {
 // Dark SOC status
 app.get('/api/darksoc/status', authMW, async (req, res) => {
   try {
-    const [settings, execStats, pbCount] = await Promise.all([
+    const [settings, execStats, pbCount, pendingRow] = await Promise.all([
       db.getAllSettings(),
       db.getPlaybookExecStats(),
       db.listPlaybooks({ enabledOnly: true }).then(r => r.length),
+      db.pool.query(`SELECT COUNT(*) AS cnt FROM isolation_approvals WHERE status='pending' AND expires_at > NOW()`),
     ]);
+    const stats = {
+      ...execStats,
+      pending_approvals: parseInt(pendingRow.rows[0]?.cnt || 0),
+    };
     res.json({
       darksoc_enabled:                settings.darksoc_enabled === 'true',
       hunt_enabled:                   settings.darksoc_hunt_enabled === 'true',
       lateral_monitor_enabled:        settings.darksoc_lateral_monitor_enabled === 'true',
       auto_triage_enabled:            settings.auto_triage_enabled === 'true',
       active_playbooks:               pbCount,
-      execution_stats:                execStats,
+      execution_stats:                stats,
     });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
