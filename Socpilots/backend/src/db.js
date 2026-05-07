@@ -276,6 +276,30 @@ async function initSchema() {
       created_at  TIMESTAMPTZ DEFAULT NOW()
     )`,
 
+    // Evidence files uploaded for AI analysis
+    `CREATE TABLE IF NOT EXISTS evidence_files (
+      id                SERIAL PRIMARY KEY,
+      stored_name       VARCHAR(255) NOT NULL,
+      original_name     VARCHAR(255) NOT NULL,
+      mime_type         VARCHAR(100),
+      file_size         BIGINT,
+      sha256            VARCHAR(64),
+      uploaded_by       VARCHAR(50),
+      alert_id          VARCHAR(100),
+      case_id           VARCHAR(100),
+      investigation_id  INT REFERENCES investigations(id) ON DELETE SET NULL,
+      qdrant_point_ids  JSONB DEFAULT '[]',
+      extracted_preview TEXT,
+      chunk_count       INT DEFAULT 0,
+      scan_status       VARCHAR(20) DEFAULT 'pending',
+      scan_result       JSONB,
+      created_at        TIMESTAMPTZ DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_evf_uploaded_by ON evidence_files(uploaded_by)`,
+    `CREATE INDEX IF NOT EXISTS idx_evf_sha256      ON evidence_files(sha256)`,
+    `CREATE INDEX IF NOT EXISTS idx_evf_case_id     ON evidence_files(case_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_evf_created     ON evidence_files(created_at DESC)`,
+
     // ── Seed Default Playbooks (5 built-in) ────────────────────
     `INSERT INTO playbooks(name,description,mitre_techniques,min_rule_level,fp_confidence_max,actions,require_consensus,enabled)
      VALUES
@@ -1122,4 +1146,69 @@ module.exports = {
   createHuntSchedule,
   updateHuntSchedule,
   updateHuntScheduleResult,
+  // Evidence files CRUD
+  createEvidenceFile,
+  updateEvidenceFile,
+  listEvidenceFiles,
+  getEvidenceFile,
+  deleteEvidenceFile,
 };
+
+// ── Evidence Files CRUD ──────────────────────────────────
+
+async function createEvidenceFile({ storedName, originalName, mimeType, fileSize, sha256, uploadedBy, alertId, caseId, investigationId }) {
+  const r = await pool.query(
+    `INSERT INTO evidence_files
+       (stored_name, original_name, mime_type, file_size, sha256, uploaded_by,
+        alert_id, case_id, investigation_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+     RETURNING *`,
+    [storedName, originalName, mimeType || null, fileSize || 0, sha256 || null,
+     uploadedBy || null, alertId || null, caseId || null, investigationId || null]
+  );
+  return r.rows[0];
+}
+
+async function updateEvidenceFile(id, fields) {
+  const allowed = ['qdrant_point_ids','extracted_preview','chunk_count','scan_status','scan_result','sha256'];
+  const sets = [];
+  const vals = [];
+  for (const [k, v] of Object.entries(fields)) {
+    if (allowed.includes(k)) {
+      vals.push(typeof v === 'object' && v !== null ? JSON.stringify(v) : v);
+      sets.push(`${k}=$${vals.length}`);
+    }
+  }
+  if (!sets.length) return null;
+  vals.push(id);
+  const r = await pool.query(
+    `UPDATE evidence_files SET ${sets.join(',')} WHERE id=$${vals.length} RETURNING *`,
+    vals
+  );
+  return r.rows[0];
+}
+
+async function listEvidenceFiles({ limit = 50, offset = 0, uploadedBy, caseId, alertId } = {}) {
+  let where = ['1=1'];
+  const vals = [];
+  if (uploadedBy) { vals.push(uploadedBy); where.push(`uploaded_by=$${vals.length}`); }
+  if (caseId)     { vals.push(caseId);     where.push(`case_id=$${vals.length}`); }
+  if (alertId)    { vals.push(alertId);    where.push(`alert_id=$${vals.length}`); }
+  vals.push(limit, offset);
+  const r = await pool.query(
+    `SELECT * FROM evidence_files WHERE ${where.join(' AND ')}
+     ORDER BY created_at DESC LIMIT $${vals.length-1} OFFSET $${vals.length}`,
+    vals
+  );
+  return r.rows;
+}
+
+async function getEvidenceFile(id) {
+  const r = await pool.query(`SELECT * FROM evidence_files WHERE id=$1`, [id]);
+  return r.rows[0] || null;
+}
+
+async function deleteEvidenceFile(id) {
+  const r = await pool.query(`DELETE FROM evidence_files WHERE id=$1 RETURNING *`, [id]);
+  return r.rows[0] || null;
+}

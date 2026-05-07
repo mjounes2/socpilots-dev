@@ -355,6 +355,7 @@ if(localStorage.getItem("soc_dim")==="1")document.body.classList.add("dim");
     <div class="sbi" onclick="go('assets')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/><circle cx="12" cy="10" r="3"/></svg><span class="sbi-lbl">Assets</span><span class="sbi-n" id="n-assets">—</span></div>
     <div class="sbi" onclick="go('ueba')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="12" r="2"/><circle cx="19" cy="5" r="2"/><circle cx="19" cy="19" r="2"/><path d="M7 12h10M17 7l-2 3M17 17l-2-3"/></svg><span class="sbi-lbl">UEBA</span><span class="sbi-n" id="n-ueba">—</span></div>
     <div class="sbi" onclick="go('reports')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg><span class="sbi-lbl">Reports</span></div>
+    <div class="sbi" onclick="go('evidence')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg><span class="sbi-lbl">Evidence Upload</span></div>
   </div>
   <div class="sb-bot">
     <div class="sbi" onclick="go('darksoc')" id="nav-darksoc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/><path d="M8.5 8.5l7 7M15.5 8.5l-7 7"/></svg><span class="sbi-lbl">Dark SOC</span><span class="sbi-n" id="n-darksoc" style="display:none">ON</span></div>
@@ -1072,7 +1073,19 @@ sshd: Failed" style="min-height:80px"></textarea></div>
       <div class="chat-msgs" id="chat-msgs">
         <div class="cmsg ai"><div class="cav ai">SP</div><div class="cbub">Hello <strong id="chat-uname" style="color:var(--c)">—</strong>!<br><br>I'm SOCPilots AI — connected to your SIEM and SP-CM via MCP tools.<br><br>Ask about alerts, agents, cases, threats, or request automated response actions.</div></div>
       </div>
-      <div class="chat-row"><textarea class="chat-in" id="chat-in" placeholder="Ask SOCPilots AI..." onkeydown="chatKey(event)"></textarea><button class="btn btn-p" id="chat-btn" onclick="sendChat()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>Send</button></div>
+      <div class="chat-row" style="flex-direction:column;gap:5px;padding:8px 10px">
+        <div id="chat-attach-chip" style="display:none;align-items:center;gap:6px;background:rgba(0,229,255,.08);border:1px solid rgba(0,229,255,.25);border-radius:4px;padding:4px 8px;font-size:10px;font-family:var(--fm);color:var(--c)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:10px;height:10px;flex-shrink:0"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
+          <span id="chat-attach-name" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+          <button onclick="chatRemoveAttach()" style="background:none;border:none;color:var(--r);cursor:pointer;font-size:13px;line-height:1;padding:0 2px">✕</button>
+        </div>
+        <div style="display:flex;gap:6px;align-items:flex-end;width:100%">
+          <button id="chat-clip-btn" onclick="chatAttach()" title="Attach file — PDF, Excel, CSV, TXT, JPG/PNG" style="background:none;border:1px solid var(--b2);border-radius:4px;padding:7px 8px;cursor:pointer;color:var(--txt2);display:flex;align-items:center;flex-shrink:0;transition:all .15s" onmouseover="this.style.borderColor='var(--c)';this.style.color='var(--c)'" onmouseout="this.style.borderColor='var(--b2)';this.style.color='var(--txt2)'"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg></button>
+          <input type="file" id="chat-file-input" accept=".pdf,.xlsx,.xls,.csv,.txt,.log,.jpg,.jpeg,.png" onchange="chatFileSelected(event)" style="display:none">
+          <textarea class="chat-in" id="chat-in" placeholder="Ask SOCPilots AI..." onkeydown="chatKey(event)" style="flex:1"></textarea>
+          <button class="btn btn-p" id="chat-btn" onclick="sendChat()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>Send</button>
+        </div>
+      </div>
     </div>
     <div style="display:flex;flex-direction:column;gap:10px">
       <div class="card"><div style="font-family:var(--fw);font-size:12px;margin-bottom:9px;letter-spacing:1px;color:var(--txt2)">QUICK ACTIONS</div>
@@ -1117,11 +1130,20 @@ sshd: Failed" style="min-height:80px"></textarea></div>
           Type a question or paste an alert below to start a deep investigation.
         </div>
       </div>
-      <div style="padding:10px;border-top:1px solid var(--b1);display:flex;gap:8px">
-        <textarea id="lc-input" class="chat-in" placeholder="Investigate IP 1.2.3.4 — or paste an alert JSON…" style="flex:1;height:60px;resize:none" onkeydown="lcKey(event)"></textarea>
-        <div style="display:flex;flex-direction:column;gap:6px">
-          <button class="btn btn-p" id="lc-btn" onclick="lcInvestigate()" style="padding:8px 14px;flex:1">🔍 Investigate</button>
-          <button class="btn btn-h btn-sm" onclick="lcTriage()" style="padding:6px 10px;font-size:10px">⚡ Quick Triage</button>
+      <div style="padding:10px;border-top:1px solid var(--b1);display:flex;flex-direction:column;gap:6px">
+        <div id="lc-attach-chip" style="display:none;align-items:center;gap:6px;background:rgba(0,229,255,.08);border:1px solid rgba(0,229,255,.25);border-radius:4px;padding:4px 8px;font-size:10px;font-family:var(--fm);color:var(--c)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:10px;height:10px;flex-shrink:0"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
+          <span id="lc-attach-name" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+          <button onclick="lcRemoveAttach()" style="background:none;border:none;color:var(--r);cursor:pointer;font-size:13px;line-height:1;padding:0 2px">✕</button>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button id="lc-clip-btn" onclick="lcAttach()" title="Attach file for ReAct analysis" style="background:none;border:1px solid var(--b2);border-radius:4px;padding:7px 8px;cursor:pointer;color:var(--txt2);display:flex;align-items:center;flex-shrink:0;align-self:flex-end;transition:all .15s" onmouseover="this.style.borderColor='var(--c)';this.style.color='var(--c)'" onmouseout="this.style.borderColor='var(--b2)';this.style.color='var(--txt2)'"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg></button>
+          <input type="file" id="lc-file-input" accept=".pdf,.xlsx,.xls,.csv,.txt,.log,.jpg,.jpeg,.png" onchange="lcFileSelected(event)" style="display:none">
+          <textarea id="lc-input" class="chat-in" placeholder="Investigate IP 1.2.3.4 — or paste an alert JSON…" style="flex:1;height:60px;resize:none" onkeydown="lcKey(event)"></textarea>
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <button class="btn btn-p" id="lc-btn" onclick="lcInvestigate()" style="padding:8px 14px;flex:1">🔍 Investigate</button>
+            <button class="btn btn-h btn-sm" onclick="lcTriage()" style="padding:6px 10px;font-size:10px">⚡ Quick Triage</button>
+          </div>
         </div>
       </div>
     </div>
@@ -1181,107 +1203,6 @@ sshd: Failed" style="min-height:80px"></textarea></div>
         <div style="color:#8ab0d0;font-size:9px;letter-spacing:1px;margin-top:8px">SOCPilots AI</div><div id="cfg-ai">—</div>
       </div>
     </div>
-  </div>
-
-  <!-- DARK SOC AUTONOMOUS MODE -->
-  <div class="card mb" style="border-left:3px solid var(--r)">
-    <div class="card-hd">
-      <div class="card-ttl" style="color:var(--r)">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px;vertical-align:middle;margin-right:5px"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
-        DARK SOC — AUTONOMOUS MODE
-      </div>
-      <div id="darksoc-status-badge" style="font-size:9px;font-family:var(--fm);padding:3px 8px;background:var(--rdim);color:var(--r);border:1px solid rgba(255,23,68,.3);border-radius:2px;letter-spacing:1px">INACTIVE</div>
-    </div>
-    <div style="font-size:11px;color:var(--txt3);font-family:var(--fm);margin-bottom:14px;line-height:1.6">
-      When enabled, SOCPilots operates without analyst intervention: auto-investigates alerts, runs playbooks, blocks IPs, isolates hosts, creates cases, and monitors for lateral movement — fully autonomously.
-    </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
-      <div style="padding:12px;background:var(--bg2);border:1px solid var(--b1);border-radius:4px">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-          <div style="font-family:var(--fw);font-size:12px;font-weight:700;letter-spacing:1px">PLAYBOOK ENGINE</div>
-          <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
-            <input type="checkbox" id="ds-main-toggle" onchange="saveDarkSocSettings()" style="width:16px;height:16px;accent-color:var(--r);cursor:pointer">
-            <span id="ds-main-lbl" style="font-family:var(--fm);font-size:10px;color:var(--txt2)">OFF</span>
-          </label>
-        </div>
-        <div style="font-size:10px;color:var(--txt3);font-family:var(--fm);line-height:1.5">Auto-investigate alerts + execute response playbooks (block IPs, isolate hosts). Requires auto-triage ON.</div>
-      </div>
-      <div style="padding:12px;background:var(--bg2);border:1px solid var(--b1);border-radius:4px">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-          <div style="font-family:var(--fw);font-size:12px;font-weight:700;letter-spacing:1px">THREAT HUNT</div>
-          <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
-            <input type="checkbox" id="ds-hunt-toggle" onchange="saveDarkSocSettings()" style="width:16px;height:16px;accent-color:var(--y);cursor:pointer">
-            <span id="ds-hunt-lbl" style="font-family:var(--fm);font-size:10px;color:var(--txt2)">OFF</span>
-          </label>
-        </div>
-        <div style="font-size:10px;color:var(--txt3);font-family:var(--fm);line-height:1.5">Runs automated threat hunts every 6 hours against top attack IPs. Creates cases on hits.</div>
-      </div>
-      <div style="padding:12px;background:var(--bg2);border:1px solid var(--b1);border-radius:4px">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-          <div style="font-family:var(--fw);font-size:12px;font-weight:700;letter-spacing:1px">LATERAL MONITOR</div>
-          <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
-            <input type="checkbox" id="ds-lateral-toggle" onchange="saveDarkSocSettings()" style="width:16px;height:16px;accent-color:var(--p);cursor:pointer">
-            <span id="ds-lateral-lbl" style="font-family:var(--fm);font-size:10px;color:var(--txt2)">OFF</span>
-          </label>
-        </div>
-        <div style="font-size:10px;color:var(--txt3);font-family:var(--fm);line-height:1.5">UEBA graph check every 30 min for lateral movement chains. Auto-creates critical cases.</div>
-      </div>
-    </div>
-    <div id="ds-exec-stats" style="margin-top:10px;font-size:10px;font-family:var(--fm);color:var(--txt3);display:none"></div>
-  </div>
-
-  <!-- PLAYBOOKS -->
-  <div class="card mb">
-    <div class="card-hd">
-      <div class="card-ttl">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;vertical-align:middle;margin-right:5px"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-        RESPONSE PLAYBOOKS
-      </div>
-      <div style="font-size:9px;font-family:var(--fm);color:var(--txt3)">Executed automatically by Dark SOC engine — not via n8n</div>
-    </div>
-    <div style="font-size:10px;color:var(--txt3);font-family:var(--fm);margin-bottom:10px">
-      These playbooks are stored in PostgreSQL and executed directly by the backend. Each playbook matches alerts by severity level and MITRE technique, then fires response actions automatically.
-    </div>
-    <div id="playbooks-list">
-      <div class="loading"><div class="spin"></div></div>
-    </div>
-    <div id="pb-exec-history" style="margin-top:12px;display:none">
-      <div style="font-size:9px;font-family:var(--fm);color:var(--txt3);letter-spacing:1px;margin-bottom:6px;border-top:1px solid var(--b1);padding-top:8px">RECENT EXECUTIONS</div>
-      <div id="pb-exec-list"></div>
-    </div>
-  </div>
-
-  <!-- PROTECTED ASSETS -->
-  <div class="card mb" style="border-left:3px solid var(--y)">
-    <div class="card-hd">
-      <div class="card-ttl" style="color:var(--y)">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;vertical-align:middle;margin-right:5px"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-        PROTECTED ASSETS
-      </div>
-      <button class="btn btn-sm" style="background:rgba(255,193,7,.12);color:var(--y);border:1px solid rgba(255,193,7,.25)" onclick="openAddProtectedAsset()">+ Protect Host</button>
-    </div>
-    <div style="font-size:11px;color:var(--txt3);font-family:var(--fm);margin-bottom:12px;line-height:1.6">
-      Tag production hosts so the Dark SOC engine never blindly isolates them.
-      <br>
-      <span style="color:var(--r);font-weight:700">CRITICAL</span> — isolation BLOCKED forever; attacker IP is blocked instead + human escalation case created.<br>
-      <span style="color:var(--y);font-weight:700">PROTECTED</span> — isolation requires analyst approval (30 min window before auto-reject).
-    </div>
-    <div id="protected-assets-list"><div class="loading"><div class="spin"></div></div></div>
-  </div>
-
-  <!-- PENDING ISOLATION APPROVALS -->
-  <div class="card mb" style="border-left:3px solid var(--p)">
-    <div class="card-hd">
-      <div class="card-ttl" style="color:var(--p)">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;vertical-align:middle;margin-right:5px"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-        PENDING ISOLATION APPROVALS
-      </div>
-      <button class="btn btn-h btn-sm" onclick="loadIsolationApprovals()">⟳ Refresh</button>
-    </div>
-    <div style="font-size:11px;color:var(--txt3);font-family:var(--fm);margin-bottom:12px;line-height:1.6">
-      When the engine wants to isolate a PROTECTED host, it waits here for your decision. Approve → immediate isolation. Reject → no action taken. Auto-expires after the timeout window.
-    </div>
-    <div id="isolation-approvals-list"><div style="font-size:11px;color:var(--txt3);font-family:var(--fm)">No pending approvals.</div></div>
   </div>
 
   <!-- EMAIL NOTIFICATIONS -->
@@ -1614,14 +1535,68 @@ sshd: Failed" style="min-height:80px"></textarea></div>
       </div>
     </div>
   </div>
-  <div class="card">
+  <div class="card mb">
     <div class="card-hd">
       <div class="card-ttl"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>AUDIT LOG — RECENT ACTIONS</div>
       <button class="btn btn-sm" onclick="loadDarkSocPage()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:10px;height:10px"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg> Refresh</button>
     </div>
     <div id="ds-audit-list" style="max-height:400px;overflow-y:auto">
-      <div class="notif-empty">Loading audit log…</div>
+      <div class="notif-empty">No autonomous actions yet</div>
     </div>
+  </div>
+
+  <!-- RESPONSE PLAYBOOKS -->
+  <div class="card mb">
+    <div class="card-hd">
+      <div class="card-ttl">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;vertical-align:middle;margin-right:5px"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+        RESPONSE PLAYBOOKS
+      </div>
+      <div style="font-size:9px;font-family:var(--fm);color:var(--txt3)">Executed automatically by Dark SOC engine — not via n8n</div>
+    </div>
+    <div style="font-size:10px;color:var(--txt3);font-family:var(--fm);margin-bottom:10px">
+      These playbooks are stored in PostgreSQL and executed directly by the backend. Each playbook matches alerts by severity level and MITRE technique, then fires response actions automatically.
+    </div>
+    <div id="playbooks-list">
+      <div class="loading"><div class="spin"></div></div>
+    </div>
+    <div id="pb-exec-history" style="margin-top:12px;display:none">
+      <div style="font-size:9px;font-family:var(--fm);color:var(--txt3);letter-spacing:1px;margin-bottom:6px;border-top:1px solid var(--b1);padding-top:8px">RECENT EXECUTIONS</div>
+      <div id="pb-exec-list"></div>
+    </div>
+  </div>
+
+  <!-- PROTECTED ASSETS -->
+  <div class="card mb" style="border-left:3px solid var(--y)">
+    <div class="card-hd">
+      <div class="card-ttl" style="color:var(--y)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;vertical-align:middle;margin-right:5px"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        PROTECTED ASSETS
+      </div>
+      <button class="btn btn-sm" style="background:rgba(255,193,7,.12);color:var(--y);border:1px solid rgba(255,193,7,.25)" onclick="openAddProtectedAsset()">+ Protect Host</button>
+    </div>
+    <div style="font-size:11px;color:var(--txt3);font-family:var(--fm);margin-bottom:12px;line-height:1.6">
+      Tag production hosts so the Dark SOC engine never blindly isolates them.
+      <br>
+      <span style="color:var(--r);font-weight:700">CRITICAL</span> — isolation BLOCKED forever; attacker IP is blocked instead + human escalation case created.<br>
+      <span style="color:var(--y);font-weight:700">PROTECTED</span> — isolation requires analyst approval (30 min window before auto-reject).
+    </div>
+    <div id="protected-assets-list"><div class="loading"><div class="spin"></div></div></div>
+  </div>
+
+  <!-- PENDING ISOLATION APPROVALS -->
+  <div class="card mb" style="border-left:3px solid var(--p)">
+    <div class="card-hd">
+      <div class="card-ttl" style="color:var(--p)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;vertical-align:middle;margin-right:5px"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        PENDING ISOLATION APPROVALS
+      </div>
+      <button class="btn btn-h btn-sm" onclick="loadIsolationApprovals()">⟳ Refresh</button>
+    </div>
+    <div style="font-size:11px;color:var(--txt3);font-family:var(--fm);margin-bottom:12px;line-height:1.6">
+      When the engine wants to isolate a PROTECTED host, it waits here for your decision. Approve → immediate isolation. Reject → no action taken. Auto-expires after the timeout window.
+    </div>
+    <div id="isolation-approvals-list"><div style="font-size:11px;color:var(--txt3);font-family:var(--fm)">No pending approvals.</div></div>
   </div>
 </div>
 
@@ -1645,6 +1620,133 @@ sshd: Failed" style="min-height:80px"></textarea></div>
         <tr><td colspan="7" style="text-align:center;padding:24px;color:var(--txt2);font-family:var(--fm)">Loading users…</td></tr>
       </tbody>
     </table>
+  </div>
+</div>
+
+<!-- ══ EVIDENCE UPLOAD PAGE ══════════════════════════════════════ -->
+<div class="page" id="page-evidence">
+  <style>
+  /* Evidence page scoped styles */
+  .ev-drop{border:2px dashed var(--b2);border-radius:8px;padding:40px;text-align:center;cursor:pointer;transition:all .2s;background:var(--card);position:relative}
+  .ev-drop.drag-over{border-color:var(--c);background:var(--cdim)}
+  .ev-drop-icon{width:48px;height:48px;margin:0 auto 12px;opacity:.4}
+  .ev-drop-title{font-family:var(--fw);font-size:16px;font-weight:600;letter-spacing:2px;color:var(--txt);margin-bottom:6px}
+  .ev-drop-sub{font-size:11px;color:var(--txt2);font-family:var(--fm)}
+  .ev-prog{height:3px;background:var(--bg3);border-radius:2px;overflow:hidden;margin-top:10px;display:none}
+  .ev-prog-bar{height:100%;background:linear-gradient(90deg,var(--c),var(--g));border-radius:2px;transition:width .3s;width:0%}
+  .ev-type-icon{width:20px;height:20px;display:inline-flex;align-items:center;justify-content:center;border-radius:3px;font-size:9px;font-weight:700;font-family:var(--fm);margin-right:6px}
+  .ev-type-pdf{background:#ff1744;color:#fff} .ev-type-xlsx{background:#00c853;color:#fff}
+  .ev-type-csv{background:#00b8d4;color:#fff}  .ev-type-txt{background:#5a7a9a;color:#fff}
+  .ev-type-log{background:#ff6d00;color:#fff}  .ev-type-img{background:#d500f9;color:#fff}
+  .ev-scan{display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border-radius:10px;font-size:9px;font-family:var(--fm)}
+  .ev-scan.clean{background:var(--gdim);color:var(--g);border:1px solid rgba(0,230,118,.25)}
+  .ev-scan.pending{background:var(--ydim);color:var(--y);border:1px solid rgba(255,171,0,.25)}
+  .ev-scan.error{background:var(--rdim);color:var(--r);border:1px solid rgba(255,23,68,.25)}
+  .ev-scan.malicious{background:var(--rdim);color:var(--r);border:1px solid rgba(255,23,68,.5)}
+  .ev-search-hit{background:var(--card2);border:1px solid var(--b1);border-radius:4px;padding:10px 12px;margin-bottom:8px}
+  .ev-search-score{float:right;font-family:var(--fm);font-size:10px;color:var(--c)}
+  .ev-search-file{font-size:10px;color:var(--txt2);font-family:var(--fm);margin-bottom:4px}
+  .ev-search-text{font-size:11px;color:var(--txt3);line-height:1.5;font-family:var(--fm)}
+  </style>
+
+  <div style="margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+    <div>
+      <h2 style="font-family:var(--fw);font-size:20px;font-weight:700;letter-spacing:2px;color:var(--c);text-transform:uppercase">Evidence Upload</h2>
+      <p style="font-size:11px;color:var(--txt2);margin-top:4px;font-family:var(--fm)">Upload PDF, Excel, CSV, TXT/LOG, or JPG/PNG — AI extracts, embeds, and indexes for RAG investigation</p>
+    </div>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-sm" onclick="loadEvidence()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:11px;height:11px"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg> Refresh</button>
+    </div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
+    <!-- Upload card -->
+    <div class="card">
+      <div class="card-hd"><div class="card-ttl"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>UPLOAD FILE</div></div>
+
+      <!-- Link to existing entity -->
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px">
+        <div>
+          <label style="font-size:9px;color:var(--txt2);font-family:var(--fm);letter-spacing:1px;display:block;margin-bottom:4px">LINK TO CASE</label>
+          <input id="ev-case-id" class="inp" placeholder="Case ID (opt.)" style="width:100%;font-size:11px">
+        </div>
+        <div>
+          <label style="font-size:9px;color:var(--txt2);font-family:var(--fm);letter-spacing:1px;display:block;margin-bottom:4px">LINK TO ALERT</label>
+          <input id="ev-alert-id" class="inp" placeholder="Alert ID (opt.)" style="width:100%;font-size:11px">
+        </div>
+        <div>
+          <label style="font-size:9px;color:var(--txt2);font-family:var(--fm);letter-spacing:1px;display:block;margin-bottom:4px">INVESTIGATION ID</label>
+          <input id="ev-inv-id" class="inp" placeholder="Inv. ID (opt.)" style="width:100%;font-size:11px">
+        </div>
+      </div>
+
+      <!-- Drag-drop zone -->
+      <div class="ev-drop" id="ev-dropzone"
+        ondragover="evDragOver(event)" ondragleave="evDragLeave(event)"
+        ondrop="evDrop(event)" onclick="document.getElementById('ev-file-input').click()">
+        <svg class="ev-drop-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M12 15V3m0 0L8 7m4-4l4 4"/><rect x="2" y="17" width="20" height="5" rx="2" fill="none"/>
+        </svg>
+        <div class="ev-drop-title">DRAG & DROP OR CLICK</div>
+        <div class="ev-drop-sub">PDF · XLSX · CSV · TXT · LOG · JPG · PNG · Max 20MB</div>
+        <div class="ev-prog" id="ev-prog"><div class="ev-prog-bar" id="ev-prog-bar"></div></div>
+        <div id="ev-upload-status" style="font-size:10px;color:var(--txt2);font-family:var(--fm);margin-top:8px"></div>
+      </div>
+      <input type="file" id="ev-file-input" style="display:none"
+        accept=".pdf,.xlsx,.xls,.csv,.txt,.log,.jpg,.jpeg,.png"
+        onchange="evFileSelected(this.files)">
+    </div>
+
+    <!-- Search card -->
+    <div class="card">
+      <div class="card-hd"><div class="card-ttl"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>SEMANTIC SEARCH</div></div>
+      <div style="display:flex;gap:8px;margin-bottom:10px">
+        <input id="ev-search-q" class="inp" placeholder="Search uploaded evidence…" style="flex:1;font-size:11px"
+          onkeydown="if(event.key==='Enter')evSearch()">
+        <button class="btn btn-p btn-sm" onclick="evSearch()">Search</button>
+      </div>
+      <div id="ev-search-results" style="min-height:80px;font-size:11px;color:var(--txt2);font-family:var(--fm)">
+        <div style="text-align:center;padding:24px;opacity:.5">Enter a query to search across all uploaded evidence</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- File list -->
+  <div class="card">
+    <div class="card-hd">
+      <div class="card-ttl"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>EVIDENCE LIBRARY</div>
+      <span id="ev-count" style="font-size:10px;font-family:var(--fm);color:var(--txt2)">Loading…</span>
+    </div>
+    <div id="ev-list-wrap" style="overflow-x:auto">
+      <table style="width:100%;border-collapse:collapse">
+        <thead>
+          <tr style="border-bottom:1px solid var(--b1)">
+            <th style="text-align:left;padding:6px 8px;font-size:9px;color:var(--txt2);font-family:var(--fm);letter-spacing:1px;white-space:nowrap">FILE</th>
+            <th style="text-align:left;padding:6px 8px;font-size:9px;color:var(--txt2);font-family:var(--fm);letter-spacing:1px">TYPE</th>
+            <th style="text-align:left;padding:6px 8px;font-size:9px;color:var(--txt2);font-family:var(--fm);letter-spacing:1px">SIZE</th>
+            <th style="text-align:left;padding:6px 8px;font-size:9px;color:var(--txt2);font-family:var(--fm);letter-spacing:1px">CHUNKS</th>
+            <th style="text-align:left;padding:6px 8px;font-size:9px;color:var(--txt2);font-family:var(--fm);letter-spacing:1px">SCAN</th>
+            <th style="text-align:left;padding:6px 8px;font-size:9px;color:var(--txt2);font-family:var(--fm);letter-spacing:1px">LINKED TO</th>
+            <th style="text-align:left;padding:6px 8px;font-size:9px;color:var(--txt2);font-family:var(--fm);letter-spacing:1px">UPLOADED</th>
+            <th style="text-align:left;padding:6px 8px;font-size:9px;color:var(--txt2);font-family:var(--fm);letter-spacing:1px">ACTIONS</th>
+          </tr>
+        </thead>
+        <tbody id="ev-tbody">
+          <tr><td colspan="8" style="text-align:center;padding:32px;color:var(--txt2);font-family:var(--fm)">Loading evidence library…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Text preview modal -->
+  <div id="ev-preview-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.8);z-index:3000;align-items:center;justify-content:center">
+    <div style="background:var(--bg2);border:1px solid var(--b2);border-radius:8px;padding:24px;width:720px;max-width:95vw;max-height:80vh;display:flex;flex-direction:column">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <div style="font-family:var(--fw);font-size:15px;font-weight:700;letter-spacing:2px;color:var(--c)" id="ev-preview-title">EXTRACTED TEXT</div>
+        <button class="btn" onclick="document.getElementById('ev-preview-modal').style.display='none'">✕ Close</button>
+      </div>
+      <pre id="ev-preview-body" style="flex:1;overflow-y:auto;font-size:11px;font-family:var(--fm);color:var(--txt3);white-space:pre-wrap;word-break:break-word;line-height:1.6;background:var(--bg0);padding:12px;border-radius:4px;border:1px solid var(--b1)"></pre>
+    </div>
   </div>
 </div>
 
@@ -1745,7 +1847,7 @@ async function api(method,url,body=null){
     console.warn('[API]',e.message);return null;
   }
 }
-const G=u=>api('GET',u), P=(u,b)=>api('POST',u,b);
+window.G=u=>api('GET',u); window.P=(u,b,m)=>api(m||'POST',u,b);
 
 // ─── HELPERS ─────────────────────────────────────────────────
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
@@ -2073,7 +2175,7 @@ const LOAD_MAP={dashboard:loadDashboard,agents:loadAgents,alerts:loadAlerts,rule
   assets:()=>{loadSubnets();loadAssets();loadScanStatus();},
   ueba:()=>{loadUebaStats();loadUebaAnomalies();},
   langchain:()=>{lcCheckHealth();},
-  settings:loadDarkSocSettings};
+  settings:loadSmtpSettings};
 
 function go(p){
   document.querySelectorAll('.page').forEach(x=>x.classList.remove('active'));
@@ -3421,6 +3523,66 @@ async function invEscalateCase(){
 let _hist=[];
 let _chatLoaded=false;
 
+// ── Chat file attachment ──────────────────────────────────────────
+let _chatAttach=null;
+function chatAttach(){document.getElementById('chat-file-input').click();}
+async function chatFileSelected(ev){
+  const file=ev.target.files[0];if(!file)return;ev.target.value='';
+  const chip=document.getElementById('chat-attach-chip');
+  const lbl=document.getElementById('chat-attach-name');
+  const btn=document.getElementById('chat-clip-btn');
+  chip.style.display='flex';
+  lbl.innerHTML=`<div class="spin" style="width:10px;height:10px;border-width:2px;flex-shrink:0"></div>&nbsp;${e(file.name)}…`;
+  btn.disabled=true;
+  try{
+    const fd=new FormData();
+    fd.append('file',file);fd.append('file_id','0');fd.append('uploaded_by',CU.username||'analyst');
+    const tok=sessionStorage.getItem('soc_token')||'';
+    const r=await fetch('/api/evidence/upload',{method:'POST',headers:{Authorization:`Bearer ${tok}`},body:fd});
+    const d=await r.json();
+    if(!r.ok||d.error)throw new Error(d.error||'Upload failed');
+    const chunks=d.file?.chunk_count||0;
+    _chatAttach={filename:file.name,text:d.extracted_text||'',chunk_count:chunks};
+    lbl.textContent=`${file.name} — ${chunks} chunk${chunks!==1?'s':''} indexed`;
+    document.getElementById('chat-in').placeholder='Ask about the attached file…';
+  }catch(err){chip.style.display='none';alert('Attachment failed: '+err.message);}
+  finally{btn.disabled=false;}
+}
+function chatRemoveAttach(){
+  _chatAttach=null;
+  document.getElementById('chat-attach-chip').style.display='none';
+  document.getElementById('chat-in').placeholder='Ask SOCPilots AI...';
+}
+
+// ── LangChain file attachment ─────────────────────────────────────
+let _lcAttach=null;
+function lcAttach(){document.getElementById('lc-file-input').click();}
+async function lcFileSelected(ev){
+  const file=ev.target.files[0];if(!file)return;ev.target.value='';
+  const chip=document.getElementById('lc-attach-chip');
+  const lbl=document.getElementById('lc-attach-name');
+  const btn=document.getElementById('lc-clip-btn');
+  chip.style.display='flex';
+  lbl.innerHTML=`<div class="spin" style="width:10px;height:10px;border-width:2px;flex-shrink:0"></div>&nbsp;${e(file.name)}…`;
+  btn.disabled=true;
+  try{
+    const fd=new FormData();
+    fd.append('file',file);fd.append('file_id','0');fd.append('uploaded_by',CU.username||'analyst');
+    const tok=sessionStorage.getItem('soc_token')||'';
+    const r=await fetch('/api/evidence/upload',{method:'POST',headers:{Authorization:`Bearer ${tok}`},body:fd});
+    const d=await r.json();
+    if(!r.ok||d.error)throw new Error(d.error||'Upload failed');
+    const chunks=d.file?.chunk_count||0;
+    _lcAttach={filename:file.name,text:d.extracted_text||'',chunk_count:chunks};
+    lbl.textContent=`${file.name} — ${chunks} chunk${chunks!==1?'s':''} indexed`;
+  }catch(err){chip.style.display='none';alert('Attachment failed: '+err.message);}
+  finally{btn.disabled=false;}
+}
+function lcRemoveAttach(){
+  _lcAttach=null;
+  document.getElementById('lc-attach-chip').style.display='none';
+}
+
 async function loadChatHistory(){
   if(_chatLoaded)return;
   _chatLoaded=true;
@@ -3440,7 +3602,20 @@ async function loadChatHistory(){
 function chatKey(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendChat();}}
 async function sendChat(){
   const inp=document.getElementById('chat-in'),msg=inp.value.trim();if(!msg)return;
-  inp.value='';addMsg('u',msg);_hist.push({role:'user',content:msg});
+  inp.value='';
+
+  // Build API message — inject extracted file text if an attachment is pending
+  let apiMsg=msg,displayMsg=msg;
+  if(_chatAttach){
+    const att=_chatAttach;chatRemoveAttach();
+    const preview=att.text
+      ?`\n\nFile content preview:\n---\n${att.text}${att.text.length>=2999?'\n[... content truncated — full document indexed in evidence DB]':''}\n---`
+      :'';
+    apiMsg=`[Attached file: ${att.filename} — ${att.chunk_count} chunk${att.chunk_count!==1?'s':''} extracted and indexed]\n${preview}\n\nUser query: ${msg}`;
+    displayMsg=`📎 ${att.filename}\n\n${msg}`;
+  }
+
+  addMsg('u',displayMsg);_hist.push({role:'user',content:displayMsg});
   const btn=document.getElementById('chat-btn');btn.disabled=true;
   // Show thinking indicator with elapsed timer
   const _tyStart = Date.now();
@@ -3450,7 +3625,7 @@ async function sendChat(){
     else clearInterval(_tyTimer);
   },1000);
   addMsg('ai','<div style="display:flex;align-items:center;gap:8px"><div class="spin" style="width:14px;height:14px;flex-shrink:0"></div><span id="_ty_txt" style="font-size:11px;color:var(--txt3);font-family:var(--fm)">Thinking...</span></div>','_ty',true);
-  const d=await P('/api/ai/chat',{message:msg,session_id:`soc_${CU.username}`,history:_hist.slice(-10)});
+  const d=await P('/api/ai/chat',{message:apiMsg,session_id:`soc_${CU.username}`,history:_hist.slice(-10)});
   rmTy();btn.disabled=false;
   let reply=d?.response||d?.output||d?.text||d?.message||'';
   // Clean up leaked tool calls (e.g. "get_cases{} }```}```get_cases{}")
@@ -4154,7 +4329,7 @@ async function loadPlaybooks(){
 async function togglePlaybook(id, enabled){
   const res = await fetch('/api/playbooks/'+id, {
     method: 'PATCH',
-    headers: {'Content-Type':'application/json','Authorization':'Bearer '+_tok},
+    headers: {'Content-Type':'application/json','Authorization':'Bearer '+TOK},
     body: JSON.stringify({enabled})
   });
   if(res.ok){ toast(`Playbook ${enabled?'enabled':'disabled'}`,'ok'); }
@@ -4232,7 +4407,7 @@ async function saveProtectedAsset(){
 
 async function removeProtectedAsset(id){
   if(!confirm('Remove this host from the protected list?')) return;
-  await fetch(`/api/protected-assets/${id}`,{method:'DELETE',headers:{Authorization:`Bearer ${_tok}`}});
+  await fetch(`/api/protected-assets/${id}`,{method:'DELETE',headers:{Authorization:`Bearer ${TOK}`}});
   toast('Removed','ok'); loadProtectedAssets();
 }
 
@@ -4293,7 +4468,7 @@ async function submitIsolationDecision(decision){
   if(!_pendingApprovalId){ closeModal('modal-approve-isolation'); return; }
   const note = document.getElementById('approval-note').value.trim();
   const url  = `/api/isolation-approvals/${_pendingApprovalId}/${decision}`;
-  const r    = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json', Authorization:`Bearer ${_tok}`}, body:JSON.stringify({note})});
+  const r    = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json', Authorization:`Bearer ${TOK}`}, body:JSON.stringify({note})});
   const data = await r.json().catch(()=>({}));
   closeModal('modal-approve-isolation');
   if(r.ok){
@@ -4307,7 +4482,7 @@ async function submitIsolationDecision(decision){
 
 async function rejectIsolation(id, agent){
   if(!confirm(`Reject isolation of "${agent}"? The host will NOT be isolated.`)) return;
-  const r = await fetch(`/api/isolation-approvals/${id}/reject`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${_tok}`},body:JSON.stringify({note:'Manually rejected'})});
+  const r = await fetch(`/api/isolation-approvals/${id}/reject`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${TOK}`},body:JSON.stringify({note:'Manually rejected'})});
   toast(r.ok?'Isolation rejected':'Error rejecting', r.ok?'warn':'err');
   loadIsolationApprovals();
 }
@@ -4707,11 +4882,24 @@ async function lcInvestigate(){
   const q=document.getElementById('lc-input').value.trim();
   if(!q)return;
   document.getElementById('lc-input').value='';
-  lcAddMsg('user',esc(q).replace(/\n/g,'<br>'));
+
+  // Inject file context if attached — file text becomes part of the ReAct agent's input
+  let apiQ=q;
+  if(_lcAttach){
+    const att=_lcAttach;lcRemoveAttach();
+    const preview=att.text
+      ?`\n\nFile content:\n---\n${att.text}${att.text.length>=2999?'\n[... truncated]':''}\n---\n`
+      :'';
+    apiQ=`[ATTACHED FILE: ${att.filename} — ${att.chunk_count} chunks indexed in evidence DB]${preview}\n${q}`;
+    lcAddMsg('user',`<span style="font-size:10px;color:var(--c);font-family:var(--fm)">📎 ${e(att.filename)}</span><br>${esc(q).replace(/\n/g,'<br>')}`);
+  }else{
+    lcAddMsg('user',esc(q).replace(/\n/g,'<br>'));
+  }
+
   const thinking=lcAddMsg('agent','<div class="loading" style="margin:4px 0"><div class="spin"></div> Reasoning… (up to 8 steps)</div>',true);
   document.getElementById('lc-btn').disabled=true;
   try{
-    const d=await P('/api/langchain/investigate',{message:q});
+    const d=await P('/api/langchain/investigate',{message:apiQ});
     thinking.remove();
     if(d?.error){lcAddMsg('agent',`<span style="color:var(--cr)">Error: ${esc(d.error)}</span>`);return;}
     let out=d?.report||d?.output||d?.result||d?.response||JSON.stringify(d);
@@ -4907,6 +5095,11 @@ async function loadDarkSocPage() {
       auditEl.innerHTML = '<div class="notif-empty">Failed to load audit log</div>';
     }
   }
+
+  // Load playbooks, protected assets, and pending isolation approvals
+  if (typeof loadPlaybooks === 'function') loadPlaybooks();
+  if (typeof loadProtectedAssets === 'function') loadProtectedAssets();
+  if (typeof loadIsolationApprovals === 'function') loadIsolationApprovals();
 }
 
 async function saveDarkSocSettings() {
@@ -5018,6 +5211,233 @@ async function deleteUser(id, username) {
   }
 }
 
+// ══════════════════════════════════════════════════════════════════════
+// EVIDENCE UPLOAD — JavaScript
+// ══════════════════════════════════════════════════════════════════════
+function _evTypeIcon(name, mime) {
+  const ext = (name || '').split('.').pop().toLowerCase();
+  const cls = {pdf:'ev-type-pdf',xlsx:'ev-type-xlsx',xls:'ev-type-xlsx',csv:'ev-type-csv',
+               txt:'ev-type-txt',log:'ev-type-log',jpg:'ev-type-img',jpeg:'ev-type-img',png:'ev-type-img'}[ext] || 'ev-type-txt';
+  const lbl = {pdf:'PDF',xlsx:'XLS',xls:'XLS',csv:'CSV',txt:'TXT',log:'LOG',jpg:'IMG',jpeg:'IMG',png:'PNG'}[ext] || ext.toUpperCase().slice(0,3);
+  return `<span class="ev-type-icon ${cls}">${lbl}</span>`;
+}
+
+function _evScanBadge(status) {
+  const m = {clean:'clean',pending:'pending',error:'error',malicious:'malicious'};
+  const s = m[status] || 'pending';
+  const icons = {clean:'✓',pending:'⋯',error:'⚠',malicious:'✕'};
+  return `<span class="ev-scan ${s}">${icons[s]} ${s.toUpperCase()}</span>`;
+}
+
+function _evFmtSize(bytes) {
+  if (!bytes) return '—';
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024*1024) return (bytes/1024).toFixed(1) + ' KB';
+  return (bytes/1024/1024).toFixed(1) + ' MB';
+}
+
+function evDragOver(e) { e.preventDefault(); document.getElementById('ev-dropzone').classList.add('drag-over'); }
+function evDragLeave(e) { document.getElementById('ev-dropzone').classList.remove('drag-over'); }
+function evDrop(e) {
+  e.preventDefault();
+  document.getElementById('ev-dropzone').classList.remove('drag-over');
+  const files = e.dataTransfer?.files;
+  if (files?.length) evFileSelected(files);
+}
+
+function evFileSelected(files) {
+  if (!files || !files.length) return;
+  evUploadFile(files[0]);
+}
+
+async function evUploadFile(file) {
+  const status = document.getElementById('ev-upload-status');
+  const prog   = document.getElementById('ev-prog');
+  const bar    = document.getElementById('ev-prog-bar');
+
+  const maxMB = 20;
+  if (file.size > maxMB * 1024 * 1024) {
+    status.style.color = 'var(--r)';
+    status.textContent = `File too large: ${(file.size/1024/1024).toFixed(1)}MB (max ${maxMB}MB)`;
+    return;
+  }
+
+  prog.style.display = 'block';
+  bar.style.width = '10%';
+  status.style.color = 'var(--txt2)';
+  status.textContent = `Uploading ${file.name}…`;
+
+  const fd = new FormData();
+  fd.append('file', file);
+  const caseId  = document.getElementById('ev-case-id').value.trim();
+  const alertId = document.getElementById('ev-alert-id').value.trim();
+  const invId   = document.getElementById('ev-inv-id').value.trim();
+  if (caseId)  fd.append('caseId',          caseId);
+  if (alertId) fd.append('alertId',         alertId);
+  if (invId)   fd.append('investigationId', invId);
+
+  bar.style.width = '40%';
+  try {
+    const tok = sessionStorage.getItem('soc_token') || '';
+    const r = await fetch('/api/evidence/upload', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${tok}` },
+      body: fd,
+    });
+    bar.style.width = '90%';
+    const d = await r.json();
+    if (!r.ok || d.error) throw new Error(d.error || 'Upload failed');
+
+    bar.style.width = '100%';
+    status.style.color = 'var(--g)';
+    const chunks = d.file?.chunk_count || 0;
+    status.textContent = `✓ ${file.name} — ${chunks} chunk${chunks!==1?'s':''} indexed`;
+
+    document.getElementById('ev-case-id').value  = '';
+    document.getElementById('ev-alert-id').value = '';
+    document.getElementById('ev-inv-id').value   = '';
+    document.getElementById('ev-file-input').value = '';
+
+    setTimeout(() => {
+      prog.style.display = 'none';
+      bar.style.width = '0%';
+      status.textContent = '';
+    }, 3000);
+
+    loadEvidence();
+  } catch(err) {
+    bar.style.width = '100%';
+    bar.style.background = 'var(--r)';
+    status.style.color = 'var(--r)';
+    status.textContent = `Error: ${err.message}`;
+    setTimeout(() => {
+      prog.style.display = 'none';
+      bar.style.width = '0%';
+      bar.style.background = '';
+    }, 4000);
+  }
+}
+
+async function loadEvidence() {
+  const tbody = document.getElementById('ev-tbody');
+  const cnt   = document.getElementById('ev-count');
+  tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:32px;color:var(--txt2);font-family:var(--fm)"><div class="spin" style="margin:auto"></div></td></tr>`;
+  try {
+    const d = await G('/api/evidence?limit=100');
+    const files = d?.files || [];
+    cnt.textContent = `${files.length} file${files.length!==1?'s':''} stored`;
+    if (!files.length) {
+      tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:32px;color:var(--txt2);font-family:var(--fm)">No evidence files uploaded yet</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = files.map(f => {
+      const linked = [
+        f.case_id          ? `Case: ${e(f.case_id)}`               : '',
+        f.alert_id         ? `Alert: ${e(f.alert_id)}`             : '',
+        f.investigation_id ? `Inv. #${e(String(f.investigation_id))}` : '',
+      ].filter(Boolean).join(', ') || '—';
+      const ts = f.created_at ? new Date(f.created_at).toLocaleString() : '—';
+      return `<tr style="border-bottom:1px solid var(--b1)">
+        <td style="padding:8px;font-size:11px;color:var(--txt);font-family:var(--fm);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+          ${_evTypeIcon(f.original_name,f.mime_type)}${e(f.original_name)}
+        </td>
+        <td style="padding:8px;font-size:10px;color:var(--txt2);font-family:var(--fm)">${e(f.mime_type||'—')}</td>
+        <td style="padding:8px;font-size:10px;color:var(--txt2);font-family:var(--fm)">${_evFmtSize(f.file_size)}</td>
+        <td style="padding:8px;font-size:11px;color:var(--c);font-family:var(--fm);font-weight:600">${f.chunk_count||0}</td>
+        <td style="padding:8px">${_evScanBadge(f.scan_status)}</td>
+        <td style="padding:8px;font-size:10px;color:var(--txt2);font-family:var(--fm)">${linked}</td>
+        <td style="padding:8px;font-size:10px;color:var(--txt2);font-family:var(--fm);white-space:nowrap">${ts}</td>
+        <td style="padding:8px">
+          <div style="display:flex;gap:4px">
+            ${f.extracted_preview ? `<button class="btn btn-sm" style="font-size:9px;padding:3px 7px" onclick="evShowPreview(${f.id},'${e(f.original_name)}')">Preview</button>` : ''}
+            <button class="btn btn-sm" style="font-size:9px;padding:3px 7px" onclick="evDownload(${f.id},'${e(f.original_name)}')">Download</button>
+            <button class="btn btn-sm" style="font-size:9px;padding:3px 7px;border-color:var(--r);color:var(--r)" onclick="evDelete(${f.id},'${e(f.original_name)}')">Del</button>
+          </div>
+        </td>
+      </tr>`;
+    }).join('');
+  } catch(err) {
+    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:32px;color:var(--r);font-family:var(--fm)">Error: ${e(err.message)}</td></tr>`;
+    cnt.textContent = '';
+  }
+}
+
+async function evShowPreview(id, name) {
+  const modal = document.getElementById('ev-preview-modal');
+  const title = document.getElementById('ev-preview-title');
+  const body  = document.getElementById('ev-preview-body');
+  title.textContent = name.toUpperCase();
+  body.textContent  = 'Loading…';
+  modal.style.display = 'flex';
+  try {
+    const d = await G(`/api/evidence/${id}`);
+    body.textContent = d?.extracted_preview || '(No preview available)';
+  } catch(err) {
+    body.textContent = 'Error loading preview: ' + err.message;
+  }
+}
+
+async function evDownload(id, name) {
+  try {
+    const tok = sessionStorage.getItem('soc_token') || '';
+    const r = await fetch(`/api/evidence/${id}/download`, { headers: { Authorization: `Bearer ${tok}` } });
+    if (!r.ok) throw new Error('Download failed');
+    const blob = await r.blob();
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url; a.download = name; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch(err) {
+    alert('Download failed: ' + err.message);
+  }
+}
+
+async function evDelete(id, name) {
+  if (!confirm(`Delete evidence file "${name}"? This cannot be undone and will remove all embeddings.`)) return;
+  try {
+    const tok = sessionStorage.getItem('soc_token') || '';
+    const r = await fetch(`/api/evidence/${id}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${tok}` },
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Delete failed');
+    loadEvidence();
+  } catch(err) {
+    alert('Delete failed: ' + err.message);
+  }
+}
+
+async function evSearch() {
+  const q    = document.getElementById('ev-search-q').value.trim();
+  const wrap = document.getElementById('ev-search-results');
+  if (!q) { wrap.innerHTML = '<div style="text-align:center;padding:24px;opacity:.5;font-family:var(--fm)">Enter a query to search</div>'; return; }
+  wrap.innerHTML = '<div style="text-align:center;padding:24px"><div class="spin" style="margin:auto"></div></div>';
+  try {
+    const tok = sessionStorage.getItem('soc_token') || '';
+    const r = await fetch('/api/evidence/search', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: q, limit: 5 }),
+    });
+    const d = await r.json();
+    if (!r.ok || d.error) throw new Error(d.error || 'Search failed');
+    const hits = d.hits || [];
+    if (!hits.length) {
+      wrap.innerHTML = '<div style="text-align:center;padding:24px;opacity:.5;font-family:var(--fm)">No results found</div>';
+      return;
+    }
+    wrap.innerHTML = hits.map(h => `
+      <div class="ev-search-hit">
+        <div class="ev-search-score">${(h.score*100).toFixed(1)}% match</div>
+        <div class="ev-search-file">${_evTypeIcon(h.filename,h.mime_type)}${e(h.filename||'—')}${h.case_id?` · Case: ${e(h.case_id)}`:''}${h.alert_id?` · Alert: ${e(h.alert_id)}`:''} · chunk ${(h.chunk_index||0)+1}</div>
+        <div class="ev-search-text">${e(h.chunk_text||'')}</div>
+      </div>`).join('');
+  } catch(err) {
+    wrap.innerHTML = `<div style="text-align:center;padding:16px;color:var(--r);font-family:var(--fm)">Error: ${e(err.message)}</div>`;
+  }
+}
+
 // ─── ROLE-BASED UI ────────────────────────────────────────────────────
 function applyRoleUI() {
   const role = CU?.role || 'l1';
@@ -5031,12 +5451,13 @@ function applyRoleUI() {
 }
 
 // ─── PAGE LOAD HOOKS ──────────────────────────────────────────────────
-const _origGo = typeof go === 'function' ? go : null;
+window._origGo = typeof go === 'function' ? go : null;
 // Hook into page navigation to load data
 const _pageLoadHooks = {
   darksoc:  loadDarkSocPage,
   users:    loadUsersPage,
   copilot:  loadChatHistory,
+  evidence: loadEvidence,
 };
 
 // Override the global go() function to add page-specific data loading

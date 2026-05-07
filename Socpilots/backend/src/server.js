@@ -2,12 +2,15 @@
 // SOC PILOTS — Production Backend
 // OpenSearch (Wazuh) + SP-CM (direct) + n8n (AI/Hunt/Rules)
 // ============================================================
-const express  = require('express');
-const axios    = require('axios');
-const https    = require('https');
-const crypto   = require('crypto');
-const path     = require('path');
-const bcrypt   = require('bcryptjs');
+const express   = require('express');
+const axios     = require('axios');
+const https     = require('https');
+const crypto    = require('crypto');
+const path      = require('path');
+const fs        = require('fs');
+const bcrypt    = require('bcryptjs');
+const multer    = require('multer');
+const FormData  = require('form-data');
 require('dotenv').config({ path: path.join(__dirname, '../../.env') });
 const db       = require('./db');
 const ueba     = require('./neo4j');
@@ -17,6 +20,30 @@ const email    = require('./email-service');
 const app  = express();
 const PORT = process.env.PORT || 3000;
 app.use(express.json({ limit: '10mb' }));
+
+// ─── EVIDENCE FILE UPLOAD (multer) ─────────────────────────
+const EVIDENCE_DIR = process.env.EVIDENCE_DIR || '/app/evidence';
+if (!fs.existsSync(EVIDENCE_DIR)) {
+  try { fs.mkdirSync(EVIDENCE_DIR, { recursive: true }); } catch(e) { /* volume may already exist */ }
+}
+const _evidenceStorage = multer.diskStorage({
+  destination: EVIDENCE_DIR,
+  filename: (req, file, cb) => {
+    const uid = crypto.randomBytes(16).toString('hex');
+    const ext = path.extname(file.originalname).toLowerCase() || '';
+    cb(null, `${Date.now()}_${uid}${ext}`);
+  },
+});
+const _evidenceUpload = multer({
+  storage: _evidenceStorage,
+  limits: { fileSize: 20 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const allowed = ['.pdf','.xlsx','.xls','.csv','.txt','.log','.jpg','.jpeg','.png'];
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (allowed.includes(ext)) cb(null, true);
+    else cb(Object.assign(new Error(`Unsupported file type: ${ext}`), { code: 'INVALID_FILE_TYPE' }));
+  },
+});
 
 // ─── PERFORMANCE TRACKING ──────────────────────────────────
 const routeLatencies = new Map();
@@ -44,6 +71,7 @@ const IDX          = process.env.WAZUH_INDEX      || 'wazuh-alerts-*';
 const SCANNER_URL       = process.env.SCANNER_URL      || 'http://scanner:7777';
 const LANGCHAIN_URL     = process.env.LANGCHAIN_URL    || 'http://langchain-agent:8001';
 const RAG_URL           = process.env.RAG_URL          || 'http://rag-retrieval:5005';
+const KNOWLEDGE_URL     = process.env.KNOWLEDGE_URL    || 'http://knowledge-ingestion:5004';
 const LANGCHAIN_TOKEN   = process.env.LANGCHAIN_INTERNAL_TOKEN || '';
 const MCP_WAZUH_URL     = process.env.MCP_WAZUH_URL    || 'http://mcp-wazuh:3001';
 
@@ -2363,10 +2391,6 @@ app.get('/api/metrics/performance', authMW, requireRole('admin'), (req, res) => 
   res.json({ metrics: result, total: result.length });
 });
 
-// ─── STATIC (last) ─────────────────────────────────────────
-app.use(express.static(path.join(__dirname, '../../frontend')));
-app.get('*', (req, res) => res.sendFile(path.join(__dirname, '../../frontend/index.html')));
-
 // ═══════════════════════════════════════════════════════════════
 // ─── HUNT SCHEDULE RUNNER ───────────────────────────────────────
 // Parses 5-field cron expressions and runs enabled schedules when due
@@ -2439,6 +2463,199 @@ async function startHuntScheduler() {
   }, 60_000); // check every 60 seconds
   console.log('[HuntScheduler] Started');
 }
+
+// ══════════════════════════════════════════════════════════════
+// EVIDENCE FILE MANAGEMENT
+// POST   /api/evidence/upload         — upload + embed file
+// GET    /api/evidence                — list uploaded files
+// GET    /api/evidence/:id            — single file metadata
+// GET    /api/evidence/:id/download   — serve original file
+// DELETE /api/evidence/:id            — delete file + embeddings
+// POST   /api/evidence/search         — semantic search over evidence
+// ══════════════════════════════════════════════════════════════
+
+app.post('/api/evidence/upload', authMW, _evidenceUpload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  const { alertId, caseId, investigationId } = req.body;
+
+  // Persist metadata first so we have an ID
+  let record;
+  try {
+    record = await db.createEvidenceFile({
+      storedName:      req.file.filename,
+      originalName:    req.file.originalname,
+      mimeType:        req.file.mimetype,
+      fileSize:        req.file.size,
+      uploadedBy:      req.user.username,
+      alertId:         alertId || null,
+      caseId:          caseId  || null,
+      investigationId: investigationId ? parseInt(investigationId) : null,
+    });
+  } catch(e) {
+    console.error('[evidence] DB save failed:', e.message);
+    // Clean up uploaded file
+    fs.unlink(req.file.path, () => {});
+    return res.status(500).json({ error: 'Database error saving file metadata' });
+  }
+
+  // Forward file to knowledge-ingestion for text extraction + embedding
+  try {
+    const fd = new FormData();
+    fd.append('file', fs.createReadStream(req.file.path), {
+      filename: req.file.originalname,
+      contentType: req.file.mimetype,
+    });
+    fd.append('file_id',         String(record.id));
+    fd.append('uploaded_by',     req.user.username);
+    if (alertId)         fd.append('alert_id',         alertId);
+    if (caseId)          fd.append('case_id',          caseId);
+    if (investigationId) fd.append('investigation_id', investigationId);
+
+    const kHeaders = { ...fd.getHeaders() };
+    if (process.env.RAG_API_KEY) kHeaders['X-API-Key'] = process.env.RAG_API_KEY;
+
+    const kResp = await axios.post(`${KNOWLEDGE_URL}/upload`, fd, {
+      headers: kHeaders,
+      timeout: 120000,
+      maxContentLength: Infinity,
+      maxBodyLength: Infinity,
+    });
+
+    const { chunk_count = 0, point_ids = [], extracted_text_preview = '', sha256 } = kResp.data;
+
+    await db.updateEvidenceFile(record.id, {
+      chunk_count,
+      qdrant_point_ids:  point_ids,
+      extracted_preview: extracted_text_preview,
+      scan_status:       'clean',
+      sha256,
+    });
+
+    // Async VirusTotal hash check
+    _vtHashCheck(record.id, sha256).catch(() => {});
+
+    return res.json({
+      ok: true,
+      extracted_text: extracted_text_preview,
+      file: { ...record, chunk_count, scan_status: 'clean', extracted_preview: extracted_text_preview, sha256 },
+    });
+  } catch(e) {
+    console.error('[evidence] Knowledge-ingestion error:', e.message);
+    await db.updateEvidenceFile(record.id, { scan_status: 'error' }).catch(() => {});
+    return res.json({
+      ok: true,
+      warning: 'File saved but embedding failed — will be retried',
+      file: record,
+    });
+  }
+});
+
+// Multer error handler for the upload route (file too large / unsupported type)
+app.use('/api/evidence/upload', (err, req, res, next) => {
+  if (err?.code === 'LIMIT_FILE_SIZE')   return res.status(413).json({ error: 'File too large (max 20 MB)' });
+  if (err?.code === 'INVALID_FILE_TYPE') return res.status(415).json({ error: err.message });
+  if (err) return res.status(400).json({ error: err.message });
+  next();
+});
+
+async function _vtHashCheck(fileId, sha256) {
+  if (!sha256 || !process.env.VIRUSTOTAL_API_KEY) return;
+  try {
+    const r = await axios.get(`https://www.virustotal.com/api/v3/files/${sha256}`, {
+      headers: { 'x-apikey': process.env.VIRUSTOTAL_API_KEY },
+      timeout: 15000,
+      validateStatus: s => s < 500,
+    });
+    if (r.status === 200) {
+      const stats = r.data?.data?.attributes?.last_analysis_stats || {};
+      const malicious = stats.malicious || 0;
+      const status = malicious > 0 ? 'malicious' : 'clean';
+      await db.updateEvidenceFile(fileId, { scan_status: status, scan_result: stats });
+    }
+  } catch(e) {
+    console.warn('[VT] hash check failed:', e.message);
+  }
+}
+
+app.get('/api/evidence', authMW, async (req, res) => {
+  try {
+    const files = await db.listEvidenceFiles({
+      limit:  parseInt(req.query.limit  || '50'),
+      offset: parseInt(req.query.offset || '0'),
+      uploadedBy: req.query.uploaded_by || undefined,
+      caseId:     req.query.case_id     || undefined,
+      alertId:    req.query.alert_id    || undefined,
+    });
+    res.json({ files, total: files.length });
+  } catch(e) {
+    console.error('[evidence] list error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/evidence/:id', authMW, async (req, res) => {
+  try {
+    const f = await db.getEvidenceFile(parseInt(req.params.id));
+    if (!f) return res.status(404).json({ error: 'Not found' });
+    res.json(f);
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/evidence/:id/download', authMW, async (req, res) => {
+  try {
+    const f = await db.getEvidenceFile(parseInt(req.params.id));
+    if (!f) return res.status(404).json({ error: 'Not found' });
+    const filePath = path.join(EVIDENCE_DIR, f.stored_name);
+    if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found on disk' });
+    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(f.original_name)}"`);
+    res.setHeader('Content-Type', f.mime_type || 'application/octet-stream');
+    fs.createReadStream(filePath).pipe(res);
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.delete('/api/evidence/:id', authMW, requireRole('l2'), async (req, res) => {
+  try {
+    const f = await db.getEvidenceFile(parseInt(req.params.id));
+    if (!f) return res.status(404).json({ error: 'Not found' });
+    // Remove from disk
+    const filePath = path.join(EVIDENCE_DIR, f.stored_name);
+    fs.unlink(filePath, () => {});
+    // Remove Qdrant embeddings via knowledge-ingestion (best-effort)
+    axios.post(`${KNOWLEDGE_URL}/evidence/delete`, { file_id: f.id }, {
+      headers: process.env.RAG_API_KEY ? { 'X-API-Key': process.env.RAG_API_KEY } : {},
+      timeout: 15000,
+    }).catch(() => {});
+    await db.deleteEvidenceFile(f.id);
+    res.json({ ok: true });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/evidence/search', authMW, async (req, res) => {
+  const { query, limit, file_id, case_id } = req.body || {};
+  if (!query) return res.status(400).json({ error: 'query required' });
+  try {
+    const headers = { 'Content-Type': 'application/json' };
+    if (process.env.RAG_API_KEY) headers['X-API-Key'] = process.env.RAG_API_KEY;
+    const r = await axios.post(`${KNOWLEDGE_URL}/evidence/search`,
+      { query, limit: limit || 5, file_id, case_id },
+      { headers, timeout: 30000 }
+    );
+    res.json(r.data);
+  } catch(e) {
+    console.error('[evidence] search error:', e.message);
+    res.status(502).json({ error: 'Evidence search unavailable' });
+  }
+});
+
+// ─── STATIC (must be last — after all /api routes) ──────────────
+app.use(express.static(path.join(__dirname, '../../frontend')));
+app.get('*', (req, res) => res.sendFile(path.join(__dirname, '../../frontend/index.html')));
 
 // Initialize DB schema on startup (non-blocking)
 db.initSchema()

@@ -18,6 +18,7 @@ COPY frontend/ ./frontend/
 # Security: non-root user
 RUN addgroup -g 1001 -S soc && \
     adduser  -u 1001 -S soc -G soc && \
+    mkdir -p /app/evidence && \
     chown -R soc:soc /app
 
 USER soc

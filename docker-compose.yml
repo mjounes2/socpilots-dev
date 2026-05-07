@@ -28,6 +28,7 @@ volumes:
   neo4j_logs:
   redis_data:
   qdrant_data:
+  evidence_data:
 
 services:
 
@@ -96,6 +97,7 @@ services:
       - soc
     volumes:
       - ./.env:/app/.env:ro
+      - evidence_data:/app/evidence
     # No host port — nginx handles all external traffic on port 80
     environment:
       NODE_ENV: production
@@ -133,6 +135,9 @@ services:
       # RAG Vector Search
       RAG_URL:        http://rag-retrieval:5005
       RAG_API_KEY:    ${RAG_API_KEY:-}
+      # Knowledge Ingestion (file upload + embedding)
+      KNOWLEDGE_URL:  http://knowledge-ingestion:5004
+      EVIDENCE_DIR:   /app/evidence
       # Dark SOC — Wazuh MCP active response (playbook engine)
       MCP_WAZUH_URL:  http://mcp-wazuh:3001
       MCP_AUTH_SECRET: ${AUTH_SECRET_KEY:-}
