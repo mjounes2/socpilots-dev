@@ -3,7 +3,8 @@
 #  All services on one server, one network, one .env file at root.
 #
 #  External ports:
-#    80    → Nginx → SOCPilots webapp
+#    80    → Nginx → HTTPS redirect + ACME challenge
+#    443   → Nginx → SOCPilots webapp (HTTPS/TLS)
 #    5678  → n8n automation
 #    8080  → TheHive MCP (direct access for n8n)
 #
@@ -29,6 +30,8 @@ volumes:
   redis_data:
   qdrant_data:
   evidence_data:
+  letsencrypt_data:
+  certbot_www:
 
 services:
 
@@ -154,14 +157,25 @@ services:
       start_period: 30s
 
   # ── Nginx Reverse Proxy ────────────────────────────────────────
+  # Handles HTTPS termination. On first start uses a self-signed cert
+  # (browser warning) until you run: bash scripts/init-letsencrypt.sh
   nginx:
-    image: nginx:alpine
+    build:
+      context: ./Socpilots-webapp/nginx
+      dockerfile: Dockerfile
     container_name: socpilots-nginx
     restart: unless-stopped
     ports:
       - "80:80"
+      - "443:443"
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
     volumes:
-      - ./Socpilots-webapp/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./Socpilots-webapp/nginx/nginx.conf.template:/etc/nginx/nginx.conf.template:ro
+      - ./Socpilots-webapp/nginx/entrypoint.sh:/entrypoint.sh:ro
+      - letsencrypt_data:/etc/letsencrypt
+      - certbot_www:/var/www/certbot
     networks:
       - soc
     depends_on:
@@ -172,6 +186,18 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+
+  # ── Certbot (auto-renewal daemon) ─────────────────────────────
+  # Initial cert: bash scripts/init-letsencrypt.sh
+  # This service renews automatically every 12h.
+  certbot:
+    image: certbot/certbot:latest
+    container_name: socpilots-certbot
+    restart: unless-stopped
+    volumes:
+      - letsencrypt_data:/etc/letsencrypt
+      - certbot_www:/var/www/certbot
+    entrypoint: /bin/sh -c 'trap exit TERM; while :; do certbot renew --quiet; sleep 12h & wait $${!}; done'
 
   # ── Wazuh MCP Server ───────────────────────────────────────────
   # Accessed internally by n8n via http://mcp-wazuh:3001
