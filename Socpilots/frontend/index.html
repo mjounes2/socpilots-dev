@@ -644,9 +644,55 @@ if(localStorage.getItem("soc_dim")==="1")document.body.classList.add("dim");
 
 <!-- CORRELATION -->
 <div class="page" id="page-correlate">
-  <div class="ph"><h1>CORRELATION</h1><p>Cross-platform indicator analysis — SIEM + SP-CM + SOCPilots AI</p></div>
+  <div class="ph"><h1>CORRELATION</h1><p>Cross-platform indicator analysis — SIEM + UEBA + SP-CM + SOCPilots AI</p></div>
+
+  <!-- UEBA Auto-Correlations -->
+  <div class="g2 mb">
+    <div class="card">
+      <div class="card-hd">
+        <div class="card-ttl" style="color:#ff9800">⚡ MULTI-STAGE ATTACKS</div>
+        <button class="btn btn-sm" onclick="loadUebaCorrelations()">↻ Refresh</button>
+      </div>
+      <div id="corr-multistage"><div class="loading"><div class="spin"></div></div></div>
+    </div>
+    <div class="card">
+      <div class="card-hd">
+        <div class="card-ttl" style="color:#f06292">🔑 SHARED CREDENTIALS</div>
+        <button class="btn btn-sm" onclick="loadUebaCorrelations()">↻ Refresh</button>
+      </div>
+      <div id="corr-sharedcreds"><div class="loading"><div class="spin"></div></div></div>
+    </div>
+  </div>
+
+  <!-- Live UEBA↔SIEM correlation feed -->
+  <div class="card mb" style="border-left:3px solid #f06292">
+    <div class="card-hd">
+      <div class="card-ttl" style="color:#f06292">
+        <div class="live-dot" style="margin-right:6px"></div>
+        LIVE UEBA ↔ SIEM CORRELATIONS
+      </div>
+      <div style="display:flex;gap:6px;align-items:center">
+        <span style="font-size:9px;font-family:var(--fm);color:var(--txt3)">Real-time · WebSocket</span>
+        <button class="btn btn-sm" onclick="_corrLiveRows=[];renderCorrLiveFeed()">Clear</button>
+      </div>
+    </div>
+    <div id="corr-live-feed" style="max-height:320px;overflow-y:auto">
+      <div style="font-size:10px;color:var(--txt3);font-family:var(--fm);padding:16px;text-align:center">No live correlations yet — correlations appear here in real-time</div>
+    </div>
+  </div>
+
+  <!-- Alert Groups -->
   <div class="card mb">
-    <div class="card-hd"><div class="card-ttl">CORRELATE INDICATOR</div></div>
+    <div class="card-hd">
+      <div class="card-ttl">🗂 ALERT GROUPS — DEDUPLICATION</div>
+      <button class="btn btn-sm" onclick="loadAlertGroups()">↻ Refresh</button>
+    </div>
+    <div id="corr-alert-groups"><div class="loading"><div class="spin"></div></div></div>
+  </div>
+
+  <!-- Manual IOC correlation -->
+  <div class="card mb">
+    <div class="card-hd"><div class="card-ttl">CORRELATE INDICATOR (MANUAL)</div></div>
     <div style="display:flex;gap:8px"><input class="fi" id="corr-val" placeholder="IP, hash, domain, username..." style="font-size:14px"><button class="btn btn-p" onclick="doCorrelate()">Correlate</button></div>
   </div>
   <div id="corr-results" style="display:none">
@@ -1626,6 +1672,23 @@ sshd: Failed" style="min-height:80px"></textarea></div>
     </div>
   </div>
 
+  <!-- LIVE AUTOMATION FEED -->
+  <div class="card mb" style="border-left:3px solid var(--r)">
+    <div class="card-hd">
+      <div class="card-ttl" style="color:var(--r)">
+        <div class="live-dot" style="margin-right:6px"></div>
+        LIVE AUTOMATION FEED
+      </div>
+      <div style="display:flex;gap:6px;align-items:center">
+        <span style="font-size:9px;font-family:var(--fm);color:var(--txt3)">Real-time · WebSocket</span>
+        <button class="btn btn-sm" onclick="document.getElementById('ds-live-feed').innerHTML=''">Clear</button>
+      </div>
+    </div>
+    <div id="ds-live-feed" style="max-height:280px;overflow-y:auto;display:flex;flex-direction:column;gap:5px;min-height:60px">
+      <div style="font-size:10px;color:var(--txt3);font-family:var(--fm);padding:16px;text-align:center">Waiting for automation events… (Dark SOC auto-response must be ON)</div>
+    </div>
+  </div>
+
   <!-- RESPONSE PLAYBOOKS -->
   <div class="card mb">
     <div class="card-hd">
@@ -2255,6 +2318,8 @@ const LOAD_MAP={dashboard:loadDashboard,agents:loadAgents,alerts:loadAlerts,rule
   ioc:loadIOCQuick,reports:loadReportMetrics,
   assets:()=>{loadSubnets();loadAssets();loadScanStatus();},
   ueba:()=>{loadUebaStats();loadUebaAnomalies();},
+  correlate:()=>{loadUebaCorrelations();loadAlertGroups();renderCorrLiveFeed();},
+  darksoc:loadDarkSocPage,
   langchain:()=>{lcCheckHealth();},
   settings:loadSmtpSettings};
 
@@ -3314,6 +3379,65 @@ async function doIOC(){
   if(_iocMap&&type==='ip'){
     renderDots([{...geo,ip:val,count:1,c:geo.c}],'ioc-dots',_iocMap.ll2xy,_iocMap.W,_iocMap.H);
   }
+}
+
+// ─── UEBA CORRELATION PANELS ──────────────────────────────────
+async function loadUebaCorrelations(){
+  const [msEl, scEl] = ['corr-multistage','corr-sharedcreds'].map(id=>document.getElementById(id));
+  if(msEl) msEl.innerHTML=spin();
+  if(scEl) scEl.innerHTML=spin();
+  const data = await G('/api/ueba/correlations?hours=24').catch(()=>null);
+  if(!data){ [msEl,scEl].forEach(el=>{ if(el) el.innerHTML=empty('UEBA unavailable'); }); return; }
+
+  const multi = data.multi_stage_attacks||[];
+  if(msEl) msEl.innerHTML=!multi.length?empty('No multi-stage attacks detected in last 24h'):
+    `<div style="display:flex;flex-direction:column;gap:6px">${multi.map(a=>`
+      <div style="padding:8px;background:var(--bg2);border:1px solid var(--b1);border-radius:4px;border-left:2px solid #ff9800">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+          <span style="color:#ff9800;font-weight:700;font-family:var(--fm)">${esc(a.user)}</span>
+          <span class="badge medium" style="font-size:8px">Risk ${a.risk_score}</span>
+          <span style="color:var(--txt3);font-size:9px;font-family:var(--fm)">${a.host_count} host(s)</span>
+        </div>
+        <div style="display:flex;gap:3px;flex-wrap:wrap">${(a.flags||[]).map(f=>{const tc=typeof MITRE_TACTIC_COLORS!=='undefined'?MITRE_TACTIC_COLORS[f]:null;return`<span style="font-size:8px;padding:1px 5px;border-radius:3px;background:${tc?tc.color+'22':'rgba(255,152,0,.1)'};color:${tc?tc.color:'#ff9800'};border:1px solid ${tc?tc.color+'44':'rgba(255,152,0,.25)'}">${f.replace(/_/g,' ')}</span>`;}).join('')}</div>
+      </div>`).join('')}</div>`;
+
+  const shared = data.shared_credentials||[];
+  if(scEl) scEl.innerHTML=!shared.length?empty('No shared credentials detected in last 24h'):
+    `<div style="display:flex;flex-direction:column;gap:6px">${shared.map(s=>`
+      <div style="padding:8px;background:var(--bg2);border:1px solid var(--b1);border-radius:4px;border-left:2px solid #f06292">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+          <span style="color:#f06292;font-weight:700;font-family:var(--fm)">${esc(s.ip)}</span>
+          <span style="color:var(--txt3);font-size:9px;font-family:var(--fm)">${s.total_logins} logins</span>
+        </div>
+        <div style="font-size:9px;color:var(--txt2);font-family:var(--fm);margin-bottom:3px">Users: ${(s.users||[]).map(u=>`<span style="color:var(--c)">${esc(u)}</span>`).join(', ')}</div>
+        <div style="font-size:9px;color:var(--txt2);font-family:var(--fm)">Hosts: ${(s.hosts||[]).map(h=>esc(h)).join(', ')}</div>
+      </div>`).join('')}</div>`;
+}
+
+async function loadAlertGroups(){
+  const el = document.getElementById('corr-alert-groups');
+  if(!el) return;
+  el.innerHTML=spin();
+  const data = await G('/api/alert-groups?limit=20').catch(()=>null);
+  if(!data||!data.groups?.length){ el.innerHTML=empty('No alert groups yet — groups form when the same rule fires from the same IP within 5 minutes'); return; }
+  el.innerHTML=`<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:10px;font-family:var(--fm)">
+    <thead><tr style="color:var(--txt3);border-bottom:1px solid var(--b1)">
+      <th style="text-align:left;padding:5px 8px">Source IP</th>
+      <th style="text-align:left;padding:5px 8px">Rule ID</th>
+      <th style="text-align:left;padding:5px 8px">Agent</th>
+      <th style="text-align:center;padding:5px 8px">Count</th>
+      <th style="text-align:left;padding:5px 8px">First Seen</th>
+      <th style="text-align:left;padding:5px 8px">Last Seen</th>
+    </tr></thead>
+    <tbody>${data.groups.map(g=>`<tr style="border-bottom:1px solid var(--b1)">
+      <td style="padding:5px 8px;color:var(--r)">${esc(g.src_ip||'—')}</td>
+      <td style="padding:5px 8px;color:var(--c)">${esc(g.rule_id||'—')}</td>
+      <td style="padding:5px 8px">${esc(g.agent||'—')}</td>
+      <td style="padding:5px 8px;text-align:center"><span class="badge ${g.count>=5?'crit':g.count>=3?'high':'medium'}" style="font-size:8px">×${g.count}</span></td>
+      <td style="padding:5px 8px;color:var(--txt2)">${fmtDate(g.first_seen)}</td>
+      <td style="padding:5px 8px;color:var(--txt2)">${fmtDate(g.last_seen)}</td>
+    </tr>`).join('')}</tbody>
+  </table></div>`;
 }
 
 // ─── CORRELATION with GRAPH ───────────────────────────────────
@@ -5633,10 +5757,12 @@ async function saveDarkSocSettings() {
   const mainOn = document.getElementById('ds-enabled')?.checked;
   const huntOn = document.getElementById('ds-hunt')?.checked;
   const latOn  = document.getElementById('ds-lateral')?.checked;
+  // auto_triage_enabled must mirror darksoc_enabled — the automation loop is gated on it
   await P('/api/settings', {
-    darksoc_enabled: String(mainOn),
-    darksoc_hunt_enabled: String(huntOn),
+    darksoc_enabled:                 String(mainOn),
+    darksoc_hunt_enabled:            String(huntOn),
     darksoc_lateral_monitor_enabled: String(latOn),
+    auto_triage_enabled:             String(mainOn),
   });
   loadDarkSocPage();
 }
@@ -6020,6 +6146,7 @@ function initSocketIO(){
     const cr  = d.composite_risk!=null ? ` · Risk ${d.composite_risk}` : '';
     const gc  = d.group_count>1 ? ` · Group ×${d.group_count}` : '';
     showLiveToast('investigation', `Rule ${d.ruleId||'?'} on ${d.agent||'?'} — ${sev}${cr}${gc}`, sev);
+    appendDsLiveFeed('investigation', `Auto-investigated rule ${esc(d.ruleId||'?')} on <b>${esc(d.agent||'?')}</b> — ${esc(sev)}${cr}${gc}`, '#00e5ff');
   });
 
   _socket.on('correlation:found', d=>{
@@ -6028,13 +6155,61 @@ function initSocketIO(){
     showLiveToast('correlation',
       `UEBA ↔ SIEM: ${d.entity} (risk ${d.ueba_risk}) — ${(d.correlation_type||'').replace(/_/g,' ')}`,
       d.ueba_risk>=70?'critical':'warning');
+    appendDsLiveFeed('correlation',
+      `UEBA correlation: <b>${esc(d.entity)}</b> risk ${d.ueba_risk} — ${esc((d.correlation_type||'').replace(/_/g,' '))}`,
+      d.ueba_risk>=70?'#ff1744':'#ff9800');
+    appendCorrLiveFeed(d);
   });
 
   _socket.on('darksoc:action', d=>{
     _notifCount = (_notifCount||0)+1;
     updateNotifBadge(_notifCount);
     showLiveToast('darksoc', `Dark SOC: ${d.playbook} — ${(d.actions_taken||[]).join(', ')||'executed'}`, 'warning');
+    appendDsLiveFeed('darksoc',
+      `Playbook <b>${esc(d.playbook)}</b> executed on ${esc(d.agent||'?')} — ${esc((d.actions_taken||[]).join(', ')||'done')}`,
+      '#d500f9');
   });
+}
+
+function appendDsLiveFeed(type, html, color){
+  const feed = document.getElementById('ds-live-feed');
+  if(!feed) return;
+  // Clear placeholder
+  if(feed.querySelector('[style*="Waiting for"]')) feed.innerHTML='';
+  const icons = {investigation:'⚡',correlation:'🔗',darksoc:'🤖'};
+  const now = new Date().toLocaleTimeString();
+  const row = document.createElement('div');
+  row.style.cssText=`display:flex;gap:8px;align-items:flex-start;padding:6px 8px;background:var(--bg3);border-radius:4px;border-left:2px solid ${color};font-size:10px;font-family:var(--fm)`;
+  row.innerHTML=`<span style="color:${color};font-size:13px;line-height:1.2">${icons[type]||'●'}</span><div style="flex:1;line-height:1.5;color:var(--txt)">${html}</div><span style="color:var(--txt3);white-space:nowrap">${now}</span>`;
+  feed.prepend(row);
+  // Keep max 50 rows
+  while(feed.children.length>50) feed.removeChild(feed.lastChild);
+}
+
+let _corrLiveRows = [];
+function appendCorrLiveFeed(d){
+  _corrLiveRows.unshift(d);
+  if(_corrLiveRows.length>100) _corrLiveRows.pop();
+  renderCorrLiveFeed();
+}
+function renderCorrLiveFeed(){
+  const el = document.getElementById('corr-live-feed');
+  if(!el) return;
+  if(!_corrLiveRows.length){
+    el.innerHTML='<div style="font-size:10px;color:var(--txt3);font-family:var(--fm);padding:16px;text-align:center">No live correlations yet — correlations appear here in real-time</div>';
+    return;
+  }
+  const sevColor = s => s==='critical'?'var(--r)':s==='high'?'#ff5722':'#ff9800';
+  el.innerHTML = _corrLiveRows.slice(0,30).map(d=>`
+    <div style="display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:start;padding:8px;border-bottom:1px solid var(--b1);font-size:10px;font-family:var(--fm)">
+      <span style="color:${d.ueba_risk>=70?'var(--r)':d.ueba_risk>=40?'#ff9800':'var(--y)'};font-size:13px">🔗</span>
+      <div>
+        <div style="color:var(--c);font-weight:600;margin-bottom:2px">${esc(d.entity)} <span style="color:${sevColor(d.siem_severity)};font-size:9px">${esc(d.siem_severity||'')}</span></div>
+        <div style="color:var(--txt2)">${esc((d.correlation_type||'').replace(/_/g,' '))} · UEBA risk <span style="color:${d.ueba_risk>=70?'var(--r)':'#ff9800'}">${d.ueba_risk}</span> · ${d.ueba_anomalies} anomalies</div>
+        ${(d.mitre_tactic||[]).length?`<div style="margin-top:3px;display:flex;gap:3px;flex-wrap:wrap">${d.mitre_tactic.map(t=>`<span style="font-size:8px;padding:1px 5px;border-radius:3px;background:rgba(255,152,0,.12);color:#ff9800;border:1px solid rgba(255,152,0,.2)">${esc(t)}</span>`).join('')}</div>`:''}
+      </div>
+      <span style="color:var(--txt3);font-size:9px;white-space:nowrap">${d.timestamp?new Date(d.timestamp).toLocaleTimeString():''}</span>
+    </div>`).join('');
 }
 
 function showLiveToast(type, msg, severity){
