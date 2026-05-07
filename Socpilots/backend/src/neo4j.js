@@ -9,6 +9,18 @@
 //    escalation, impossible travel, data exfiltration patterns
 //  - Correlates signals across the entire organization
 // ============================================================
+
+// Centralised anomaly severity weights (0–100 scale)
+const ANOMALY_WEIGHTS = {
+  impossible_travel:    95,
+  lateral_movement:     85,
+  privilege_escalation: 80,
+  new_host_access:      75,
+  new_process:          70,
+  after_hours_access:   55,
+  high_frequency_login: 50,
+};
+
 let driver = null;
 
 function getDriver() {
@@ -87,7 +99,7 @@ function scoreHourDeviation(hour, typicalHours) {
 }
 
 function scoreNewEntity(isNew) {
-  return isNew ? 75 : 0;
+  return isNew ? ANOMALY_WEIGHTS.new_host_access : 0;
 }
 
 function calcOverallDeviation(scores) {
@@ -190,7 +202,7 @@ async function ingestEvent(ev) {
           { user, ip: src_ip, ts }
         );
         if (travelCheck.records.length) {
-          deviationScore = Math.max(deviationScore, 95);
+          deviationScore = Math.max(deviationScore, ANOMALY_WEIGHTS.impossible_travel);
           deviationFlags.push('impossible_travel');
         }
       }
@@ -231,7 +243,7 @@ async function ingestEvent(ev) {
         { host, proc }
       );
       const isNewProc = (procCheck.records[0]?.get('cnt')?.toNumber?.() ?? 0) === 0;
-      const procScore = isNewProc ? 70 : 0;
+      const procScore = isNewProc ? ANOMALY_WEIGHTS.new_process : 0;
 
       if (isNewProc) deviationFlags.push('new_process');
       deviationScore = Math.max(deviationScore, calcOverallDeviation([procScore]));
@@ -565,9 +577,107 @@ async function detectNewConnections(hours = 24) {
   }));
 }
 
+// ── Multi-Stage Attack Correlation ───────────────────────────
+// Same user triggered ≥2 distinct anomaly flag types in window
+async function detectMultiStageAttack(hours = 24) {
+  const records = await run(
+    `MATCH (u:User)-[r:LOGGED_IN]->(h:Host)
+     WHERE datetime(r.time) > datetime() - duration({hours: $hours})
+       AND size(r.flags) > 0
+     WITH u.name AS user, u.risk_score AS risk_score,
+          collect(DISTINCT r.flags) AS all_flag_lists,
+          count(DISTINCT h.name) AS host_count,
+          max(coalesce(r.deviation_score, 0)) AS max_dev
+     WITH user, risk_score, host_count, max_dev,
+          reduce(s=[], fl IN all_flag_lists | s + [f IN fl WHERE NOT f IN s | f]) AS unique_flags
+     WHERE size(unique_flags) >= 2
+     RETURN user, risk_score, unique_flags, host_count, max_dev
+     ORDER BY size(unique_flags) DESC, max_dev DESC LIMIT 15`,
+    { hours }
+  );
+  return records.map(r => ({
+    type:         'multi_stage_attack',
+    user:         r.get('user'),
+    risk_score:   r.get('risk_score')?.toNumber?.() ?? 0,
+    flags:        r.get('unique_flags') || [],
+    host_count:   r.get('host_count')?.toNumber?.() ?? 0,
+    max_deviation: r.get('max_dev')?.toNumber?.() ?? 0,
+  }));
+}
+
+// ── Shared Credentials / Credential Abuse ────────────────────
+// Same src_ip used by ≥2 distinct users in window — possible cred sharing or pivot
+async function detectSharedCredentials(hours = 24) {
+  const records = await run(
+    `MATCH (u:User)-[r:LOGGED_IN]->(h:Host)
+     WHERE datetime(r.time) > datetime() - duration({hours: $hours})
+       AND r.src_ip <> ''
+     WITH r.src_ip AS ip, collect(DISTINCT u.name) AS users,
+          collect(DISTINCT h.name) AS hosts, count(r) AS total_logins
+     WHERE size(users) >= 2
+     RETURN ip, users, hosts, total_logins
+     ORDER BY size(users) DESC, total_logins DESC LIMIT 15`,
+    { hours }
+  );
+  return records.map(r => ({
+    type:         'shared_credentials',
+    ip:           r.get('ip'),
+    users:        r.get('users') || [],
+    hosts:        r.get('hosts') || [],
+    total_logins: r.get('total_logins')?.toNumber?.() ?? 0,
+  }));
+}
+
+// ── Force-Graph Data for Entity Visualisation ─────────────────
+// Returns { nodes: [...], edges: [...] } in D3-force format
+async function getGraphNodes(entity) {
+  const records = await run(
+    `MATCH (e)-[r]-(n)
+     WHERE e.name = $name OR e.address = $name
+     RETURN labels(e)[0] AS src_type,
+            coalesce(e.name, e.address) AS src,
+            coalesce(e.risk_score, 0)  AS src_risk,
+            type(r)                    AS rel,
+            labels(n)[0]              AS dst_type,
+            coalesce(n.name, n.address) AS dst,
+            coalesce(n.risk_score, 0)  AS dst_risk,
+            r.deviation_score          AS deviation,
+            r.flags                    AS flags,
+            r.time                     AS time
+     ORDER BY r.time DESC LIMIT 120`,
+    { name: entity }
+  );
+
+  const nodesMap = new Map();
+  const edges = [];
+
+  const addNode = (id, type, risk) => {
+    if (!nodesMap.has(id)) {
+      nodesMap.set(id, { id, type: type || 'Unknown', risk: risk?.toNumber?.() ?? risk ?? 0 });
+    }
+  };
+
+  for (const r of records) {
+    const src = r.get('src'); const dst = r.get('dst');
+    if (!src || !dst) continue;
+    addNode(src, r.get('src_type'), r.get('src_risk'));
+    addNode(dst, r.get('dst_type'), r.get('dst_risk'));
+    edges.push({
+      source:    src,
+      target:    dst,
+      rel:       r.get('rel'),
+      deviation: r.get('deviation')?.toNumber?.() ?? 0,
+      flags:     r.get('flags') || [],
+      time:      r.get('time'),
+    });
+  }
+
+  return { nodes: [...nodesMap.values()], edges };
+}
+
 // ── Get All Anomalies ─────────────────────────────────────────
 async function getAllAnomalies() {
-  const [lateral, travel, privesc, afterhours, hf, rare, newconn] = await Promise.all([
+  const [lateral, travel, privesc, afterhours, hf, rare, newconn, multistage, sharedcreds] = await Promise.all([
     detectLateralMovement(),
     detectImpossibleTravel(),
     detectPrivilegeEscalation(),
@@ -575,6 +685,8 @@ async function getAllAnomalies() {
     detectHighFrequencyLogins(),
     detectRareProcesses(),
     detectNewConnections(),
+    detectMultiStageAttack(),
+    detectSharedCredentials(),
   ]);
   return {
     lateral_movement:    lateral,
@@ -584,6 +696,8 @@ async function getAllAnomalies() {
     high_frequency_logins: hf,
     rare_processes:      rare,
     new_connections:     newconn,
+    multi_stage_attacks: multistage,
+    shared_credentials:  sharedcreds,
   };
 }
 
@@ -664,6 +778,9 @@ module.exports = {
   getRiskLeaderboard, getUserProfile,
   getAllAnomalies, getEntityGraph, getUebaStats, ping,
   detectLateralMovement,
+  detectMultiStageAttack, detectSharedCredentials,
+  getGraphNodes,
+  ANOMALY_WEIGHTS,
 };
 
 // Decay risk scores every hour

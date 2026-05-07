@@ -2414,6 +2414,24 @@ app.get('/api/ueba/profile/:user', authMW, async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+app.get('/api/ueba/correlations', authMW, async (req, res) => {
+  try {
+    const hours = parseInt(req.query.hours || '24');
+    const [multi_stage, shared_credentials] = await Promise.all([
+      ueba.detectMultiStageAttack(hours),
+      ueba.detectSharedCredentials(hours),
+    ]);
+    res.json({ multi_stage_attacks: multi_stage, shared_credentials });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/ueba/graph-nodes/:entity', authMW, async (req, res) => {
+  try {
+    const data = await ueba.getGraphNodes(req.params.entity);
+    res.json(data);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 // ═══════════════════════════════════════════════════════════════
 // ─── USERS API (admin only) ─────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════

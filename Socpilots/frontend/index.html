@@ -1431,6 +1431,7 @@ sshd: Failed" style="min-height:80px"></textarea></div>
         <div style="display:flex;align-items:center;gap:6px">
           <span style="color:var(--r);font-size:14px">●</span>
           <div class="card-ttl">LATERAL MOVEMENT</div>
+          <span style="font-size:9px;font-family:var(--fm);background:rgba(255,23,68,.15);color:var(--r);padding:1px 5px;border-radius:3px">W:85</span>
         </div>
         <span id="cnt-lateral" class="sbi-n">—</span>
       </div>
@@ -1441,6 +1442,7 @@ sshd: Failed" style="min-height:80px"></textarea></div>
         <div style="display:flex;align-items:center;gap:6px">
           <span style="color:var(--r);font-size:14px">●</span>
           <div class="card-ttl">IMPOSSIBLE TRAVEL</div>
+          <span style="font-size:9px;font-family:var(--fm);background:rgba(255,23,68,.15);color:var(--r);padding:1px 5px;border-radius:3px">W:95</span>
         </div>
         <span id="cnt-travel" class="sbi-n">—</span>
       </div>
@@ -1455,6 +1457,7 @@ sshd: Failed" style="min-height:80px"></textarea></div>
         <div style="display:flex;align-items:center;gap:6px">
           <span style="color:#ff9800;font-size:14px">●</span>
           <div class="card-ttl">PRIVILEGE ESCALATION</div>
+          <span style="font-size:9px;font-family:var(--fm);background:rgba(255,152,0,.15);color:#ff9800;padding:1px 5px;border-radius:3px">W:80</span>
         </div>
         <span id="cnt-privesc" class="sbi-n">—</span>
       </div>
@@ -1465,6 +1468,7 @@ sshd: Failed" style="min-height:80px"></textarea></div>
         <div style="display:flex;align-items:center;gap:6px">
           <span style="color:#ff9800;font-size:14px">●</span>
           <div class="card-ttl">AFTER-HOURS ACCESS</div>
+          <span style="font-size:9px;font-family:var(--fm);background:rgba(255,152,0,.15);color:#ff9800;padding:1px 5px;border-radius:3px">W:55</span>
         </div>
         <span id="cnt-afterhours" class="sbi-n">—</span>
       </div>
@@ -1479,6 +1483,7 @@ sshd: Failed" style="min-height:80px"></textarea></div>
         <div style="display:flex;align-items:center;gap:6px">
           <span style="color:var(--c);font-size:14px">●</span>
           <div class="card-ttl">HIGH FREQ LOGINS</div>
+          <span style="font-size:9px;font-family:var(--fm);background:rgba(0,229,255,.1);color:var(--c);padding:1px 5px;border-radius:3px">W:50</span>
         </div>
         <span id="cnt-hf" class="sbi-n">—</span>
       </div>
@@ -1489,10 +1494,37 @@ sshd: Failed" style="min-height:80px"></textarea></div>
         <div style="display:flex;align-items:center;gap:6px">
           <span style="color:var(--c);font-size:14px">●</span>
           <div class="card-ttl">RARE PROCESSES</div>
+          <span style="font-size:9px;font-family:var(--fm);background:rgba(0,229,255,.1);color:var(--c);padding:1px 5px;border-radius:3px">W:70</span>
         </div>
         <span id="cnt-rare" class="sbi-n">—</span>
       </div>
       <div id="ueba-rare" style="font-size:12px;color:#8ab0d0;font-family:var(--fm)"><div class="loading"><div class="spin"></div></div></div>
+    </div>
+  </div>
+
+  <!-- Anomaly Panels Row 4 — Correlation Detections -->
+  <div class="g2" style="margin-bottom:14px">
+    <div class="card">
+      <div class="card-hd">
+        <div style="display:flex;align-items:center;gap:6px">
+          <span style="color:var(--r);font-size:14px">◆</span>
+          <div class="card-ttl">MULTI-STAGE ATTACKS</div>
+          <span style="font-size:9px;font-family:var(--fm);background:rgba(255,23,68,.15);color:var(--r);padding:1px 5px;border-radius:3px">CORR</span>
+        </div>
+        <span id="cnt-multistage" class="sbi-n">—</span>
+      </div>
+      <div id="ueba-multistage" style="font-size:12px;color:#8ab0d0;font-family:var(--fm)"><div class="loading"><div class="spin"></div></div></div>
+    </div>
+    <div class="card">
+      <div class="card-hd">
+        <div style="display:flex;align-items:center;gap:6px">
+          <span style="color:#ff9800;font-size:14px">◆</span>
+          <div class="card-ttl">SHARED CREDENTIALS</div>
+          <span style="font-size:9px;font-family:var(--fm);background:rgba(255,152,0,.15);color:#ff9800;padding:1px 5px;border-radius:3px">CORR</span>
+        </div>
+        <span id="cnt-sharedcreds" class="sbi-n">—</span>
+      </div>
+      <div id="ueba-sharedcreds" style="font-size:12px;color:#8ab0d0;font-family:var(--fm)"><div class="loading"><div class="spin"></div></div></div>
     </div>
   </div>
 </div>
@@ -4744,8 +4776,11 @@ async function loadUebaAnomalies(){
   const lb=await G('/api/ueba/leaderboard');
   renderLeaderboard(lb?.users||[]);
 
-  // Load all anomalies
-  const d=await G('/api/ueba/anomalies');
+  // Load all anomalies + correlations in parallel
+  const [d, corr]=await Promise.all([
+    G('/api/ueba/anomalies'),
+    G('/api/ueba/correlations'),
+  ]);
   if(!d)return;
 
   renderUebaSection('ueba-lateral',d.lateral_movement,r=>`
@@ -4806,6 +4841,34 @@ async function loadUebaAnomalies(){
       <span style="color:#8ab0d0"> seen ${r.seen_count}x on: ${(r.hosts||[]).join(', ')}</span>
     </div>`,'No rare processes detected');
 
+  // Correlation panels
+  const ms=corr?.multi_stage_attacks||[];
+  const sc=corr?.shared_credentials||[];
+
+  renderUebaSection('ueba-multistage',ms,r=>`
+    <div style="padding:8px 0;border-bottom:1px solid var(--b1)">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        ${riskBadge(r.risk_score||0)}
+        <span style="color:var(--r);font-weight:600;cursor:pointer" onclick="uebaLookup('${r.user}')">${r.user}</span>
+        <span style="color:#8ab0d0">${r.host_count} hosts · max dev ${r.max_deviation}</span>
+      </div>
+      <div style="margin-top:4px;display:flex;flex-wrap:wrap;gap:4px">
+        ${(r.flags||[]).map(f=>`<span style="background:rgba(255,23,68,.12);color:var(--r);padding:2px 6px;border-radius:3px;font-size:9px;font-family:var(--fm)">${f}</span>`).join('')}
+      </div>
+    </div>`,'No multi-stage attack patterns detected in last 24h');
+
+  renderUebaSection('ueba-sharedcreds',sc,r=>`
+    <div style="padding:8px 0;border-bottom:1px solid var(--b1)">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font-family:var(--fm);color:#ff9800;font-size:11px">${r.ip}</span>
+        <span style="color:#8ab0d0">used by ${r.users?.length} users · ${r.total_logins} logins</span>
+      </div>
+      <div style="font-size:10px;color:var(--txt2);margin-top:3px">
+        Users: ${(r.users||[]).map(u=>`<span style="color:var(--c);cursor:pointer" onclick="uebaLookup('${esc(u)}')">${u}</span>`).join(', ')}
+        · Hosts: ${(r.hosts||[]).join(', ')}
+      </div>
+    </div>`,'No shared credential abuse detected in last 24h');
+
   // Update badge counters
   const cnt=(arr,id)=>{const e=document.getElementById(id);if(e)e.textContent=(arr?.length||0)||'0';};
   cnt(d.lateral_movement,'cnt-lateral');
@@ -4814,9 +4877,12 @@ async function loadUebaAnomalies(){
   cnt(d.after_hours_access,'cnt-afterhours');
   cnt(d.high_frequency_logins,'cnt-hf');
   cnt(d.rare_processes,'cnt-rare');
+  cnt(ms,'cnt-multistage');
+  cnt(sc,'cnt-sharedcreds');
 
   const total=(d.lateral_movement?.length||0)+(d.impossible_travel?.length||0)+
-              (d.privilege_escalation?.length||0)+(d.after_hours_access?.length||0);
+              (d.privilege_escalation?.length||0)+(d.after_hours_access?.length||0)+
+              ms.length+sc.length;
   document.getElementById('n-ueba').textContent=total||'0';
 }
 
@@ -4848,8 +4914,8 @@ async function loadEntityGraph(){
   const el=document.getElementById('ueba-graph-result');
   if(el)el.innerHTML='<div class="loading"><div class="spin"></div></div>';
 
-  const [graphD, profileD] = await Promise.all([
-    G(`/api/ueba/graph/${encodeURIComponent(name)}`),
+  const [graphNodesD, profileD] = await Promise.all([
+    G(`/api/ueba/graph-nodes/${encodeURIComponent(name)}`),
     G(`/api/ueba/profile/${encodeURIComponent(name)}`),
   ]);
 
@@ -4872,50 +4938,100 @@ async function loadEntityGraph(){
       <div style="font-size:10px;color:var(--txt2)">
         ${knownLabel||'none'} ·
         ${p.first_seen?'First seen: '+new Date(p.first_seen).toLocaleString()+' · ':''}
-        Last seen: ${(p.last_seen||p.last_seen)?new Date(p.last_seen||p.last_seen).toLocaleString():'—'}
+        Last seen: ${p.last_seen?new Date(p.last_seen).toLocaleString():'—'}
         ${p.last_anomaly?` · Last anomaly: ${new Date(p.last_anomaly).toLocaleString()}`:''}
       </div>
-      ${(p.connections||[]).length?`<div style="margin-top:6px;font-size:10px;color:#8ab0d0">Connected to: ${p.connections.filter(c=>c.host).slice(0,5).map(c=>c.host).join(', ')}</div>`:''}
     </div>`;
-
-    // For IPs: show login rows from profile directly if no graph edges
-    if(p.entity_type==='ip'&&(p.recent_logins||[]).length&&!graphD?.edges?.length){
-      html+=`<table class="tbl"><thead><tr><th>USER</th><th>HOST</th><th>DEVIATION</th><th>FLAGS</th><th>TIME</th></tr></thead><tbody>`+
-        p.recent_logins.map(l=>{
-          const dev=l.deviation||0;
-          const devColor=dev>=70?'var(--r)':dev>=40?'#ff9800':dev>=15?'var(--y)':'var(--g)';
-          const flags=(l.flags||[]).map(f=>`<span style="background:rgba(255,152,0,.15);color:#ff9800;padding:1px 4px;border-radius:3px;font-size:9px">${f}</span>`).join(' ');
-          return`<tr>
-            <td style="color:var(--c);cursor:pointer" onclick="uebaLookup('${esc(l.user||'')}')">${l.user||'—'}</td>
-            <td style="font-family:var(--fm);font-size:11px">${l.host||'—'}</td>
-            <td style="color:${devColor};font-family:var(--fm)">${dev}</td>
-            <td>${flags||'—'}</td>
-            <td style="color:#8ab0d0;font-size:10px">${l.time?new Date(l.time).toLocaleString():'—'}</td>
-          </tr>`;
-        }).join('')+'</tbody></table>';
-      el.innerHTML=html;return;
-    }
   }
 
-  if(!graphD?.edges?.length){
+  if(!graphNodesD?.nodes?.length){
     html+='<div style="color:#8ab0d0;font-size:11px;padding:6px 0">No graph relationships found for this entity</div>';
     el.innerHTML=html;return;
   }
-  html+=`<table class="tbl"><thead><tr><th>RELATIONSHIP</th><th>SOURCE</th><th>TARGET</th><th>DEVIATION</th><th>FLAGS</th><th>TIME</th></tr></thead><tbody>`+
-    graphD.edges.map(e=>{
-      const dev=e.deviation||0;
-      const devColor=dev>=70?'var(--r)':dev>=40?'#ff9800':dev>=15?'var(--y)':'var(--g)';
-      const flags=(e.flags||[]).map(f=>`<span style="background:rgba(255,152,0,.15);color:#ff9800;padding:1px 4px;border-radius:3px;font-size:9px">${f}</span>`).join(' ');
-      return`<tr>
-        <td><span style="background:rgba(0,229,255,.1);color:var(--c);padding:2px 7px;border-radius:4px;font-size:10px">${e.rel}</span></td>
-        <td style="font-family:var(--fm);font-size:11px">${e.src}<span style="color:#8ab0d0"> [${e.src_type}]</span></td>
-        <td style="font-family:var(--fm);font-size:11px">${e.dst}<span style="color:#8ab0d0"> [${e.dst_type}]</span></td>
-        <td style="color:${devColor};font-family:var(--fm);font-size:11px">${dev}</td>
-        <td>${flags||'—'}</td>
-        <td style="color:#8ab0d0;font-size:10px">${e.time?new Date(e.time).toLocaleString():'—'}</td>
-      </tr>`;
-    }).join('')+'</tbody></table>';
+
+  // Force-directed SVG graph (hand-rolled, no CDN)
   el.innerHTML=html;
+  el.insertAdjacentHTML('beforeend','<div id="ueba-force-graph"></div>');
+  renderForceGraph(document.getElementById('ueba-force-graph'), graphNodesD.nodes, graphNodesD.edges);
+}
+
+function renderForceGraph(container, nodes, edges){
+  const W=container.clientWidth||600, H=320;
+  const nodeColor={User:'#00e5ff',Host:'#66bb6a',IP:'#ff9800',Process:'#ab47bc'};
+  const nodeR=n=>n.risk>=70?12:n.risk>=40?9:7;
+
+  // Simple force simulation (Euler integration, no library)
+  const pos={};
+  nodes.forEach((n,i)=>{
+    const angle=(i/nodes.length)*2*Math.PI;
+    pos[n.id]={x:W/2+Math.cos(angle)*120,y:H/2+Math.sin(angle)*90,vx:0,vy:0};
+  });
+
+  function tick(){
+    // Repulsion
+    nodes.forEach(a=>{
+      nodes.forEach(b=>{
+        if(a.id===b.id)return;
+        const dx=pos[a.id].x-pos[b.id].x, dy=pos[a.id].y-pos[b.id].y;
+        const d=Math.max(Math.sqrt(dx*dx+dy*dy),1);
+        const f=800/(d*d);
+        pos[a.id].vx+=f*dx/d; pos[a.id].vy+=f*dy/d;
+      });
+    });
+    // Spring attraction along edges
+    edges.forEach(e=>{
+      const s=pos[e.source], t=pos[e.target];
+      if(!s||!t)return;
+      const dx=t.x-s.x, dy=t.y-s.y;
+      const d=Math.max(Math.sqrt(dx*dx+dy*dy),1);
+      const f=(d-80)*0.05;
+      s.vx+=f*dx/d; s.vy+=f*dy/d;
+      t.vx-=f*dx/d; t.vy-=f*dy/d;
+    });
+    // Center gravity
+    nodes.forEach(n=>{
+      pos[n.id].vx+=(W/2-pos[n.id].x)*0.01;
+      pos[n.id].vy+=(H/2-pos[n.id].y)*0.01;
+    });
+    // Integrate + dampen + clamp
+    nodes.forEach(n=>{
+      const p=pos[n.id];
+      p.vx*=0.7; p.vy*=0.7;
+      p.x=Math.max(20,Math.min(W-20,p.x+p.vx));
+      p.y=Math.max(20,Math.min(H-20,p.y+p.vy));
+    });
+  }
+
+  for(let i=0;i<120;i++)tick();
+
+  const edgeSvg=edges.map(e=>{
+    const s=pos[e.source],t=pos[e.target];
+    if(!s||!t)return'';
+    const dev=e.deviation||0;
+    const col=dev>=70?'rgba(255,23,68,.6)':dev>=40?'rgba(255,152,0,.5)':'rgba(138,176,208,.25)';
+    return`<line x1="${s.x}" y1="${s.y}" x2="${t.x}" y2="${t.y}" stroke="${col}" stroke-width="1.5"/>
+      <text x="${(s.x+t.x)/2}" y="${(s.y+t.y)/2-3}" fill="#8ab0d0" font-size="8" font-family="monospace" text-anchor="middle">${e.rel}</text>`;
+  }).join('');
+
+  const nodeSvg=nodes.map(n=>{
+    const p=pos[n.id];const r=nodeR(n);const col=nodeColor[n.type]||'#8ab0d0';
+    const glow=n.risk>=70?`filter:drop-shadow(0 0 5px ${col})`:'';
+    return`<g style="cursor:pointer" onclick="uebaLookup('${esc(n.id)}')">
+      <circle cx="${p.x}" cy="${p.y}" r="${r}" fill="${col}33" stroke="${col}" stroke-width="1.5" style="${glow}"/>
+      <text x="${p.x}" y="${p.y-r-3}" fill="${col}" font-size="9" font-family="monospace" text-anchor="middle">${n.id.length>14?n.id.slice(0,13)+'…':n.id}</text>
+      ${n.risk>0?`<text x="${p.x}" y="${p.y+3}" fill="${col}" font-size="8" font-family="monospace" text-anchor="middle">${n.risk}</text>`:''}
+    </g>`;
+  }).join('');
+
+  // Legend
+  const legend=Object.entries(nodeColor).map(([t,c],i)=>
+    `<g transform="translate(${8+i*68},0)"><circle r="4" cx="4" cy="4" fill="${c}33" stroke="${c}" stroke-width="1"/><text x="11" y="8" fill="${c}" font-size="8" font-family="monospace">${t}</text></g>`
+  ).join('');
+
+  container.innerHTML=`<svg width="${W}" height="${H}" style="background:var(--bg2);border-radius:4px;display:block">
+    ${edgeSvg}${nodeSvg}
+    <g transform="translate(4,${H-14})">${legend}</g>
+  </svg>`;
 }
 
 function uebaLookup(entity){
