@@ -249,6 +249,18 @@ async function initSchema() {
     `CREATE INDEX IF NOT EXISTS idx_notifications_created  ON notifications(created_at DESC)`,
     `CREATE INDEX IF NOT EXISTS idx_notifications_read     ON notifications(read) WHERE read = false`,
 
+    // ── Password reset tokens ──────────────────────────────────
+    `CREATE TABLE IF NOT EXISTS password_reset_tokens (
+      id         SERIAL PRIMARY KEY,
+      user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      token_hash VARCHAR(64) NOT NULL UNIQUE,
+      expires_at TIMESTAMPTZ NOT NULL,
+      used_at    TIMESTAMPTZ,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_prt_token_hash ON password_reset_tokens(token_hash)`,
+    `CREATE INDEX IF NOT EXISTS idx_prt_user_id    ON password_reset_tokens(user_id)`,
+
     // ── Chat sessions ───────────────────────────────────────────
     `CREATE TABLE IF NOT EXISTS chat_sessions (
       id         SERIAL PRIMARY KEY,
@@ -1167,6 +1179,10 @@ module.exports = {
   // Lateral movement dedup
   getLateralCaseAge,
   recordLateralCase,
+  // Password reset
+  createPasswordResetToken,
+  getPasswordResetToken,
+  invalidatePasswordResetToken,
 };
 
 // ── Evidence Files CRUD ──────────────────────────────────
@@ -1226,6 +1242,38 @@ async function getEvidenceFile(id) {
 async function deleteEvidenceFile(id) {
   const r = await pool.query(`DELETE FROM evidence_files WHERE id=$1 RETURNING *`, [id]);
   return r.rows[0] || null;
+}
+
+// ── Password Reset Tokens ───────────────────────────────────
+async function createPasswordResetToken(userId, tokenHash, expiresAt) {
+  // Invalidate any existing unused tokens for this user first
+  await pool.query(
+    `UPDATE password_reset_tokens SET used_at=NOW() WHERE user_id=$1 AND used_at IS NULL`,
+    [userId]
+  );
+  const r = await pool.query(
+    `INSERT INTO password_reset_tokens(user_id, token_hash, expires_at)
+     VALUES($1,$2,$3) RETURNING *`,
+    [userId, tokenHash, expiresAt]
+  );
+  return r.rows[0];
+}
+
+async function getPasswordResetToken(tokenHash) {
+  const r = await pool.query(
+    `SELECT t.*, u.username, u.email FROM password_reset_tokens t
+     JOIN users u ON u.id = t.user_id
+     WHERE t.token_hash=$1 AND t.used_at IS NULL AND t.expires_at > NOW()`,
+    [tokenHash]
+  );
+  return r.rows[0] || null;
+}
+
+async function invalidatePasswordResetToken(tokenHash) {
+  await pool.query(
+    `UPDATE password_reset_tokens SET used_at=NOW() WHERE token_hash=$1`,
+    [tokenHash]
+  );
 }
 
 // ── Lateral Movement Dedup ───────────────────────────────────

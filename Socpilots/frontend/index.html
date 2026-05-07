@@ -1014,6 +1014,7 @@ sshd: Failed" style="min-height:80px"></textarea></div>
         <div class="card-ttl"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>INVESTIGATION RESULT</div>
         <div class="row" id="inv-actions" style="display:none">
           <button class="btn btn-h btn-sm" onclick="invCopyReport()">📋 Copy Report</button>
+          <button class="btn btn-h btn-sm" onclick="invDownloadPdf()">⬇ Download PDF</button>
           <button class="btn btn-p btn-sm" onclick="invEscalateCase()">→ Escalate to SP-CM</button>
         </div>
       </div>
@@ -1056,6 +1057,7 @@ sshd: Failed" style="min-height:80px"></textarea></div>
     <div class="modal-body" id="modal-investigation-body" style="overflow-y:auto;max-height:65vh"></div>
     <div class="modal-ft">
       <button class="btn btn-h" onclick="closeModal('modal-investigation')">Close</button>
+      <button class="btn btn-h" onclick="invDownloadPdfFromModal()">⬇ Download PDF</button>
       <button class="btn btn-p" onclick="invCopyFromModal()">📋 Copy Report</button>
     </div>
   </div>
@@ -1188,7 +1190,7 @@ sshd: Failed" style="min-height:80px"></textarea></div>
     <div class="kpi cp"><div class="kpi-lbl">Open Cases</div><div class="kpi-val" id="rpt-cases">—</div><div class="kpi-sub">SP-CM</div></div>
     <div class="kpi cr"><div class="kpi-lbl">Critical 24h</div><div class="kpi-val" id="rpt-crit">—</div><div class="kpi-sub">SIEM</div></div>
   </div>
-  <div class="card"><div class="card-hd"><div class="card-ttl">AI EXECUTIVE SUMMARY</div><button class="btn btn-p btn-sm" onclick="genReport()">Generate Report</button></div><div id="rpt-body" style="font-size:12px;color:#8ab0d0;font-family:var(--fm)">Click "Generate Report" to get an AI summary via SOCPilots AI...</div></div>
+  <div class="card"><div class="card-hd"><div class="card-ttl">AI EXECUTIVE SUMMARY</div><div class="row"><button class="btn btn-p btn-sm" onclick="genReport()">Generate Report</button><button class="btn btn-h btn-sm" id="rpt-pdf-btn" onclick="downloadReportPdf()" style="display:none">⬇ Download PDF</button></div></div><div id="rpt-body" style="font-size:12px;color:#8ab0d0;font-family:var(--fm)">Click "Generate Report" to get an AI summary via SOCPilots AI...</div></div>
 </div>
 
 <!-- SETTINGS -->
@@ -3005,6 +3007,44 @@ function invCopyFromModal(){
   toast('Copied to clipboard','ok');
 }
 
+function _openPrintWindow(title, htmlContent) {
+  const w = window.open('', '_blank');
+  if (!w) { toast('Pop-up blocked — allow pop-ups for PDF download', 'warn'); return; }
+  w.document.write(`<!DOCTYPE html><html><head>
+    <meta charset="UTF-8"><title>${title}</title>
+    <style>
+      body{font-family:Arial,sans-serif;font-size:13px;line-height:1.6;color:#111;padding:24px;max-width:800px;margin:0 auto}
+      h1,h2,h3{color:#0d47a1} pre,code{background:#f5f5f5;padding:2px 4px;border-radius:3px;font-size:12px}
+      table{border-collapse:collapse;width:100%} th,td{border:1px solid #ddd;padding:6px 10px;font-size:12px}
+      th{background:#e3f2fd} hr{border:none;border-top:1px solid #ddd}
+      .header{border-bottom:2px solid #0d47a1;margin-bottom:16px;padding-bottom:10px}
+      .meta{font-size:11px;color:#666;margin-bottom:20px}
+      @media print{body{padding:0} button{display:none}}
+    </style>
+  </head><body>
+    <div class="header"><h2 style="margin:0">${title}</h2></div>
+    <div class="meta">Generated: ${new Date().toLocaleString()} UTC | SOCPilots Security Operations</div>
+    ${htmlContent}
+    <script>window.onload=function(){window.print();}<\/script>
+  </body></html>`);
+  w.document.close();
+}
+
+function invDownloadPdf() {
+  const a = _invSelected;
+  const txt = document.getElementById('inv-result')?.getAttribute('data-report') || '';
+  if (!txt) { toast('No report to download', 'warn'); return; }
+  const title = a ? `Investigation: Rule ${a.ruleId} on ${a.agent}` : 'Investigation Report';
+  _openPrintWindow(title, `<div>${parseAIMarkdown(txt)}</div>`);
+}
+
+function invDownloadPdfFromModal() {
+  const body = document.getElementById('modal-investigation-body');
+  const txt = body?.getAttribute('data-report') || '';
+  if (!txt) { toast('No report to download', 'warn'); return; }
+  _openPrintWindow('Investigation Report', `<div>${parseAIMarkdown(txt)}</div>`);
+}
+
 // ─── CASES ───────────────────────────────────────────────────
 async function loadCases(){
   ['kb-new','kb-ip','kb-res','kb-cl'].forEach(id=>document.getElementById(id).innerHTML=spin());
@@ -4136,9 +4176,19 @@ async function loadReportMetrics(){
 }
 async function genReport(){
   document.getElementById('rpt-body').innerHTML=spin('Loading from SOCPilots AI...');
+  const btn = document.getElementById('rpt-pdf-btn');
+  if (btn) btn.style.display = 'none';
   const d=await G('/api/reports/summary');
   if(!d||!d.text){document.getElementById('rpt-body').textContent='Report generation failed.';return;}
   document.getElementById('rpt-body').innerHTML=`<div class="ai-txt">${fmtAI(d.text)}</div>`;
+  document.getElementById('rpt-body').setAttribute('data-report-text', d.text);
+  if (btn) btn.style.display = '';
+}
+
+function downloadReportPdf() {
+  const txt = document.getElementById('rpt-body')?.getAttribute('data-report-text') || '';
+  if (!txt) { toast('Generate a report first', 'warn'); return; }
+  _openPrintWindow('SOC Executive Summary Report', `<div>${fmtAI(txt)}</div>`);
 }
 
 // ─── SETTINGS ─────────────────────────────────────────────────
@@ -5192,6 +5242,7 @@ async function saveUser() {
       payload.username = document.getElementById('um-username').value.trim();
       if (!payload.username) { alert('Username required'); return; }
       if (!pw) { alert('Password required for new user'); return; }
+      if (!payload.email || !payload.email.includes('@')) { alert('Valid email address is required'); return; }
       await P('/api/users', payload);
     }
     closeUserModal();

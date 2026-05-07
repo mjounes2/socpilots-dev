@@ -246,6 +246,84 @@ function generateIsolationApprovalEmail(approval, timeoutMinutes) {
   `;
 }
 
+// Email template: New auto-triaged investigation
+function generateAutoTriageEmail(investigation) {
+  const severity = (investigation.severity || 'unknown').toUpperCase();
+  const severityColor = severity === 'CRITICAL' ? '#f32013' : severity === 'HIGH' ? '#ff9800' : '#2196f3';
+
+  return `
+    <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;background:#f5f5f5">
+      <div style="background:white;padding:20px;border-radius:8px;border-left:4px solid #2196f3">
+        <h2 style="margin-top:0;color:#333">🤖 New Investigation Auto-Triaged</h2>
+
+        <div style="background:#e3f2fd;padding:15px;border-radius:4px;margin:15px 0">
+          <p style="margin:0"><strong>Rule ID:</strong> ${investigation.rule_id || '—'}</p>
+          <p style="margin:5px 0"><strong>Agent:</strong> ${investigation.agent || '—'}</p>
+          <p style="margin:5px 0"><strong>Source IP:</strong> ${investigation.src_ip || '—'}</p>
+          <p style="margin:5px 0"><strong>Severity:</strong> <span style="color:${severityColor};font-weight:bold">${severity}</span></p>
+          <p style="margin:5px 0"><strong>Description:</strong> ${investigation.description || '—'}</p>
+        </div>
+
+        <p style="color:#666;font-size:12px">
+          Auto-triaged at: ${new Date().toLocaleString()} UTC<br>
+          Review this investigation in the SOCPilots dashboard.
+        </p>
+      </div>
+    </div>
+  `;
+}
+
+// Email template: New TheHive case created
+function generateCaseCreatedEmail(caseData) {
+  const severity = (caseData.severity || 'unknown').toUpperCase();
+  const severityColor = severity === 'CRITICAL' ? '#f32013' : severity === 'HIGH' ? '#ff9800' : '#ff9800';
+
+  return `
+    <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;background:#f5f5f5">
+      <div style="background:white;padding:20px;border-radius:8px;border-left:4px solid #9c27b0">
+        <h2 style="margin-top:0;color:#333">📋 New SP-CM Case Created</h2>
+
+        <div style="background:#f3e5f5;padding:15px;border-radius:4px;margin:15px 0">
+          <p style="margin:0"><strong>Title:</strong> ${caseData.title || '—'}</p>
+          <p style="margin:5px 0"><strong>Severity:</strong> <span style="color:${severityColor};font-weight:bold">${severity}</span></p>
+          ${caseData.description ? `<p style="margin:5px 0"><strong>Description:</strong> ${caseData.description}</p>` : ''}
+          ${caseData.createdBy ? `<p style="margin:5px 0"><strong>Created by:</strong> ${caseData.createdBy}</p>` : ''}
+        </div>
+
+        <p style="color:#666;font-size:12px">
+          Case created at: ${new Date().toLocaleString()} UTC<br>
+          Review in the SOCPilots Cases module.
+        </p>
+      </div>
+    </div>
+  `;
+}
+
+// Email template: Password reset
+function generatePasswordResetEmail(resetLink, username) {
+  return `
+    <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;background:#f5f5f5">
+      <div style="background:white;padding:20px;border-radius:8px;border-left:4px solid #00e5ff">
+        <h2 style="margin-top:0;color:#333">🔐 Password Reset Request</h2>
+
+        <p style="color:#333">Hello <strong>${username}</strong>,</p>
+        <p style="color:#555">A password reset was requested for your SOCPilots account. Click the button below to set a new password. This link expires in 30 minutes.</p>
+
+        <div style="text-align:center;margin:24px 0">
+          <a href="${resetLink}" style="background:#0d47a1;color:white;padding:12px 28px;border-radius:4px;text-decoration:none;font-weight:bold;font-size:14px">
+            Reset My Password
+          </a>
+        </div>
+
+        <p style="color:#888;font-size:12px">
+          If you did not request a password reset, ignore this email — your password will not change.<br><br>
+          Link expires at: ${new Date(Date.now() + 30 * 60 * 1000).toLocaleString()} UTC
+        </p>
+      </div>
+    </div>
+  `;
+}
+
 module.exports = {
   getSmtpConfig,
   createTransporter,
@@ -254,5 +332,8 @@ module.exports = {
   testSmtpConnection,
   generateInvestigationTPEmail,
   generatePlaybookExecutionEmail,
-  generateIsolationApprovalEmail
+  generateIsolationApprovalEmail,
+  generateAutoTriageEmail,
+  generateCaseCreatedEmail,
+  generatePasswordResetEmail
 };

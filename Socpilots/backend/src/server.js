@@ -825,6 +825,17 @@ app.post('/api/cases/create', authMW, async (req, res) => {
       { title, description: description || '', severity: hiveSevNum(severity), tags: tags || ['soc-pilots'], tlp: 2, pap: 2, flag: false },
       { headers: { Authorization: `Bearer ${HIVE_KEY}`, 'Content-Type': 'application/json' }, httpsAgent, timeout: 15000 }
     );
+    // Notification + email for new case
+    db.createNotification(
+      'case', `New Case: ${title}`,
+      `Case created by ${req.user.username}. Severity: ${severity || 'medium'}.`,
+      severity === 'critical' ? 'critical' : severity === 'high' ? 'warning' : 'info',
+      null, { case_title: title, created_by: req.user.username }
+    ).catch(() => {});
+    email.sendToRecipients(
+      `[SOCPilots] New Case Created: ${title}`,
+      email.generateCaseCreatedEmail({ title, description, severity, createdBy: req.user.username })
+    ).catch(() => {});
     res.json({ success: true, case: r.data });
   } catch (e) {
     res.status(502).json({ error: e.message });
@@ -1025,6 +1036,16 @@ app.post('/api/ai/investigate', authMW, async (req, res) => {
           rawAlert:     alert,
         });
         savedId = saved.id;
+        // Notification for manual investigations
+        if (!autoTriaged) {
+          db.createNotification(
+            'alert', 'Investigation Complete',
+            `Rule ${alert.ruleId} on ${alert.agent} — AI investigation finished.`,
+            alert.severity === 'critical' ? 'critical' : 'warning',
+            req.user?.username || null,
+            { investigation_id: savedId, rule_id: alert.ruleId, agent: alert.agent }
+          ).catch(() => {});
+        }
       } catch(e) { console.warn('[DB] save investigation failed:', e.message); }
     }
 
@@ -1165,15 +1186,21 @@ app.post('/api/investigations/:id/tp-status', authMW, async (req, res) => {
       return res.status(404).json({ error: 'Investigation not found' });
     }
 
-    // Send email notification if marked as true positive
+    // Send email + notification when marked as true positive
     if (tp_status === 'confirmed_tp') {
       const investigation = await db.getInvestigationById(investigationId);
       if (investigation) {
         const emailBody = email.generateInvestigationTPEmail(investigation);
-        await email.sendToRecipients(
+        email.sendToRecipients(
           `[SOCPilots] Investigation Confirmed as True Positive: ${investigation.rule_id}`,
           emailBody
-        );
+        ).catch(() => {});
+        db.createNotification(
+          'alert', `True Positive Confirmed: Rule ${investigation.rule_id}`,
+          `Investigation on ${investigation.agent} marked TP by ${req.user.username}.`,
+          'critical', null,
+          { investigation_id: investigationId }
+        ).catch(() => {});
       }
     }
 
@@ -1382,12 +1409,19 @@ Use markdown tables. Be concise.`;
           });
           savedId = saved.id;
           triaged++;
-          // Notify about auto-triaged investigation
+          // Notify + email about auto-triaged investigation
           db.createNotification(
             'alert', 'New Investigation Auto-Triaged',
             `Alert ${alert.ruleId} (${alert.severity}) on ${alert.agent} was auto-investigated.`,
             alert.severity === 'critical' ? 'critical' : 'warning',
             null, { investigation_id: savedId, rule_id: alert.ruleId, agent: alert.agent }
+          ).catch(() => {});
+          email.sendToRecipients(
+            `[SOCPilots] Auto-Triaged Investigation: ${alert.ruleId} on ${alert.agent}`,
+            email.generateAutoTriageEmail({
+              rule_id: alert.ruleId, agent: alert.agent, src_ip: alert.srcIp,
+              severity: alert.severity, description: alert.description,
+            })
           ).catch(() => {});
         } catch(e) { console.warn('[AutoTriage] DB save failed:', e.message); }
 
@@ -2307,6 +2341,7 @@ app.get('/api/users', authMW, requireRole('admin'), async (req, res) => {
 app.post('/api/users', authMW, requireRole('admin'), async (req, res) => {
   const { username, password, role, display_name, email } = req.body || {};
   if (!username || !password) return res.status(400).json({ error: 'username and password required' });
+  if (!email || !email.includes('@')) return res.status(400).json({ error: 'valid email address required' });
   const validRoles = ['admin', 'l3', 'l2', 'l1'];
   if (role && !validRoles.includes(role)) return res.status(400).json({ error: 'invalid role' });
   try {
@@ -2755,6 +2790,62 @@ app.post('/api/evidence/search', authMW, async (req, res) => {
   } catch(e) {
     console.error('[evidence] search error:', e.message);
     res.status(502).json({ error: 'Evidence search unavailable' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// ─── PASSWORD RESET (no auth required) ─────────────────────────
+// ═══════════════════════════════════════════════════════════════
+
+app.post('/api/auth/forgot-password', async (req, res) => {
+  const { username } = req.body || {};
+  if (!username) return res.status(400).json({ error: 'Username required' });
+
+  try {
+    const user = await db.getUserByUsername(username.toLowerCase().trim());
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    if (!user.email) return res.status(400).json({ error: 'No email address on this account. Contact your admin.' });
+
+    const rawToken = crypto.randomBytes(32).toString('hex');
+    const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+    const expiresAt = new Date(Date.now() + 30 * 60 * 1000); // 30 minutes
+    await db.createPasswordResetToken(user.id, tokenHash, expiresAt);
+
+    const proto = req.headers['x-forwarded-proto'] || req.protocol;
+    const host  = req.headers['x-forwarded-host'] || req.get('host');
+    const resetLink = `${proto}://${host}/login?reset=${rawToken}`;
+
+    const emailBody = email.generatePasswordResetEmail(resetLink, user.username);
+    const result = await email.sendEmail(user.email, '[SOCPilots] Password Reset Request', emailBody);
+    if (!result.success) {
+      return res.status(503).json({ error: 'Failed to send reset email. Check SMTP configuration in Settings.' });
+    }
+
+    res.json({ ok: true, message: `Reset link sent to ${user.email}` });
+  } catch(e) {
+    console.error('[ForgotPassword]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/auth/reset-password', async (req, res) => {
+  const { token, new_password } = req.body || {};
+  if (!token || !new_password) return res.status(400).json({ error: 'token and new_password required' });
+  if (new_password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
+
+  try {
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    const record = await db.getPasswordResetToken(tokenHash);
+    if (!record) return res.status(400).json({ error: 'Invalid or expired reset link' });
+
+    const hash = bcrypt.hashSync(new_password, 10);
+    await db.updateUserPassword(record.user_id, hash);
+    await db.invalidatePasswordResetToken(tokenHash);
+
+    res.json({ ok: true, message: 'Password updated. You can now log in.' });
+  } catch(e) {
+    console.error('[ResetPassword]', e.message);
+    res.status(500).json({ error: e.message });
   }
 });
 

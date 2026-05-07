@@ -51,6 +51,11 @@ body{background:var(--bg);min-height:100vh;display:flex;align-items:center;justi
 @keyframes spin{to{transform:rotate(360deg)}}
 .foot{margin-top:20px;text-align:center;font-size:9px;color:var(--txt3);font-family:var(--mono);letter-spacing:1px}
 .sec{display:flex;align-items:center;justify-content:center;gap:5px;margin-top:8px;padding:5px;border:1px solid var(--b1);border-radius:3px;font-size:8px}
+.forgot-link{display:block;text-align:right;font-size:9px;color:var(--c);font-family:var(--mono);cursor:pointer;margin-top:4px;text-decoration:none;background:none;border:none;padding:0}
+.forgot-link:hover{text-decoration:underline}
+.ok{display:none;align-items:center;gap:7px;background:rgba(0,255,136,.08);border:1px solid rgba(0,255,136,.25);border-radius:3px;padding:9px 12px;font-size:11px;color:var(--g);margin-bottom:14px;font-family:var(--mono)}
+.ok.show{display:flex}
+.panel{display:none}.panel.active{display:block}
 </style>
 </head>
 <body>
@@ -69,32 +74,86 @@ body{background:var(--bg);min-height:100vh;display:flex;align-items:center;justi
     <div class="logo-title">SOC<span>PILOTS</span></div>
     <div class="logo-sub">AI Security Operations Center</div>
   </div>
-  <div class="divider"><div class="divider-line"></div><div class="divider-txt">AUTHENTICATE</div><div class="divider-line"></div></div>
-  <div class="err" id="err">
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-    <span id="err-txt">Invalid credentials</span>
-  </div>
-  <div class="fg">
-    <label class="fl">Username</label>
-    <div class="iw">
-      <div class="ii"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
-      <input type="text" class="fi" id="un" placeholder="Enter username" autocomplete="username">
+  <div class="divider" id="panel-divider"><div class="divider-line"></div><div class="divider-txt" id="panel-label">AUTHENTICATE</div><div class="divider-line"></div></div>
+
+  <!-- LOGIN PANEL -->
+  <div class="panel active" id="panel-login">
+    <div class="err" id="err">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      <span id="err-txt">Invalid credentials</span>
     </div>
-  </div>
-  <div class="fg">
-    <label class="fl">Password</label>
-    <div class="iw">
-      <div class="ii"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg></div>
-      <input type="password" class="fi" id="pw" placeholder="Enter password" autocomplete="current-password">
-      <button class="eye" type="button" onclick="togglePw()">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-      </button>
+    <div class="fg">
+      <label class="fl">Username</label>
+      <div class="iw">
+        <div class="ii"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
+        <input type="text" class="fi" id="un" placeholder="Enter username" autocomplete="username">
+      </div>
     </div>
+    <div class="fg">
+      <label class="fl">Password</label>
+      <div class="iw">
+        <div class="ii"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg></div>
+        <input type="password" class="fi" id="pw" placeholder="Enter password" autocomplete="current-password">
+        <button class="eye" type="button" onclick="togglePw()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+        </button>
+      </div>
+      <button class="forgot-link" onclick="showPanel('forgot')">Forgot password?</button>
+    </div>
+    <button class="btn" id="btn" onclick="login()">
+      <span class="bt">ACCESS SYSTEM</span>
+      <span class="bs"><div class="sp"></div></span>
+    </button>
   </div>
-  <button class="btn" id="btn" onclick="login()">
-    <span class="bt">ACCESS SYSTEM</span>
-    <span class="bs"><div class="sp"></div></span>
-  </button>
+
+  <!-- FORGOT PASSWORD PANEL -->
+  <div class="panel" id="panel-forgot">
+    <div class="err" id="fp-err">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      <span id="fp-err-txt">Error</span>
+    </div>
+    <div class="ok" id="fp-ok">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+      <span id="fp-ok-txt">Reset link sent</span>
+    </div>
+    <div class="fg">
+      <label class="fl">Username</label>
+      <div class="iw">
+        <div class="ii"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
+        <input type="text" class="fi" id="fp-un" placeholder="Enter your username" autocomplete="username">
+      </div>
+    </div>
+    <button class="btn" id="fp-btn" onclick="forgotPassword()">
+      <span class="bt">SEND RESET LINK</span>
+      <span class="bs"><div class="sp"></div></span>
+    </button>
+    <button class="forgot-link" style="text-align:center;margin-top:8px" onclick="showPanel('login')">← Back to login</button>
+  </div>
+
+  <!-- RESET PASSWORD PANEL -->
+  <div class="panel" id="panel-reset">
+    <div class="err" id="rp-err">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      <span id="rp-err-txt">Error</span>
+    </div>
+    <div class="ok" id="rp-ok">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+      <span id="rp-ok-txt">Password updated successfully</span>
+    </div>
+    <p style="font-size:10px;color:var(--txt2);font-family:var(--mono);margin-bottom:14px">Enter your new password below.</p>
+    <div class="fg">
+      <label class="fl">New Password</label>
+      <div class="iw">
+        <div class="ii"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg></div>
+        <input type="password" class="fi" id="rp-pw" placeholder="Min. 8 characters" autocomplete="new-password">
+      </div>
+    </div>
+    <button class="btn" id="rp-btn" onclick="resetPassword()">
+      <span class="bt">SET NEW PASSWORD</span>
+      <span class="bs"><div class="sp"></div></span>
+    </button>
+  </div>
+
   <div class="foot">AUTHORIZED PERSONNEL ONLY
     <div class="sec">
       <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#00ff88" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
@@ -103,7 +162,20 @@ body{background:var(--bg);min-height:100vh;display:flex;align-items:center;justi
   </div>
 </div>
 <script>
+let _activePanel = 'login';
+const _resetToken = new URLSearchParams(location.search).get('reset');
+
+function showPanel(name) {
+  _activePanel = name;
+  ['login','forgot','reset'].forEach(p => {
+    document.getElementById('panel-'+p).classList.toggle('active', p === name);
+  });
+  const labels = {login:'AUTHENTICATE', forgot:'RESET PASSWORD', reset:'SET NEW PASSWORD'};
+  document.getElementById('panel-label').textContent = labels[name] || 'AUTHENTICATE';
+}
+
 function togglePw(){const i=document.getElementById('pw');i.type=i.type==='password'?'text':'password';}
+
 async function login(){
   const un=document.getElementById('un').value.trim();
   const pw=document.getElementById('pw').value;
@@ -128,7 +200,61 @@ async function login(){
     err.classList.add('show');btn.classList.remove('loading');
   }
 }
-document.addEventListener('keydown',e=>{if(e.key==='Enter')login();});
+
+async function forgotPassword(){
+  const un = document.getElementById('fp-un').value.trim();
+  const errEl = document.getElementById('fp-err');
+  const okEl = document.getElementById('fp-ok');
+  const btn = document.getElementById('fp-btn');
+  errEl.classList.remove('show'); okEl.classList.remove('show');
+  if (!un) { document.getElementById('fp-err-txt').textContent='Username required'; errEl.classList.add('show'); return; }
+  btn.classList.add('loading');
+  try {
+    const r = await fetch('/api/auth/forgot-password', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:un})});
+    const d = await r.json();
+    if (r.ok) {
+      document.getElementById('fp-ok-txt').textContent = d.message || 'Reset link sent to your email';
+      okEl.classList.add('show');
+    } else {
+      document.getElementById('fp-err-txt').textContent = d.error || 'Failed to send reset link';
+      errEl.classList.add('show');
+    }
+  } catch(e) {
+    document.getElementById('fp-err-txt').textContent = 'Server unreachable';
+    errEl.classList.add('show');
+  } finally { btn.classList.remove('loading'); }
+}
+
+async function resetPassword(){
+  const pw = document.getElementById('rp-pw').value;
+  const errEl = document.getElementById('rp-err');
+  const okEl = document.getElementById('rp-ok');
+  const btn = document.getElementById('rp-btn');
+  errEl.classList.remove('show'); okEl.classList.remove('show');
+  if (!pw || pw.length < 8) { document.getElementById('rp-err-txt').textContent='Password must be at least 8 characters'; errEl.classList.add('show'); return; }
+  btn.classList.add('loading');
+  try {
+    const r = await fetch('/api/auth/reset-password', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:_resetToken, new_password:pw})});
+    const d = await r.json();
+    if (r.ok) {
+      document.getElementById('rp-ok-txt').textContent = d.message || 'Password updated — you can now log in';
+      okEl.classList.add('show');
+      btn.disabled = true;
+      setTimeout(() => { history.replaceState(null,'','/login'); showPanel('login'); }, 2500);
+    } else {
+      document.getElementById('rp-err-txt').textContent = d.error || 'Reset failed';
+      errEl.classList.add('show');
+    }
+  } catch(e) {
+    document.getElementById('rp-err-txt').textContent = 'Server unreachable';
+    errEl.classList.add('show');
+  } finally { btn.classList.remove('loading'); }
+}
+
+document.addEventListener('keydown', e => { if (e.key === 'Enter') { if (_activePanel==='login') login(); else if (_activePanel==='forgot') forgotPassword(); else if (_activePanel==='reset') resetPassword(); } });
+
+// Auto-show reset panel if ?reset= token in URL
+if (_resetToken) showPanel('reset');
 </script>
 </body>
 </html>
