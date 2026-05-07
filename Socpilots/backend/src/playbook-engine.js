@@ -94,6 +94,26 @@ async function createHiveCase(alert, severity = 'high', customTitle = null) {
   return r.data;
 }
 
+// ── TheHive Case Creator (rich description) ───────────────────
+// Used by UEBA/lateral monitor to pass a fully pre-built markdown description
+async function createHiveCaseRich(alert, severity = 'high', title, description) {
+  if (!THEHIVE_URL || !THEHIVE_KEY) return { skipped: true, reason: 'TheHive not configured' };
+  const sevNum = { low: 1, medium: 2, high: 3, critical: 4 }[severity] || 3;
+  const r = await axios.post(`${THEHIVE_URL}/api/v1/case`, {
+    title:       title || `[DarkSOC] ${alert.description || 'Alert'} — ${alert.agent || 'unknown'}`,
+    description: description || alert.description || '',
+    severity:    sevNum,
+    tags:        ['dark-soc', 'ueba', 'lateral-movement', `rule-${alert.ruleId}`, `agent-${alert.agent}`].filter(Boolean),
+    tlp:         2,
+    pap:         2,
+    flag:        severity === 'critical',
+  }, {
+    headers: { Authorization: `Bearer ${THEHIVE_KEY}`, 'Content-Type': 'application/json' },
+    httpsAgent, timeout: 15000,
+  });
+  return r.data;
+}
+
 // ── Consensus Validator ───────────────────────────────────────
 // Calls /validate-action on LangChain agent — second LLM independently
 // evaluates whether the destructive action is warranted.
@@ -421,4 +441,4 @@ async function expireStaleApprovals() {
   }
 }
 
-module.exports = { runPlaybook, callWazuhMCP, createHiveCase, executeIsolationNow, expireStaleApprovals };
+module.exports = { runPlaybook, callWazuhMCP, createHiveCase, createHiveCaseRich, executeIsolationNow, expireStaleApprovals };

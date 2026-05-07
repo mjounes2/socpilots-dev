@@ -300,6 +300,18 @@ async function initSchema() {
     `CREATE INDEX IF NOT EXISTS idx_evf_case_id     ON evidence_files(case_id)`,
     `CREATE INDEX IF NOT EXISTS idx_evf_created     ON evidence_files(created_at DESC)`,
 
+    // Persistent dedup for UEBA lateral movement cases
+    // Prevents re-firing cases on container restart or within the cooldown window
+    `CREATE TABLE IF NOT EXISTS lateral_movement_cases (
+      id          SERIAL PRIMARY KEY,
+      user_key    VARCHAR(255) NOT NULL,
+      host_key    TEXT         NOT NULL,
+      hive_case   VARCHAR(100),
+      created_at  TIMESTAMPTZ  DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_lmc_user_key ON lateral_movement_cases(user_key)`,
+    `CREATE INDEX IF NOT EXISTS idx_lmc_created  ON lateral_movement_cases(created_at DESC)`,
+
     // ── Seed Default Playbooks (5 built-in) ────────────────────
     `INSERT INTO playbooks(name,description,mitre_techniques,min_rule_level,fp_confidence_max,actions,require_consensus,enabled)
      VALUES
@@ -1152,6 +1164,9 @@ module.exports = {
   listEvidenceFiles,
   getEvidenceFile,
   deleteEvidenceFile,
+  // Lateral movement dedup
+  getLateralCaseAge,
+  recordLateralCase,
 };
 
 // ── Evidence Files CRUD ──────────────────────────────────
@@ -1211,4 +1226,26 @@ async function getEvidenceFile(id) {
 async function deleteEvidenceFile(id) {
   const r = await pool.query(`DELETE FROM evidence_files WHERE id=$1 RETURNING *`, [id]);
   return r.rows[0] || null;
+}
+
+// ── Lateral Movement Dedup ───────────────────────────────────
+
+// Returns hours since last case for this user, or null if never seen
+async function getLateralCaseAge(userKey) {
+  const r = await pool.query(
+    `SELECT EXTRACT(EPOCH FROM (NOW() - created_at)) / 3600 AS hours_ago
+     FROM lateral_movement_cases
+     WHERE user_key = $1
+     ORDER BY created_at DESC LIMIT 1`,
+    [userKey]
+  );
+  if (!r.rows.length) return null;
+  return parseFloat(r.rows[0].hours_ago);
+}
+
+async function recordLateralCase(userKey, hostKey, hiveCaseId) {
+  await pool.query(
+    `INSERT INTO lateral_movement_cases(user_key, host_key, hive_case) VALUES($1,$2,$3)`,
+    [userKey, hostKey, hiveCaseId || null]
+  );
 }

@@ -1639,11 +1639,21 @@ setTimeout (() => { huntScheduler(); }, 5 * 60_000);      // first run 5min afte
 
 // ═══════════════════════════════════════════════════════════════
 // ─── DARK SOC — LATERAL MOVEMENT MONITOR (every 30 minutes) ────
-// Checks UEBA graph for new lateral movement chains, auto-creates
-// a TheHive case + triggers investigation for each new chain.
+// Checks UEBA graph for new lateral movement chains.
+//
+// Noise-reduction controls:
+//   • Threshold  : deviation >= 80 AND hops >= 3 (both required)
+//   • Observation: last 2 hours (reduces repeated detections per session)
+//   • Cooldown   : 6 hours per user in DB (survives container restarts)
+//   • Case limit : max 5 new cases per monitor run
 // ═══════════════════════════════════════════════════════════════
-let _lateralRunning  = false;
-const _lateralSeen   = new Set(); // in-memory dedup (resets on restart)
+const LATERAL_COOLDOWN_HOURS = 6;
+const LATERAL_MIN_DEVIATION  = 80;
+const LATERAL_MIN_HOPS       = 3;
+const LATERAL_OBS_HOURS      = 2;
+const LATERAL_MAX_CASES_RUN  = 5;
+
+let _lateralRunning = false;
 
 async function lateralMovementMonitor() {
   if (_lateralRunning) return;
@@ -1652,41 +1662,131 @@ async function lateralMovementMonitor() {
 
   _lateralRunning = true;
   try {
-    const chains = await ueba.detectLateralMovement(1); // last 1 hour
-    const highRisk = chains.filter(c => c.deviation >= 70 || c.hops >= 3);
+    const chains  = await ueba.detectLateralMovement(LATERAL_OBS_HOURS);
+    // Both conditions must be met — prevents low-hop or low-deviation noise
+    const highRisk = chains.filter(c =>
+      c.deviation >= LATERAL_MIN_DEVIATION && c.hops >= LATERAL_MIN_HOPS
+    );
+
+    let casesThisRun = 0;
 
     for (const chain of highRisk) {
-      const key = `${chain.user}|${(chain.dst_hosts||[]).sort().join(',')}`;
-      if (_lateralSeen.has(key)) continue;
-      _lateralSeen.add(key);
+      if (casesThisRun >= LATERAL_MAX_CASES_RUN) {
+        console.log('[DarkSOC Lateral] Case cap reached for this run — deferring remaining');
+        break;
+      }
 
-      console.log(`[DarkSOC Lateral] Detected: ${chain.user} → ${(chain.dst_hosts||[]).join(' → ')} (deviation=${chain.deviation})`);
+      // Persistent cooldown check — survives restarts
+      const ageHours = await db.getLateralCaseAge(chain.user).catch(() => null);
+      if (ageHours !== null && ageHours < LATERAL_COOLDOWN_HOURS) {
+        console.log(`[DarkSOC Lateral] Cooldown active for "${chain.user}" (${ageHours.toFixed(1)}h ago) — skipping`);
+        continue;
+      }
 
-      // Create synthetic alert
+      console.log(`[DarkSOC Lateral] Detected: ${chain.user} → ${(chain.dst_hosts||[]).join(' → ')} (deviation=${chain.deviation}, hops=${chain.hops})`);
+
+      // ── Build rich description ──────────────────────────────
+      const srcHosts = (chain.src_hosts || []).join(', ') || '—';
+      const dstHosts = (chain.dst_hosts || []).join(' → ') || '—';
+      const hopPath  = chain.src_hosts?.length
+        ? [...new Set([...chain.src_hosts, ...chain.dst_hosts])].join(' → ')
+        : dstHosts;
+
+      // Fast LangChain triage for AI summary (15s timeout — non-blocking on failure)
+      let aiSummary = '';
+      try {
+        const headers = { 'Content-Type': 'application/json' };
+        if (LANGCHAIN_TOKEN) headers['Authorization'] = `Bearer ${LANGCHAIN_TOKEN}`;
+        const triageResp = await axios.post(`${LANGCHAIN_URL}/triage`, {
+          message: `Lateral movement detected. User: "${chain.user}". Accessed hosts: ${dstHosts}. Deviation score: ${chain.deviation}/100. Hops: ${chain.hops}. Risk score: ${chain.risk_score || 0}. Analyze if this is insider threat, compromised account, or legitimate admin activity. Be concise.`,
+        }, { headers, timeout: 15000, validateStatus: () => true });
+        if (triageResp.data?.result || triageResp.data?.answer || triageResp.data?.text) {
+          aiSummary = `\n\n## AI Triage Assessment\n\n${(triageResp.data.result || triageResp.data.answer || triageResp.data.text || '').slice(0, 1200)}`;
+        }
+      } catch { /* non-fatal — case is created even without AI summary */ }
+
+      const description = [
+        `## Lateral Movement Detected — Automated UEBA Alert`,
+        ``,
+        `**Dark SOC engine detected suspicious lateral movement from the UEBA graph.**`,
+        `This case was created automatically. An analyst must review and classify.`,
+        ``,
+        `## Movement Chain`,
+        ``,
+        `| Field | Value |`,
+        `|---|---|`,
+        `| User | \`${chain.user}\` |`,
+        `| Hop Path | \`${hopPath}\` |`,
+        `| Source Hosts | ${srcHosts} |`,
+        `| Destination Hosts | ${dstHosts} |`,
+        `| Total Hops | ${chain.hops} |`,
+        `| Observation Window | Last ${LATERAL_OBS_HOURS} hours |`,
+        `| Detected At | ${new Date().toISOString()} |`,
+        ``,
+        `## Risk Scores`,
+        ``,
+        `| Metric | Score |`,
+        `|---|---|`,
+        `| Deviation Score | **${chain.deviation}/100** |`,
+        `| User Risk Score (UEBA) | ${chain.risk_score || 0}/100 |`,
+        `| Alert Level | 14 (Critical) |`,
+        ``,
+        `## MITRE ATT&CK`,
+        ``,
+        `| Technique | Description |`,
+        `|---|---|`,
+        `| T1021 | Remote Services — lateral movement via SMB, RDP, SSH, WinRM |`,
+        `| T1078 | Valid Accounts — use of legitimate credentials for lateral access |`,
+        `| T1550 | Use Alternate Authentication Material — pass-the-hash / pass-the-ticket |`,
+        ``,
+        `## Analyst Checklist`,
+        ``,
+        `- [ ] Verify if user \`${chain.user}\` has legitimate reason to access these hosts`,
+        `- [ ] Check if movement occurred outside business hours`,
+        `- [ ] Review authentication logs on destination hosts`,
+        `- [ ] Determine if credentials were recently compromised`,
+        `- [ ] Check for concurrent sessions from different IPs (impossible travel)`,
+        `- [ ] Escalate to IR team if confirmed malicious`,
+        aiSummary,
+      ].join('\n');
+
       const synAlert = {
         ruleId:      'UEBA-LM',
         level:       14,
         severity:    'critical',
         agent:       chain.src_hosts?.[0] || chain.user,
         srcIp:       '',
-        description: `Lateral movement: ${chain.user} accessed ${chain.hops} hosts in 1h`,
+        description: `Lateral movement — ${chain.user}: ${chain.hops} hops across ${(chain.dst_hosts||[]).length} hosts. Deviation: ${chain.deviation}/100`,
         mitre:       ['T1021','T1078','T1550'],
         timestamp:   new Date().toISOString(),
+        _chain:      chain,
       };
 
-      // Create TheHive case
-      await playbook.createHiveCase(synAlert, 'critical',
-        `[DarkSOC] Lateral Movement — ${chain.user} (${chain.hops} hops, deviation ${chain.deviation})`
-      ).catch(e => console.warn('[DarkSOC Lateral] Case error:', e.message));
+      // Create TheHive case with full description
+      let hiveCaseId = null;
+      try {
+        const caseResp = await playbook.createHiveCaseRich(synAlert, 'critical',
+          `[DarkSOC] Lateral Movement — ${chain.user} (${chain.hops} hops, score ${chain.deviation})`,
+          description
+        );
+        hiveCaseId = caseResp?.caseId || caseResp?._id || null;
+      } catch(e) {
+        console.warn('[DarkSOC Lateral] Case error:', e.message);
+      }
 
-      // Trigger n8n investigation
+      // Record in DB for persistent dedup
+      const hostKey = (chain.dst_hosts||[]).sort().join('|');
+      await db.recordLateralCase(chain.user, hostKey, String(hiveCaseId || '')).catch(() => {});
+      casesThisRun++;
+
+      // Fire deep investigation to n8n (async — result goes into chat history)
       axios.post(N8N_INV, {
-        action: 'investigate',
-        message: `Investigate lateral movement: user "${chain.user}" accessed hosts ${(chain.dst_hosts||[]).join(', ')} within 1 hour. Deviation score: ${chain.deviation}. MITRE: T1021, T1078. Determine if this is insider threat or compromised account.`,
-        alert: synAlert,
+        action:     'investigate',
+        message:    `Deep investigation: User "${chain.user}" performed lateral movement across ${chain.hops} hosts (${dstHosts}) in ${LATERAL_OBS_HOURS}h. Deviation: ${chain.deviation}/100. Risk: ${chain.risk_score || 0}/100. TheHive case: ${hiveCaseId || 'N/A'}. Determine root cause, timeline, and recommend containment.`,
+        alert:      synAlert,
         session_id: `lateral_${Date.now()}`,
-        _user: 'dark-soc',
-        _role: 'system',
+        _user:      'dark-soc',
+        _role:      'system',
       }, { timeout: 180000, validateStatus: () => true }).catch(() => {});
     }
   } catch(e) {
