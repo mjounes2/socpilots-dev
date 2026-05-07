@@ -1528,7 +1528,7 @@ sshd: Failed" style="min-height:80px"></textarea></div>
       </div>
     </div>
     <div class="card" style="grid-column:2/4">
-      <div class="card-hd"><div class="card-ttl"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>EXECUTION STATS</div></div>
+      <div class="card-hd"><div class="card-ttl"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>EXECUTION STATS</div><span style="font-size:9px;font-family:var(--fm);color:var(--txt3)">Dark SOC playbooks only</span></div>
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px" id="ds-stats">
         <div class="kpi cl"><div class="kpi-lbl">Total Runs</div><div class="kpi-val" id="ds-total">—</div></div>
         <div class="kpi cg"><div class="kpi-lbl">Executed</div><div class="kpi-val" id="ds-exec">—</div></div>
@@ -1538,12 +1538,32 @@ sshd: Failed" style="min-height:80px"></textarea></div>
     </div>
   </div>
   <div class="card mb">
+    <div class="card-hd"><div class="card-ttl"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>SYSTEM ACTIVITY — TODAY</div></div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">
+      <div class="kpi cg"><div class="kpi-lbl">Investigations Run</div><div class="kpi-val" id="sa-investigations">—</div></div>
+      <div class="kpi cy"><div class="kpi-lbl">Hunts Completed</div><div class="kpi-val" id="sa-hunts">—</div></div>
+      <div class="kpi cl"><div class="kpi-lbl">Logins Today</div><div class="kpi-val" id="sa-logins">—</div></div>
+    </div>
+  </div>
+  <div class="card mb">
     <div class="card-hd">
       <div class="card-ttl"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>AUDIT LOG — RECENT ACTIONS</div>
-      <button class="btn btn-sm" onclick="loadDarkSocPage()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:10px;height:10px"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg> Refresh</button>
+      <div style="display:flex;gap:8px;align-items:center">
+        <select id="audit-filter" onchange="loadAuditLog()" style="font-size:10px;font-family:var(--fm);background:var(--bg2);color:var(--txt);border:1px solid var(--b1);border-radius:3px;padding:3px 6px">
+          <option value="">All events</option>
+          <option value="auth">🔐 Auth</option>
+          <option value="alert">🔍 Investigations</option>
+          <option value="case">📋 Cases</option>
+          <option value="playbook">⚡ Playbooks</option>
+          <option value="hunt">🎯 Hunts</option>
+          <option value="scan">🖥 Scans</option>
+          <option value="settings">⚙️ Settings</option>
+        </select>
+        <button class="btn btn-sm" onclick="loadAuditLog()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:10px;height:10px"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg> Refresh</button>
+      </div>
     </div>
     <div id="ds-audit-list" style="max-height:400px;overflow-y:auto">
-      <div class="notif-empty">No autonomous actions yet</div>
+      <div class="loading"><div class="spin"></div></div>
     </div>
   </div>
 
@@ -5124,34 +5144,83 @@ async function loadDarkSocPage() {
   setT('ds-skip',  stats.skipped  || 0);
   setT('ds-pend',  stats.pending_approvals || 0);
 
-  // Load audit log
-  const auditEl = document.getElementById('ds-audit-list');
-  if (auditEl) {
-    try {
-      const execs = await G('/api/playbook-executions?limit=30');
-      const rows = execs.executions || execs || [];
-      if (!rows.length) {
-        auditEl.innerHTML = '<div class="notif-empty">No autonomous actions yet</div>';
-      } else {
-        auditEl.innerHTML = rows.map(r => {
-          const ts = new Date(r.created_at).toLocaleString();
-          const resultCls = r.outcome === 'executed' ? 'ok' : r.outcome === 'skipped' ? 'skip' : 'fail';
-          return `<div class="audit-row">
-            <span class="audit-time">${ts}</span>
-            <span class="audit-action"><strong>${e(r.playbook_name||'—')}</strong> — ${e(r.agent||'')}</span>
-            <span class="audit-result ${resultCls}">${r.outcome?.toUpperCase()||'—'}</span>
-          </div>`;
-        }).join('');
-      }
-    } catch(err) {
-      auditEl.innerHTML = '<div class="notif-empty">Failed to load audit log</div>';
-    }
-  }
+  // Load audit log + system activity
+  await loadAuditLog();
 
   // Load playbooks, protected assets, and pending isolation approvals
   if (typeof loadPlaybooks === 'function') loadPlaybooks();
   if (typeof loadProtectedAssets === 'function') loadProtectedAssets();
   if (typeof loadIsolationApprovals === 'function') loadIsolationApprovals();
+}
+
+async function loadAuditLog() {
+  const auditEl = document.getElementById('ds-audit-list');
+  if (!auditEl) return;
+  const filter = document.getElementById('audit-filter')?.value || '';
+  const url = '/api/system-events?limit=50' + (filter ? '&type=' + encodeURIComponent(filter) : '');
+  try {
+    const data = await G(url);
+
+    // Populate system activity KPIs
+    if (data?.activity_today) {
+      const a = data.activity_today;
+      const setT = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v ?? '—'; };
+      setT('sa-investigations', a.investigations);
+      setT('sa-hunts', a.hunts);
+      setT('sa-logins', a.logins);
+    }
+
+    const events = data?.events || [];
+    const filtered = filter ? events.filter(ev => ev.event_type === filter) : events;
+
+    if (!filtered.length) {
+      auditEl.innerHTML = '<div class="notif-empty">No events recorded yet</div>';
+      return;
+    }
+
+    const typeIcon = t => {
+      if (t === 'auth')     return '🔐';
+      if (t === 'alert')    return '🔍';
+      if (t === 'case')     return '📋';
+      if (t === 'playbook') return '⚡';
+      if (t === 'hunt')     return '🎯';
+      if (t === 'scan')     return '🖥';
+      if (t === 'settings') return '⚙️';
+      return '•';
+    };
+
+    const statusCls = s => {
+      if (s === 'ok' || s === 'executed') return 'ok';
+      if (s === 'skip' || s === 'skipped') return 'skip';
+      if (s === 'fail' || s === 'failed' || s === 'error') return 'fail';
+      if (s === 'critical') return 'fail';
+      return 'skip';
+    };
+
+    const statusLabel = s => {
+      if (s === 'ok' || s === 'executed') return 'OK';
+      if (s === 'skip' || s === 'skipped') return 'SKIP';
+      if (s === 'fail' || s === 'failed') return 'FAIL';
+      if (s === 'critical') return 'CRIT';
+      if (s === 'error') return 'ERR';
+      return (s || 'INFO').toUpperCase();
+    };
+
+    auditEl.innerHTML = filtered.map(ev => {
+      const ts = new Date(ev.created_at).toLocaleString();
+      const icon = typeIcon(ev.event_type);
+      const sc = statusCls(ev.status);
+      const sl = statusLabel(ev.status);
+      const actor = ev.actor ? ` <span style="color:var(--txt3)">[${e(ev.actor)}]</span>` : '';
+      return `<div class="audit-row">
+        <span class="audit-time">${ts}</span>
+        <span class="audit-action">${icon} ${e(ev.title || ev.description || '—')}${actor}</span>
+        <span class="audit-result ${sc}">${sl}</span>
+      </div>`;
+    }).join('');
+  } catch(err) {
+    auditEl.innerHTML = '<div class="notif-empty">Failed to load audit log</div>';
+  }
 }
 
 async function saveDarkSocSettings() {

@@ -249,6 +249,19 @@ async function initSchema() {
     `CREATE INDEX IF NOT EXISTS idx_notifications_created  ON notifications(created_at DESC)`,
     `CREATE INDEX IF NOT EXISTS idx_notifications_read     ON notifications(read) WHERE read = false`,
 
+    // ── System Events (auth, settings, scans, errors) ─────────
+    `CREATE TABLE IF NOT EXISTS system_events (
+      id          SERIAL PRIMARY KEY,
+      event_type  VARCHAR(30) NOT NULL,
+      actor       VARCHAR(100),
+      description TEXT NOT NULL,
+      status      VARCHAR(20) DEFAULT 'ok',
+      metadata    JSONB DEFAULT '{}',
+      created_at  TIMESTAMPTZ DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_se_created ON system_events(created_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_se_type    ON system_events(event_type)`,
+
     // ── Password reset tokens ──────────────────────────────────
     `CREATE TABLE IF NOT EXISTS password_reset_tokens (
       id         SERIAL PRIMARY KEY,
@@ -1183,6 +1196,9 @@ module.exports = {
   createPasswordResetToken,
   getPasswordResetToken,
   invalidatePasswordResetToken,
+  // System events
+  createSystemEvent,
+  listSystemEvents,
 };
 
 // ── Evidence Files CRUD ──────────────────────────────────
@@ -1274,6 +1290,28 @@ async function invalidatePasswordResetToken(tokenHash) {
     `UPDATE password_reset_tokens SET used_at=NOW() WHERE token_hash=$1`,
     [tokenHash]
   );
+}
+
+// ── System Events ────────────────────────────────────────────
+async function createSystemEvent(eventType, actor, description, status = 'ok', metadata = {}) {
+  const r = await pool.query(
+    `INSERT INTO system_events(event_type, actor, description, status, metadata)
+     VALUES($1,$2,$3,$4,$5) RETURNING *`,
+    [eventType, actor || null, description, status, JSON.stringify(metadata)]
+  );
+  return r.rows[0];
+}
+
+async function listSystemEvents({ limit = 50, offset = 0, eventType } = {}) {
+  const vals = [];
+  const where = eventType ? (vals.push(eventType), [`event_type=$${vals.length}`]) : [];
+  vals.push(limit, offset);
+  const r = await pool.query(
+    `SELECT * FROM system_events ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+     ORDER BY created_at DESC LIMIT $${vals.length - 1} OFFSET $${vals.length}`,
+    vals
+  );
+  return r.rows;
 }
 
 // ── Lateral Movement Dedup ───────────────────────────────────

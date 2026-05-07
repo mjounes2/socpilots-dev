@@ -262,10 +262,14 @@ app.post('/api/login', async (req, res) => {
     const dbUser = await db.getUserByUsername(uname);
     if (dbUser) {
       const valid = bcrypt.compareSync(password, dbUser.password_hash);
-      if (!valid) return res.status(401).json({ error: 'Invalid username or password' });
+      if (!valid) {
+        db.createSystemEvent('auth', uname, `Failed login attempt for user ${uname}`, 'fail', { ip: req.ip }).catch(() => {});
+        return res.status(401).json({ error: 'Invalid username or password' });
+      }
       await db.updateLastLogin(uname);
       const token = mkToken(dbUser.username, dbUser.role, dbUser.display_name);
       console.log(`[LOGIN] ${dbUser.username} (db, role=${dbUser.role})`);
+      db.createSystemEvent('auth', dbUser.username, `User ${dbUser.username} logged in (role: ${dbUser.role})`, 'ok', { ip: req.ip }).catch(() => {});
       return res.json({ token, username: dbUser.username, role: dbUser.role, display_name: dbUser.display_name });
     }
   } catch(e) {
@@ -276,14 +280,19 @@ app.post('/api/login', async (req, res) => {
   const u = ENV_USERS.find(u =>
     u.username.toLowerCase() === uname && u.password === password
   );
-  if (!u) return res.status(401).json({ error: 'Invalid username or password' });
+  if (!u) {
+    db.createSystemEvent('auth', uname, `Failed login attempt for user ${uname}`, 'fail', { ip: req.ip }).catch(() => {});
+    return res.status(401).json({ error: 'Invalid username or password' });
+  }
   const token = mkToken(u.username, u.role, u.username);
   console.log(`[LOGIN] ${u.username} (env, role=${u.role})`);
+  db.createSystemEvent('auth', u.username, `User ${u.username} logged in (role: ${u.role})`, 'ok', { ip: req.ip }).catch(() => {});
   res.json({ token, username: u.username, role: u.role, display_name: u.username });
 });
 
 app.post('/api/logout', authMW, (req, res) => {
   sessions.delete((req.headers.authorization || '').replace('Bearer ', '').trim());
+  db.createSystemEvent('auth', req.user.username, `User ${req.user.username} logged out`, 'ok').catch(() => {});
   res.json({ success: true });
 });
 
@@ -1115,7 +1124,12 @@ app.post('/api/settings', authMW, async (req, res) => {
     for (const [k, v] of Object.entries(updates)) {
       await db.setSetting(k, v, req.user.username);
     }
-    res.json({ ok: true, updated: Object.keys(updates) });
+    const keys = Object.keys(updates);
+    const desc = keys.some(k => k.startsWith('darksoc'))
+      ? `Dark SOC settings updated by ${req.user.username}: ${keys.join(', ')}`
+      : `Settings updated by ${req.user.username}: ${keys.join(', ')}`;
+    db.createSystemEvent('settings', req.user.username, desc, 'ok', { keys, values: updates }).catch(() => {});
+    res.json({ ok: true, updated: keys });
   } catch(e) {
     res.status(503).json({ error: e.message });
   }
@@ -1298,6 +1312,77 @@ app.get('/api/darksoc/status', authMW, async (req, res) => {
       execution_stats:                stats,
     });
   } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── SYSTEM EVENTS — merged audit feed ──
+app.get('/api/system-events', authMW, async (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit || '50'), 100);
+  try {
+    const [sysEvents, notifications, executions] = await Promise.all([
+      db.listSystemEvents({ limit }),
+      db.pool.query(`SELECT * FROM notifications ORDER BY created_at DESC LIMIT $1`, [limit]).then(r => r.rows),
+      db.listPlaybookExecutions({ limit: 20 }),
+    ]);
+
+    const merged = [
+      ...sysEvents.map(e => ({
+        id:          `se_${e.id}`,
+        source:      'system',
+        event_type:  e.event_type,
+        title:       e.description,
+        description: e.description,
+        status:      e.status,
+        actor:       e.actor,
+        metadata:    e.metadata,
+        created_at:  e.created_at,
+      })),
+      ...notifications.map(n => ({
+        id:          `notif_${n.id}`,
+        source:      'notification',
+        event_type:  (n.type === 'hunt' || n.type === 'threat_hunt') ? 'hunt'
+                   : n.type === 'case'  ? 'case'
+                   : 'alert',
+        title:       n.title,
+        description: n.message,
+        status:      n.severity === 'critical' ? 'critical' : 'ok',
+        actor:       n.username,
+        metadata:    n.metadata,
+        created_at:  n.created_at,
+      })),
+      ...executions.map(e => ({
+        id:          `pb_${e.id}`,
+        source:      'playbook',
+        event_type:  'playbook',
+        title:       `Playbook: ${e.playbook_name || '?'} — ${e.agent || '?'}`,
+        description: `Rule ${e.rule_id || '?'} (${e.severity || '?'}) — Actions: ${(e.actions_taken || []).join(', ') || 'none'}`,
+        status:      e.outcome === 'executed' ? 'ok' : e.outcome === 'skipped' ? 'skip' : 'fail',
+        actor:       'darksoc',
+        metadata:    { playbook_name: e.playbook_name, agent: e.agent, rule_id: e.rule_id, outcome: e.outcome },
+        created_at:  e.created_at,
+      })),
+    ].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, limit);
+
+    // Platform-wide activity stats
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const todayISO = today.toISOString();
+    const [invCount, huntCount, loginCount] = await Promise.all([
+      db.pool.query(`SELECT COUNT(*) AS cnt FROM investigations WHERE created_at >= $1`, [todayISO]),
+      db.pool.query(`SELECT COUNT(*) AS cnt FROM notifications WHERE type='hunt' AND created_at >= $1`, [todayISO]),
+      db.pool.query(`SELECT COUNT(*) AS cnt FROM system_events WHERE event_type='auth' AND status='ok' AND created_at >= $1`, [todayISO]),
+    ]);
+
+    res.json({
+      events: merged,
+      activity_today: {
+        investigations: parseInt(invCount.rows[0]?.cnt || 0),
+        hunts:          parseInt(huntCount.rows[0]?.cnt || 0),
+        logins:         parseInt(loginCount.rows[0]?.cnt || 0),
+      },
+    });
+  } catch(e) {
+    console.error('[system-events]', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ── AUTO-TRIAGE WORKER ──
@@ -2149,9 +2234,11 @@ app.post('/api/assets/scan', authMW, async (req, res) => {
         }
         await db.finishScanJob(job.id, hosts.length, null);
         console.log(`[SCAN] Job ${job.id} complete — ${hosts.length} hosts, ${Object.keys(wazuhAgentMap).length} Wazuh agents`);
+        db.createSystemEvent('scan', job.started_by || 'system', `Asset scan completed: ${hosts.length} hosts discovered`, 'ok', { job_id: job.id, hosts_found: hosts.length }).catch(() => {});
       } catch(e) {
         console.error(`[SCAN] Job ${job.id} failed:`, e.message);
         await db.finishScanJob(job.id, 0, e.message);
+        db.createSystemEvent('scan', job.started_by || 'system', `Asset scan failed: ${e.message}`, 'fail', { job_id: job.id }).catch(() => {});
       }
     })();
   } catch(e) { res.status(500).json({ error: e.message }); }
