@@ -2319,7 +2319,7 @@ const LOAD_MAP={dashboard:loadDashboard,agents:loadAgents,alerts:loadAlerts,rule
   assets:()=>{loadSubnets();loadAssets();loadScanStatus();},
   ueba:()=>{loadUebaStats();loadUebaAnomalies();},
   correlate:()=>{loadUebaCorrelations();loadAlertGroups();renderCorrLiveFeed();},
-  darksoc:loadDarkSocPage,
+  darksoc:()=>loadDarkSocPage(),
   langchain:()=>{lcCheckHealth();},
   settings:loadSmtpSettings};
 
