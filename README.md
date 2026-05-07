@@ -81,10 +81,14 @@ Access the UI at `http://YOUR_SERVER_IP:3000`
 
 | Directory | Description |
 |---|---|
-| `Socpilots/` | Main web UI (Node.js + Vue) |
+| `Socpilots/` | Main web UI (Node.js + Express) + PostgreSQL schema |
 | `automation/` | n8n automation engine |
 | `MCP-WAZUH/` | Wazuh AI bridge (MCP server) |
 | `thehive-mcp-new/` | TheHive MCP server |
+| `langchain-agent/` | ReAct investigation agent with Shodan/VT/SIEM tools |
+| `services/knowledge-ingestion/` | File ingestion service — PDF/Excel/CSV/OCR extraction + Qdrant embedding |
+| `services/rag-retrieval/` | RAG vector search over knowledge base |
+| `services/scanner/` | IOC enrichment scanner (AbuseIPDB, VirusTotal) |
 
 ## Security Notes
 
