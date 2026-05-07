@@ -337,6 +337,23 @@ async function initSchema() {
     `CREATE INDEX IF NOT EXISTS idx_lmc_user_key ON lateral_movement_cases(user_key)`,
     `CREATE INDEX IF NOT EXISTS idx_lmc_created  ON lateral_movement_cases(created_at DESC)`,
 
+    // ── Alert deduplication groups ──────────────────────────────
+    `CREATE TABLE IF NOT EXISTS alert_groups (
+      id          SERIAL PRIMARY KEY,
+      src_ip      VARCHAR(50),
+      rule_id     VARCHAR(50),
+      agent       VARCHAR(100),
+      count       INT DEFAULT 1,
+      first_seen  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      last_seen   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      window_end  TIMESTAMPTZ NOT NULL
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_ag_lookup ON alert_groups(src_ip, rule_id, window_end)`,
+
+    // Add composite_risk and group_id to investigations
+    `ALTER TABLE investigations ADD COLUMN IF NOT EXISTS composite_risk INT`,
+    `ALTER TABLE investigations ADD COLUMN IF NOT EXISTS group_id INT REFERENCES alert_groups(id)`,
+
     // ── Seed Default Playbooks (5 built-in) ────────────────────
     `INSERT INTO playbooks(name,description,mitre_techniques,min_rule_level,fp_confidence_max,actions,require_consensus,enabled)
      VALUES
@@ -391,13 +408,53 @@ async function initSchema() {
   console.log('[DB] Schema initialized');
 }
 
+// ── Alert Groups (deduplication) CRUD ────────────────────
+async function upsertAlertGroup(srcIp, ruleId, agent) {
+  const windowMinutes = 5;
+  const now = new Date();
+  // Check for existing open group within the 5-minute window
+  const existing = await pool.query(
+    `SELECT id, count FROM alert_groups
+     WHERE src_ip=$1 AND rule_id=$2 AND window_end > $3
+     ORDER BY window_end DESC LIMIT 1`,
+    [srcIp || null, ruleId || null, now]
+  );
+  if (existing.rows.length) {
+    const row = existing.rows[0];
+    await pool.query(
+      `UPDATE alert_groups SET count=count+1, last_seen=$1 WHERE id=$2`,
+      [now, row.id]
+    );
+    return { id: row.id, count: row.count + 1, is_new: false };
+  }
+  const windowEnd = new Date(now.getTime() + windowMinutes * 60_000);
+  const r = await pool.query(
+    `INSERT INTO alert_groups(src_ip, rule_id, agent, count, first_seen, last_seen, window_end)
+     VALUES ($1,$2,$3,1,$4,$4,$5) RETURNING id`,
+    [srcIp || null, ruleId || null, agent || null, now, windowEnd]
+  );
+  return { id: r.rows[0].id, count: 1, is_new: true };
+}
+
+async function listAlertGroups({ limit = 50, offset = 0 } = {}) {
+  const r = await pool.query(
+    `SELECT ag.*, COUNT(i.id)::int AS investigation_count
+     FROM alert_groups ag
+     LEFT JOIN investigations i ON i.group_id = ag.id
+     GROUP BY ag.id
+     ORDER BY ag.last_seen DESC LIMIT $1 OFFSET $2`,
+    [limit, offset]
+  );
+  return r.rows;
+}
+
 // ── Investigations CRUD ──────────────────────────────────
 async function saveInvestigation(data) {
   const q = `INSERT INTO investigations
     (alert_key, alert_id, rule_id, rule_level, severity, agent, src_ip,
      description, mitre, timestamp, report, report_short, created_by,
-     auto_triaged, duration_ms, raw_alert)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+     auto_triaged, duration_ms, raw_alert, composite_risk, group_id)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
     RETURNING id, created_at`;
 
   const alertKey = `${data.ruleId}_${data.timestamp}_${data.agent}_${data.srcIp||''}`;
@@ -420,6 +477,8 @@ async function saveInvestigation(data) {
     data.autoTriaged || false,
     data.durationMs || 0,
     JSON.stringify(data.rawAlert || {}),
+    data.compositeRisk != null ? parseInt(data.compositeRisk) : null,
+    data.groupId || null,
   ];
 
   const r = await pool.query(q, vals);
@@ -1199,6 +1258,9 @@ module.exports = {
   // System events
   createSystemEvent,
   listSystemEvents,
+  // Alert deduplication groups
+  upsertAlertGroup,
+  listAlertGroups,
 };
 
 // ── Evidence Files CRUD ──────────────────────────────────

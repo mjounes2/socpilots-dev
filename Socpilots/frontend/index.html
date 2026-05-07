@@ -7,6 +7,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"></script>
+<script src="/socket.io/socket.io.js"></script>
 <style>
 /* ───────────────────────────────────────────────────────
    SOC PILOTS v3 — Full Redesign
@@ -1438,6 +1439,9 @@ sshd: Failed" style="min-height:80px"></textarea></div>
         <button class="btn btn-sm ueba-fbtn" id="filter-User"      onclick="uebaFilter('User')">👤 Users</button>
         <button class="btn btn-sm ueba-fbtn" id="filter-Host"      onclick="uebaFilter('Host')">🖥 Hosts</button>
         <button class="btn btn-sm ueba-fbtn" id="filter-IP"        onclick="uebaFilter('IP')">🌐 IPs</button>
+        <button class="btn btn-sm ueba-fbtn" id="filter-tactic-lateral_movement"     onclick="uebaFilter('tactic:lateral_movement')"     style="color:#ffeb3b66;border-color:#ffeb3b33">Lat.Move</button>
+        <button class="btn btn-sm ueba-fbtn" id="filter-tactic-impossible_travel"    onclick="uebaFilter('tactic:impossible_travel')"    style="color:#ff174466;border-color:#ff174433">Init.Access</button>
+        <button class="btn btn-sm ueba-fbtn" id="filter-tactic-privilege_escalation" onclick="uebaFilter('tactic:privilege_escalation')" style="color:#ff6d0066;border-color:#ff6d0033">Priv.Esc</button>
         <input  id="ueba-graph-search" class="fi" placeholder="search…" style="width:100px;font-size:10px;padding:3px 7px" oninput="uebaSearchNodes(this.value)">
         <button class="btn btn-sm btn-h" onclick="uebaResetZoom()">⊙ Reset</button>
         <button class="btn btn-sm btn-p" onclick="uebaExpandGraph()">⛶ Fullscreen</button>
@@ -4984,6 +4988,29 @@ async function loadEntityGraph(){
 }
 
 // ── D3 Force Graph ────────────────────────────────────────────
+// ── MITRE ATT&CK tactic colors and flag mapping ───────────────────
+const MITRE_TACTIC_COLORS={
+  'lateral_movement':    {tactic:'Lateral Movement',  color:'#ffeb3b', alpha:.7},
+  'impossible_travel':   {tactic:'Initial Access',    color:'#ff1744', alpha:.8},
+  'new_host_access':     {tactic:'Initial Access',    color:'#ff1744', alpha:.6},
+  'privilege_escalation':{tactic:'Priv. Escalation',  color:'#ff6d00', alpha:.8},
+  'new_process':         {tactic:'Execution',         color:'#ce93d8', alpha:.7},
+  'rare_process':        {tactic:'Execution',         color:'#ce93d8', alpha:.6},
+  'after_hours':         {tactic:'Defense Evasion',   color:'#26c6da', alpha:.65},
+  'high_frequency':      {tactic:'Impact',            color:'#ef5350', alpha:.7},
+  'shared_credentials':  {tactic:'Credential Access', color:'#f06292', alpha:.75},
+  'new_connection':      {tactic:'Discovery',         color:'#aed581', alpha:.65},
+};
+function flagsToTacticColor(flags){
+  if(!flags||!flags.length)return null;
+  for(const f of flags){ if(MITRE_TACTIC_COLORS[f])return MITRE_TACTIC_COLORS[f]; }
+  return null;
+}
+function flagsToTacticName(flags){
+  const t=flagsToTacticColor(flags);
+  return t?t.tactic:null;
+}
+
 function renderForceGraphD3(container, allNodes, allEdges, isFullscreen){
   if(typeof d3==='undefined'){ container.innerHTML='<div style="color:#ff9800;padding:20px;font-size:11px;font-family:var(--fm)">D3.js not loaded — check network.</div>'; return; }
   container.innerHTML='';
@@ -4999,6 +5026,15 @@ function renderForceGraphD3(container, allNodes, allEdges, isFullscreen){
   };
   const nodeR=n=>Math.max(8,Math.min(26, 8+(n.risk/100)*10+Math.log1p(n.events||0)*2));
 
+  const edgeColor=e=>{
+    if(e.deviation>=70)return'rgba(255,23,68,.70)';
+    const tc=flagsToTacticColor(e.flags);
+    if(tc)return tc.color.replace(/^#/,'')!==''?`${tc.color}${Math.round(tc.alpha*255).toString(16).padStart(2,'0')}`:'rgba(138,176,208,.25)';
+    if(e.deviation>=40)return'rgba(255,152,0,.55)';
+    return'rgba(138,176,208,.18)';
+  };
+  const edgeWidth=e=>e.deviation>=70?2.5:flagsToTacticColor(e.flags)?2:1.5;
+
   // Deep-copy nodes so D3 can mutate x/y without corrupting source data
   const nodes=allNodes.map(n=>({...n}));
   const edges=allEdges.map(e=>({...e}));
@@ -5007,11 +5043,18 @@ function renderForceGraphD3(container, allNodes, allEdges, isFullscreen){
     .attr('width','100%').attr('height','100%')
     .style('display','block').style('cursor','grab');
 
-  // Defs — arrowhead marker
+  // Defs — arrowhead markers (default + per-tactic)
   const defs=svg.append('defs');
-  defs.append('marker').attr('id','arr').attr('viewBox','0 -4 8 8').attr('refX',8).attr('refY',0)
+  const addMarker=(id,color)=>defs.append('marker').attr('id',id).attr('viewBox','0 -4 8 8').attr('refX',8).attr('refY',0)
     .attr('markerWidth',6).attr('markerHeight',6).attr('orient','auto')
-    .append('path').attr('d','M0,-4L8,0L0,4').attr('fill','rgba(138,176,208,.4)');
+    .append('path').attr('d','M0,-4L8,0L0,4').attr('fill',color);
+  addMarker('arr','rgba(138,176,208,.4)');
+  addMarker('arr-red','rgba(255,23,68,.7)');
+  const tacticMarkers={};
+  Object.entries(MITRE_TACTIC_COLORS).forEach(([flag,{color,alpha}])=>{
+    const mk=`arr-${flag}`;
+    if(!tacticMarkers[mk]){ addMarker(mk,color+Math.round(alpha*255).toString(16).padStart(2,'0')); tacticMarkers[mk]=true; }
+  });
 
   const g=svg.append('g');
   const zoom=d3.zoom().scaleExtent([0.08,10])
@@ -5023,16 +5066,25 @@ function renderForceGraphD3(container, allNodes, allEdges, isFullscreen){
   const labelG=g.append('g');
   const nodeG=g.append('g');
 
+  const edgeMarker=e=>{
+    if(e.deviation>=70)return'url(#arr-red)';
+    const flags=e.flags||[];
+    for(const f of flags){ if(MITRE_TACTIC_COLORS[f])return`url(#arr-${f})`; }
+    return'url(#arr)';
+  };
+
   // Links
   const link=linkG.selectAll('line').data(edges).join('line')
-    .attr('stroke',e=>e.deviation>=70?'rgba(255,23,68,.65)':e.deviation>=40?'rgba(255,152,0,.55)':'rgba(138,176,208,.18)')
-    .attr('stroke-width',e=>e.deviation>=70?2.5:1.5)
-    .attr('marker-end','url(#arr)')
+    .attr('stroke',edgeColor)
+    .attr('stroke-width',edgeWidth)
+    .attr('marker-end',edgeMarker)
     .attr('class','ueba-edge');
 
-  // Edge labels (rel type, shown at mid-point)
+  // Edge labels (rel type + tactic if available)
   const edgeLbl=labelG.selectAll('text').data(edges).join('text')
-    .text(e=>e.rel).attr('fill','#3a5f7a').attr('font-size',8)
+    .text(e=>{ const t=flagsToTacticName(e.flags); return t?`${e.rel} · ${t}`:e.rel; })
+    .attr('fill',e=>{ const tc=flagsToTacticColor(e.flags); return tc?tc.color+'99':'#3a5f7a'; })
+    .attr('font-size',8)
     .attr('font-family','monospace').attr('text-anchor','middle')
     .style('pointer-events','none').style('user-select','none');
 
@@ -5079,7 +5131,7 @@ function renderForceGraphD3(container, allNodes, allEdges, isFullscreen){
     .attr('font-family','monospace').attr('text-anchor','middle')
     .style('pointer-events','none').style('user-select','none');
 
-  // Legend
+  // Legend — node types (bottom-left) + tactic edge colors (bottom-right)
   const legData=[
     {l:'User',c:'#00e5ff'},{l:'Host',c:'#66bb6a'},{l:'IP',c:'#ff9800'},
     {l:'Process',c:'#ab47bc'},{l:'Risk ≥80',c:'#ff1744'},
@@ -5091,6 +5143,17 @@ function renderForceGraphD3(container, allNodes, allEdges, isFullscreen){
       .attr('fill',d.c+'33').attr('stroke',d.c).attr('stroke-width',1.5);
     lg.append('text').text(d.l).attr('x',13).attr('y',4)
       .attr('fill',d.c+'cc').attr('font-size',9).attr('font-family','monospace');
+  });
+  // Tactic edge legend (only show tactics present in current edges)
+  const tacticsSeen=[...new Set(edges.flatMap(e=>e.flags||[]).filter(f=>MITRE_TACTIC_COLORS[f]))]
+    .map(f=>MITRE_TACTIC_COLORS[f]).filter((v,i,a)=>a.findIndex(x=>x.tactic===v.tactic)===i);
+  const tleg=svg.append('g').attr('transform',`translate(10,${H-36})`);
+  tacticsSeen.slice(0,5).forEach((tc,i)=>{
+    const tg=tleg.append('g').attr('transform',`translate(${i*110},0)`);
+    tg.append('line').attr('x1',0).attr('y1',0).attr('x2',18).attr('y2',0)
+      .attr('stroke',tc.color).attr('stroke-width',2);
+    tg.append('text').text(tc.tactic).attr('x',22).attr('y',4)
+      .attr('fill',tc.color+'cc').attr('font-size',8).attr('font-family','monospace');
   });
 
   // Force simulation
@@ -5126,6 +5189,7 @@ function renderForceGraphD3(container, allNodes, allEdges, isFullscreen){
         <span style="color:var(--txt2)">${d.last_seen?new Date(d.last_seen).toLocaleString():'—'}</span>
         ${d.last_anomaly?`<span style="color:#8ab0d0">Last Anomaly</span><span style="color:#ff9800">${new Date(d.last_anomaly).toLocaleString()}</span>`:''}
       </div>
+      ${(d.flags&&d.flags.length)?`<div style="margin-top:7px;display:flex;flex-wrap:wrap;gap:3px">${d.flags.map(f=>{const tc=MITRE_TACTIC_COLORS[f];return`<span style="font-size:8px;padding:1px 5px;border-radius:3px;background:${tc?tc.color+'22':'rgba(138,176,208,.1)'};color:${tc?tc.color:'#8ab0d0'};border:1px solid ${tc?tc.color+'44':'var(--b1)'}">${f.replace(/_/g,' ')}</span>`;}).join('')}</div>`:''}
       <div style="margin-top:7px;font-size:9px;color:var(--txt3)">Click to highlight · Dbl-click to explore</div>`;
     t.style.display='block';
     moveTip(event);
@@ -5182,6 +5246,12 @@ function uebaFilter(type, isFullscreen=false){
     const ids=new Set(nodes.filter(n=>n.risk>=50).map(n=>n.id));
     fn=nodes.filter(n=>ids.has(n.id));
     fe=edges.filter(e=>ids.has(e.source)&&ids.has(e.target));
+  } else if(type.startsWith('tactic:')){
+    const flagName=type.slice(7);
+    // Show only edges with this tactic flag + their connected nodes
+    fe=edges.filter(e=>(e.flags||[]).includes(flagName));
+    const ids=new Set(fe.flatMap(e=>[e.source,e.target]));
+    fn=nodes.filter(n=>ids.has(n.id));
   } else if(type!=='all'){
     const typeIds=new Set(nodes.filter(n=>n.type===type).map(n=>n.id));
     fe=edges.filter(e=>typeIds.has(e.source)||typeIds.has(e.target));
@@ -5193,10 +5263,12 @@ function uebaFilter(type, isFullscreen=false){
   window._uebaGraph._filteredEdges=fe;
 
   const prefix=isFullscreen?'fs-filter-':'filter-';
-  ['all','high-risk','User','Host','IP','Process'].forEach(t=>{
+  const allBtns=['all','high-risk','User','Host','IP','Process','tactic-lateral_movement','tactic-impossible_travel','tactic-privilege_escalation'];
+  allBtns.forEach(t=>{
     const b=document.getElementById(prefix+t);
     if(!b)return;
-    b.classList.toggle('active-filter',t===type);
+    const match=t==='all'?type==='all':type===t||type===t.replace('tactic-','tactic:');
+    b.classList.toggle('active-filter',match);
   });
 
   const cid=isFullscreen?'ueba-fs-container':'ueba-force-container';
@@ -5410,16 +5482,8 @@ async function pollNotifCount() {
   try {
     const data = await G('/api/notifications/count').catch(()=>null);
     if (!data) return;
-    const badge = document.getElementById('notif-badge');
-    const count = data.unread || 0;
-    if (count > 0) {
-      badge.textContent = count > 99 ? '99+' : count;
-      badge.classList.remove('hidden');
-    } else {
-      badge.classList.add('hidden');
-    }
-    const countEl = document.getElementById('notif-unread-count');
-    if (countEl) countEl.textContent = count > 0 ? `(${count})` : '';
+    _notifCount = data.unread || 0;
+    updateNotifBadge(_notifCount);
   } catch(e) {}
 }
 
@@ -5435,6 +5499,20 @@ async function markAllNotifRead() {
   document.getElementById('notif-drop').classList.remove('open');
   _notifOpen = false;
   pollNotifCount();
+}
+
+let _notifCount = 0;
+function updateNotifBadge(count){
+  const badge = document.getElementById('notif-badge');
+  if(!badge) return;
+  if(count>0){
+    badge.textContent = count > 99 ? '99+' : count;
+    badge.classList.remove('hidden');
+  } else {
+    badge.classList.add('hidden');
+  }
+  const countEl = document.getElementById('notif-unread-count');
+  if(countEl) countEl.textContent = count>0?`(${count})`:'';
 }
 
 function e(s){ const d=document.createElement('div');d.textContent=s;return d.innerHTML; }
@@ -5922,8 +6000,59 @@ document.addEventListener('DOMContentLoaded', () => {
   setTimeout(() => {
     applyRoleUI();
     pollNotifCount();
-  }, 500);
+    initSocketIO();
+  }, 800);
 });
+
+// ── Socket.IO real-time event feed ───────────────────────────────
+let _socket = null;
+function initSocketIO(){
+  const tok = sessionStorage.getItem('soc_token');
+  if(!tok || typeof io === 'undefined') return;
+  _socket = io({ auth:{ token: tok }, reconnectionAttempts: 5, transports:['websocket','polling'] });
+  _socket.on('connect', ()=> console.log('[WS] Connected:', _socket.id));
+  _socket.on('connect_error', err=> console.warn('[WS] Error:', err.message));
+
+  _socket.on('investigation:new', d=>{
+    _notifCount = (_notifCount||0)+1;
+    updateNotifBadge(_notifCount);
+    const sev = d.severity||'medium';
+    const cr  = d.composite_risk!=null ? ` · Risk ${d.composite_risk}` : '';
+    const gc  = d.group_count>1 ? ` · Group ×${d.group_count}` : '';
+    showLiveToast('investigation', `Rule ${d.ruleId||'?'} on ${d.agent||'?'} — ${sev}${cr}${gc}`, sev);
+  });
+
+  _socket.on('correlation:found', d=>{
+    _notifCount = (_notifCount||0)+1;
+    updateNotifBadge(_notifCount);
+    showLiveToast('correlation',
+      `UEBA ↔ SIEM: ${d.entity} (risk ${d.ueba_risk}) — ${(d.correlation_type||'').replace(/_/g,' ')}`,
+      d.ueba_risk>=70?'critical':'warning');
+  });
+
+  _socket.on('darksoc:action', d=>{
+    _notifCount = (_notifCount||0)+1;
+    updateNotifBadge(_notifCount);
+    showLiveToast('darksoc', `Dark SOC: ${d.playbook} — ${(d.actions_taken||[]).join(', ')||'executed'}`, 'warning');
+  });
+}
+
+function showLiveToast(type, msg, severity){
+  const colors = { critical:'#ff1744', warning:'#ff9800', medium:'#ffab00', low:'#00e676', investigation:'#00e5ff', correlation:'#f06292', darksoc:'#d500f9' };
+  const icons  = { investigation:'⚡', correlation:'🔗', darksoc:'🤖', critical:'🔴', warning:'🟡' };
+  const col    = colors[severity] || colors[type] || '#8ab0d0';
+  const icon   = icons[type] || icons[severity] || '●';
+
+  const wrap = document.getElementById('live-toast-wrap');
+  if(!wrap) return;
+  const t = document.createElement('div');
+  t.className = 'live-toast';
+  t.style.cssText = `background:var(--bg3);border:1px solid ${col}44;border-left:3px solid ${col};border-radius:5px;padding:8px 12px;font-size:10px;font-family:var(--fm);color:var(--txt);max-width:340px;box-shadow:0 4px 16px rgba(0,0,0,.5);display:flex;align-items:flex-start;gap:8px;cursor:pointer`;
+  t.innerHTML = `<span style="font-size:14px;line-height:1">${icon}</span><div style="flex:1"><div style="color:${col};font-weight:600;margin-bottom:1px;text-transform:capitalize">${type.replace(/_/g,' ')}</div><div style="color:var(--txt2);line-height:1.4">${esc(msg)}</div></div><span style="color:var(--txt3);cursor:pointer;font-size:12px;align-self:flex-start" onclick="this.parentElement.remove()">✕</span>`;
+  t.addEventListener('click', e=>{ if(e.target.tagName!=='SPAN') t.style.opacity='0'; setTimeout(()=>t.remove(),200); });
+  wrap.appendChild(t);
+  setTimeout(()=>{ t.style.transition='opacity .5s'; t.style.opacity='0'; setTimeout(()=>t.remove(),500); }, 7000);
+}
 
 // UEBA graph resize handler (debounced)
 let _uebaResizeTimer = null;
@@ -5959,6 +6088,9 @@ window.addEventListener('resize', () => {
     <button class="btn btn-sm ueba-fbtn" id="fs-filter-User"      onclick="uebaFilter('User',true)">👤 Users</button>
     <button class="btn btn-sm ueba-fbtn" id="fs-filter-Host"      onclick="uebaFilter('Host',true)">🖥 Hosts</button>
     <button class="btn btn-sm ueba-fbtn" id="fs-filter-IP"        onclick="uebaFilter('IP',true)">🌐 IPs</button>
+    <button class="btn btn-sm ueba-fbtn" id="fs-filter-tactic-lateral_movement"     onclick="uebaFilter('tactic:lateral_movement',true)"     style="color:#ffeb3b66;border-color:#ffeb3b33">Lat.Move</button>
+    <button class="btn btn-sm ueba-fbtn" id="fs-filter-tactic-impossible_travel"    onclick="uebaFilter('tactic:impossible_travel',true)"    style="color:#ff174466;border-color:#ff174433">Init.Access</button>
+    <button class="btn btn-sm ueba-fbtn" id="fs-filter-tactic-privilege_escalation" onclick="uebaFilter('tactic:privilege_escalation',true)" style="color:#ff6d0066;border-color:#ff6d0033">Priv.Esc</button>
     <input  id="ueba-fs-search" class="fi" placeholder="search…" style="width:110px;font-size:10px;padding:3px 7px" oninput="uebaSearchNodes(this.value,true)">
     <button class="btn btn-sm btn-h" onclick="uebaResetZoom(true)">⊙ Reset</button>
     <button class="btn btn-sm btn-p" onclick="uebaCollapseGraph()">✕ Close</button>
@@ -5970,5 +6102,13 @@ window.addEventListener('resize', () => {
 .ueba-fbtn{background:rgba(255,255,255,.04);color:var(--txt2);border:1px solid var(--b1)}
 .ueba-fbtn:hover,.ueba-fbtn.active-filter{background:rgba(0,229,255,.15);color:var(--c);border-color:rgba(0,229,255,.3)}
 </style>
+
+<!-- Live toast notification container (Socket.IO events) -->
+<div id="live-toast-wrap" style="position:fixed;bottom:20px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:8px;pointer-events:none">
+  <style>
+  #live-toast-wrap .live-toast{ pointer-events:all; animation:toastIn .25s ease; }
+  @keyframes toastIn{ from{opacity:0;transform:translateX(40px)} to{opacity:1;transform:none} }
+  </style>
+</div>
 </body>
 </html>

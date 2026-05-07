@@ -3,6 +3,7 @@
 // OpenSearch (Wazuh) + SP-CM (direct) + n8n (AI/Hunt/Rules)
 // ============================================================
 const express   = require('express');
+const http      = require('http');
 const axios     = require('axios');
 const https     = require('https');
 const crypto    = require('crypto');
@@ -11,14 +12,17 @@ const fs        = require('fs');
 const bcrypt    = require('bcryptjs');
 const multer    = require('multer');
 const FormData  = require('form-data');
+const { Server: IOServer } = require('socket.io');
 require('dotenv').config({ path: path.join(__dirname, '../../.env') });
 const db       = require('./db');
 const ueba     = require('./neo4j');
 const playbook = require('./playbook-engine');
 const email    = require('./email-service');
 
-const app  = express();
-const PORT = process.env.PORT || 3000;
+const app        = express();
+const httpServer = http.createServer(app);
+const io         = new IOServer(httpServer, { cors: { origin: false } });
+const PORT       = process.env.PORT || 3000;
 app.use(express.json({ limit: '10mb' }));
 
 // ─── EVIDENCE FILE UPLOAD (multer) ─────────────────────────
@@ -118,6 +122,94 @@ function requireRole(...roles) {
     if (userLevel < required) return res.status(403).json({ error: 'Insufficient permissions' });
     next();
   };
+}
+
+// ── Socket.IO auth: require valid session token in handshake ──
+io.use((socket, next) => {
+  const token = (socket.handshake.auth?.token || '').trim();
+  if (!token) return next(new Error('Authentication required'));
+  const s = sessions.get(token);
+  if (!s || s.exp < Date.now()) { sessions.delete(token); return next(new Error('Session expired')); }
+  socket.user = s;
+  next();
+});
+
+io.on('connection', socket => {
+  console.log(`[WS] ${socket.user?.username} connected`);
+  socket.on('disconnect', () => console.log(`[WS] ${socket.user?.username} disconnected`));
+});
+
+// ── Composite risk score: TI(40%) + UEBA(30%) + SIEM(20%) + Freq(10%) ──
+async function computeCompositeRisk({ level = 0, severity = 'low', srcIp, agent, groupCount = 1 }) {
+  const siemScore = Math.min(100, (level / 15) * 100);
+  const freqScore = Math.min(100, (Math.log1p(groupCount) / Math.log1p(50)) * 100);
+  const TI_MAP    = { critical: 100, high: 75, medium: 50, low: 25, unknown: 0 };
+  const tiScore   = TI_MAP[severity] || 0;
+
+  let uebaScore = 0;
+  try {
+    const candidates = [srcIp, agent].filter(e => e && e !== 'N/A' && e !== 'unknown');
+    for (const entity of candidates) {
+      const profile = await ueba.getUserProfile(entity).catch(() => null);
+      if (profile?.risk_score > uebaScore) uebaScore = profile.risk_score;
+    }
+  } catch(e) { /* UEBA unavailable */ }
+
+  return Math.round(Math.min(100, tiScore * 0.4 + uebaScore * 0.3 + siemScore * 0.2 + freqScore * 0.1));
+}
+
+// ── UEBA ↔ SIEM cross-correlation (runs async after investigation saved) ──
+function _correlationType(alert, profile) {
+  const flags = (profile.recent_logins || []).flatMap(l => l.flags || []);
+  const groups = (alert.groups || '').toLowerCase();
+  if (flags.includes('impossible_travel') && (groups.includes('vpn') || groups.includes('pam')))
+    return 'compromised_credentials';
+  if (flags.includes('lateral_movement') && (groups.includes('sshd') || groups.includes('authentication')))
+    return 'lateral_movement_brute_force';
+  if (flags.includes('privilege_escalation'))
+    return 'privilege_escalation';
+  if (flags.includes('after_hours'))
+    return 'after_hours_activity';
+  if (flags.includes('shared_credentials'))
+    return 'shared_credentials';
+  return 'behavioral_anomaly';
+}
+
+async function runUebaCorrelation(invId, alert) {
+  try {
+    const candidates = [alert.srcIp, alert.agent].filter(e => e && e !== 'N/A' && e !== 'unknown');
+    for (const entity of candidates) {
+      const profile = await ueba.getUserProfile(entity).catch(() => null);
+      if (!profile) continue;
+      const uebaRisk = profile.risk_score || 0;
+      const uebaAnomalies = profile.anomaly_count || 0;
+      if (uebaAnomalies === 0 && uebaRisk < 30) continue;
+
+      const correlation = {
+        investigation_id: invId,
+        entity,
+        entity_type:      profile.entity_type,
+        ueba_risk:        uebaRisk,
+        ueba_anomalies:   uebaAnomalies,
+        siem_rule:        alert.ruleId,
+        siem_severity:    alert.severity,
+        mitre:            alert.mitre || [],
+        mitre_tactic:     alert.mitreTactic || [],
+        correlation_type: _correlationType(alert, profile),
+        timestamp:        new Date().toISOString(),
+      };
+
+      io.emit('correlation:found', correlation);
+      db.createNotification(
+        'correlation',
+        `UEBA Correlation: ${entity}`,
+        `${entity} (risk ${uebaRisk}, ${uebaAnomalies} anomalies) matches ${alert.severity} SIEM alert — ${correlation.correlation_type.replace(/_/g,' ')}`,
+        uebaRisk >= 70 ? 'critical' : 'warning',
+        null,
+        { investigation_id: invId, entity, ueba_risk: uebaRisk, correlation_type: correlation.correlation_type }
+      ).catch(() => {});
+    }
+  } catch(e) { console.warn('[Correlation]', e.message); }
 }
 
 // Restrict to admin role (used for protected-asset management)
@@ -1028,11 +1120,31 @@ app.post('/api/ai/investigate', authMW, async (req, res) => {
     let savedId = null;
     if (alert) {
       try {
+        const alertSeverity = alert.severity || (alert.level >= 12 ? 'critical' : alert.level >= 8 ? 'high' : alert.level >= 5 ? 'medium' : 'low');
+
+        // Alert deduplication: find or create group for this IP+rule within 5-minute window
+        let groupId = null;
+        let groupCount = 1;
+        try {
+          const grp = await db.upsertAlertGroup(alert.srcIp, alert.ruleId, alert.agent);
+          groupId   = grp.id;
+          groupCount = grp.count;
+        } catch(e) { /* non-critical */ }
+
+        // Composite risk score
+        const compositeRisk = await computeCompositeRisk({
+          level:      alert.level,
+          severity:   alertSeverity,
+          srcIp:      alert.srcIp,
+          agent:      alert.agent,
+          groupCount,
+        }).catch(() => null);
+
         const saved = await db.saveInvestigation({
           alertId:      alert.id || alert._id,
           ruleId:       alert.ruleId,
           level:        alert.level,
-          severity:     alert.severity || (alert.level >= 12 ? 'critical' : 'high'),
+          severity:     alertSeverity,
           agent:        alert.agent,
           srcIp:        alert.srcIp,
           description:  alert.description,
@@ -1043,18 +1155,41 @@ app.post('/api/ai/investigate', authMW, async (req, res) => {
           autoTriaged:  autoTriaged,
           durationMs:   Date.now() - startTime,
           rawAlert:     alert,
+          compositeRisk,
+          groupId,
         });
         savedId = saved.id;
+
+        // Emit real-time event
+        io.emit('investigation:new', {
+          id:             savedId,
+          ruleId:         alert.ruleId,
+          severity:       alertSeverity,
+          agent:          alert.agent,
+          srcIp:          alert.srcIp,
+          description:    alert.description,
+          composite_risk: compositeRisk,
+          group_count:    groupCount,
+          mitre:          alert.mitre || [],
+          mitre_tactic:   alert.mitreTactic || [],
+          auto_triaged:   autoTriaged,
+          timestamp:      new Date().toISOString(),
+        });
+
         // Notification for manual investigations
         if (!autoTriaged) {
           db.createNotification(
             'alert', 'Investigation Complete',
             `Rule ${alert.ruleId} on ${alert.agent} — AI investigation finished.`,
-            alert.severity === 'critical' ? 'critical' : 'warning',
+            alertSeverity === 'critical' ? 'critical' : 'warning',
             req.user?.username || null,
             { investigation_id: savedId, rule_id: alert.ruleId, agent: alert.agent }
           ).catch(() => {});
         }
+
+        // UEBA cross-correlation (non-blocking)
+        runUebaCorrelation(savedId, alert).catch(() => {});
+
       } catch(e) { console.warn('[DB] save investigation failed:', e.message); }
     }
 
@@ -1094,6 +1229,17 @@ app.get('/api/investigations/:id', authMW, async (req, res) => {
     res.json(inv);
   } catch(e) {
     res.status(503).json({ error: 'DB unavailable: ' + e.message });
+  }
+});
+
+// ── ALERT GROUPS (deduplication view) ──
+app.get('/api/alert-groups', authMW, async (req, res) => {
+  try {
+    const { limit = 50, offset = 0 } = req.query;
+    const groups = await db.listAlertGroups({ limit: parseInt(limit)||50, offset: parseInt(offset)||0 });
+    res.json({ groups, total: groups.length });
+  } catch(e) {
+    res.status(503).json({ error: e.message });
   }
 });
 
@@ -1557,6 +1703,15 @@ Use markdown tables. Be concise.`;
                 `Playbook "${pb.name}" ran on alert ${alert.ruleId} (${alert.agent}).`,
                 'warning', null, { playbook_name: pb.name, investigation_id: savedId }
               ).catch(() => {});
+              io.emit('darksoc:action', {
+                playbook:       pb.name,
+                investigation_id: savedId,
+                rule_id:        alert.ruleId,
+                agent:          alert.agent,
+                src_ip:         alert.srcIp,
+                actions_taken:  execResult.actionsTaken || [],
+                timestamp:      new Date().toISOString(),
+              });
             }
           } catch(e) {
             console.error(`[DarkSOC] Playbook "${pb.name}" execution error:`, e.message);
@@ -2965,7 +3120,7 @@ db.initSchema()
   .catch(e => console.error('[DB] init failed:', e.message));
 ueba.initSchema().catch(e => console.error('[NEO4J] init failed:', e.message));
 
-app.listen(PORT, '0.0.0.0', () => {
+httpServer.listen(PORT, '0.0.0.0', () => {
   const envFile = require('fs').existsSync(require('path').join(__dirname,'../../.env')) ? '✅ .env loaded' : '⚠ .env NOT found';
   console.log(`\n╔══════════════════════════════════════════════════════════════╗`);
   console.log(`║  SOC PILOTS COMMAND CENTER                                   ║`);
