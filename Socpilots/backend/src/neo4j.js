@@ -776,13 +776,19 @@ async function getUebaStats() {
   if (!d) return null;
   const session = d.session();
   try {
+    // Use OPTIONAL MATCH + inline high_risk aggregation so the query always
+    // returns exactly 1 row even when no users have risk_score >= 70.
     const r = await session.run(
-      `MATCH (u:User)   WITH count(u) AS users, avg(coalesce(u.risk_score, 0)) AS avg_risk
-       MATCH (h:Host)   WITH users, avg_risk, count(h) AS hosts
-       MATCH (p:Process) WITH users, avg_risk, hosts, count(p) AS processes
-       MATCH ()-[rel]->() WITH users, avg_risk, hosts, processes, count(rel) AS rels
-       MATCH (u2:User) WHERE u2.risk_score >= 70
-       RETURN users, avg_risk, hosts, processes, rels, count(u2) AS high_risk_users`
+      `MATCH (u:User)
+       WITH count(u) AS users,
+            avg(coalesce(u.risk_score, 0)) AS avg_risk,
+            sum(CASE WHEN coalesce(u.risk_score, 0) >= 70 THEN 1 ELSE 0 END) AS high_risk_users
+       OPTIONAL MATCH (h:Host)
+       WITH users, avg_risk, high_risk_users, count(h) AS hosts
+       OPTIONAL MATCH (p:Process)
+       WITH users, avg_risk, high_risk_users, hosts, count(p) AS processes
+       OPTIONAL MATCH ()-[rel]->()
+       RETURN users, avg_risk, high_risk_users, hosts, processes, count(rel) AS rels`
     );
     if (!r.records.length) return { users:0, hosts:0, processes:0, relationships:0, avg_risk:0, high_risk_users:0 };
     const rec = r.records[0];
@@ -798,6 +804,33 @@ async function getUebaStats() {
   finally { await session.close(); }
 }
 
+// ── Risk Score Backfill ────────────────────────────────────────
+// Recalculates risk_score for all users based on historical LOGGED_IN
+// relationship deviation scores using the EWMA closed-form approximation:
+//   score ≈ avg_dev * (1 - 0.85^n)  where n = anomaly event count
+async function backfillRiskScores() {
+  const d = getDriver();
+  if (!d) return { updated: 0 };
+  try {
+    const recs = await run(
+      `MATCH (u:User)-[r:LOGGED_IN]->()
+       WHERE r.deviation_score > 30
+       WITH u, count(r) AS n, avg(r.deviation_score) AS avgDev
+       WITH u, n, avgDev,
+            toInteger(CASE WHEN avgDev*(1.0-0.85^n) > 100 THEN 100
+                           ELSE avgDev*(1.0-0.85^n) END) AS score
+       SET u.risk_score = score, u.anomaly_count = n
+       RETURN count(u) AS updated`
+    );
+    const updated = recs[0]?.get('updated')?.toNumber?.() ?? 0;
+    console.log(`[UEBA] Risk score backfill complete — ${updated} users updated`);
+    return { updated };
+  } catch(e) {
+    console.error('[UEBA] Backfill error:', e.message);
+    return { updated: 0, error: e.message };
+  }
+}
+
 async function ping() {
   const d = getDriver();
   if (!d) return false;
@@ -805,7 +838,7 @@ async function ping() {
 }
 
 module.exports = {
-  initSchema, ingestEvent, recalcBaselines,
+  initSchema, ingestEvent, recalcBaselines, backfillRiskScores,
   getRiskLeaderboard, getUserProfile,
   getAllAnomalies, getEntityGraph, getUebaStats, ping,
   detectLateralMovement,

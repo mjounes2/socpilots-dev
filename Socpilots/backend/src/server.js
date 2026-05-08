@@ -2526,6 +2526,13 @@ app.get('/api/ueba/stats', authMW, async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+app.post('/api/ueba/recalc', authMW, requireRole('admin'), async (req, res) => {
+  try {
+    const result = await ueba.backfillRiskScores();
+    res.json({ ok: true, ...result });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 // ═══════════════════════════════════════════════════════════════
 // ─── LANGCHAIN AGENT PROXY ─────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════
@@ -3257,7 +3264,9 @@ db.initSchema()
   .then(() => seedUsersFromEnv())
   .then(() => startHuntScheduler())
   .catch(e => console.error('[DB] init failed:', e.message));
-ueba.initSchema().catch(e => console.error('[NEO4J] init failed:', e.message));
+ueba.initSchema()
+  .then(() => ueba.backfillRiskScores())
+  .catch(e => console.error('[NEO4J] init failed:', e.message));
 
 httpServer.listen(PORT, '0.0.0.0', () => {
   const envFile = require('fs').existsSync(require('path').join(__dirname,'../../.env')) ? '✅ .env loaded' : '⚠ .env NOT found';
