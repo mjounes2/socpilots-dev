@@ -82,7 +82,7 @@ n8n (port 5678) reaches `mcp-wazuh:3001` and `thehive-mcp:8080` directly over th
 | `Socpilots/backend/src/db.js` | PostgreSQL pool + `initSchema()` + all CRUD functions (~1522 lines) |
 | `Socpilots/backend/src/playbook-engine.js` | Dark SOC automated playbook execution logic |
 | `Socpilots/backend/src/neo4j.js` | UEBA Neo4j Cypher queries (~818 lines) |
-| `Socpilots/frontend/index.html` | Entire SPA (~6482 lines, vanilla JS, no build step) |
+| `Socpilots/frontend/index.html` | Entire SPA (~6575 lines, vanilla JS, no build step) |
 | `langchain-agent/main.py` | ReAct agent with tools: `search_alerts`, `enrich_ip`, `check_cases`, `query_ueba`, `query_assets`, `query_shodan`; `/enrich` endpoint includes OTX |
 | `services/knowledge-ingestion/src/app.py` | Flask app: `/ingest`, `/upload`, `/evidence/search`, `/evidence/delete` |
 | `services/knowledge-ingestion/src/file_processor.py` | PDF/Excel/CSV/OCR text extraction + chunking |
@@ -122,7 +122,18 @@ RAG retrieval queries **must** be prefixed with `"Represent this sentence for se
 
 `Socpilots/frontend/index.html` is the entire SPA — vanilla JS, no framework, no build step. Pages are shown/hidden by `go(section)` toggling `<div>` visibility. Bearer tokens are stored in `sessionStorage` under the key `soc_token`. `login.html` sets the token then redirects to `index.html`.
 
-To add a new page: add a `<div id="page-NAME">` section, add a nav item calling `go('NAME')`, and register `'NAME'` in the `go()` function's section list.
+To add a new page: add a `<div id="page-NAME">` section, add a nav item calling `go('NAME')`, and register `'NAME'` in the `LOAD_MAP` object (not just in the `go()` function's section list — `go()` uses `document.getElementById` dynamically).
+
+## Notifications
+
+In-app notification bell (top-right) + full notifications page (`go('notifications')`).
+
+- **Bell dropdown** — shows last 20 notifications via `GET /api/notifications?page=1&page_size=20`; "View all notifications" closes the dropdown and navigates to `page-notifications`.
+- **Full page** (`page-notifications`) — paginated list via `loadNotificationsPage()`; supports All/Unread filter, Mark all read, Refresh.
+- **API** — `GET /api/notifications?page=N&page_size=N&unread=true|false` → `{ notifications, total, page, page_size, has_more }`. Mark one read: `POST /api/notifications/:id/read`. Mark all: `POST /api/notifications/read-all`.
+- **db.js** — `listNotifications(username, limit, offset, unreadOnly)` uses `COUNT(*) OVER()` and returns `{ rows, total }`.
+- **Creating notifications** — call `db.createNotification(type, title, message, severity, username, metadata)`. Types used: `investigation`, `case_created`, `true_positive`, `correlation`, `playbook`.
+- **Socket.IO** — `_notifCount` is also incremented on `investigation:new`, `correlation:found`, `darksoc:action` socket events so the badge stays live without polling.
 
 ## Adding a new API route
 
