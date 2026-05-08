@@ -78,6 +78,7 @@ const RAG_URL           = process.env.RAG_URL          || 'http://rag-retrieval:
 const KNOWLEDGE_URL     = process.env.KNOWLEDGE_URL    || 'http://knowledge-ingestion:5004';
 const LANGCHAIN_TOKEN   = process.env.LANGCHAIN_INTERNAL_TOKEN || '';
 const MCP_WAZUH_URL     = process.env.MCP_WAZUH_URL    || 'http://mcp-wazuh:3001';
+const OTX_API_KEY       = process.env.OTX_API_KEY      || '';
 
 // Skip SSL verify (Wazuh self-signed cert)
 const httpsAgent = new https.Agent({ rejectUnauthorized: false });
@@ -1346,9 +1347,19 @@ app.post('/api/investigations/:id/tp-status', authMW, async (req, res) => {
       return res.status(404).json({ error: 'Investigation not found' });
     }
 
+    // Sync status to TheHive if a case was created for this investigation
+    const investigation = await db.getInvestigationById(investigationId);
+    if (investigation?.hive_case_id && (tp_status === 'confirmed_tp' || tp_status === 'confirmed_fp')) {
+      const isFP    = tp_status === 'confirmed_fp';
+      const summary = isFP
+        ? `Confirmed False Positive by analyst ${req.user.username} — no further action required.`
+        : `Confirmed True Positive by analyst ${req.user.username} — incident response required.`;
+      playbook.updateHiveCaseStatus(investigation.hive_case_id, isFP, summary)
+        .catch(e => console.warn('[cases] TheHive status sync failed:', e.message));
+    }
+
     // Send email + notification when marked as true positive
     if (tp_status === 'confirmed_tp') {
-      const investigation = await db.getInvestigationById(investigationId);
       if (investigation) {
         const emailBody = email.generateInvestigationTPEmail(investigation);
         email.sendToRecipients(
@@ -1678,7 +1689,7 @@ Use markdown tables. Be concise.`;
         for (const pb of matchedPlaybooks) {
           console.log(`[DarkSOC] Running playbook "${pb.name}" for alert ${alert.ruleId}`);
           try {
-            const execResult = await playbook.runPlaybook(pb, alert, text, fpProbability);
+            const execResult = await playbook.runPlaybook(pb, alert, text, fpProbability, savedId);
             const outcome    = execResult.skipped ? 'skipped' : 'executed';
 
             await db.savePlaybookExecution({
@@ -2074,6 +2085,66 @@ async function lateralMovementMonitor() {
 
 setInterval(() => { lateralMovementMonitor(); }, 30 * 60_000);  // every 30 min
 setTimeout (() => { lateralMovementMonitor(); }, 3 * 60_000);   // first run 3min after boot
+
+// ═══════════════════════════════════════════════════════════════
+// ─── OTX ALIENVAULT IOC FEED SYNC (every 6 hours) ───────────────
+// Fetches subscribed threat pulses from OTX and stores indicators
+// in otx_ioc_feed for cross-referencing against investigations.
+// ═══════════════════════════════════════════════════════════════
+async function otxFeedSync() {
+  if (!OTX_API_KEY) return;
+  try {
+    const lastSync = await db.getSetting('otx_last_sync');
+    // Default to 7 days back on first run to avoid massive initial pull
+    const since = lastSync
+      ? new Date(lastSync).toISOString()
+      : new Date(Date.now() - 7 * 86400_000).toISOString();
+
+    let nextUrl = `https://otx.alienvault.com/api/v1/pulses/subscribed?modified_since=${since}&limit=50`;
+    let pagesFetched = 0;
+    let totalSaved = 0;
+    const MAX_PAGES = 20;
+    const MAX_IOCS  = 5000;
+
+    while (nextUrl && pagesFetched < MAX_PAGES && totalSaved < MAX_IOCS) {
+      const resp = await axios.get(nextUrl, {
+        headers: { 'X-OTX-API-KEY': OTX_API_KEY },
+        timeout: 30_000,
+      });
+      const { results = [], next } = resp.data;
+      for (const pulse of results) {
+        if (totalSaved >= MAX_IOCS) break;
+        const tags    = pulse.tags             || [];
+        const malware = (pulse.malware_families || []).map(m => typeof m === 'object' ? m.display_name || m.id : String(m));
+        for (const ioc of (pulse.indicators || [])) {
+          if (ioc.is_active === false) continue;
+          if (totalSaved >= MAX_IOCS) break;
+          await db.upsertOtxIoc({
+            pulseId:         pulse.id,
+            pulseName:       pulse.name || '',
+            indicatorType:   ioc.type   || 'unknown',
+            indicator:       String(ioc.indicator || ''),
+            description:     ioc.description || pulse.description || '',
+            tags,
+            malwareFamilies: malware,
+            threatScore:     70,
+          });
+          totalSaved++;
+        }
+      }
+      pagesFetched++;
+      nextUrl = next || null;
+    }
+
+    await db.setSetting('otx_last_sync', new Date().toISOString(), 'system');
+    console.log(`[OTX] Feed sync complete: ${totalSaved} IOCs across ${pagesFetched} page(s)`);
+  } catch (e) {
+    console.error(`[OTX] Feed sync error: ${e.message}`);
+  }
+}
+
+setInterval(() => { otxFeedSync(); }, 6 * 3600_000);
+setTimeout (() => { otxFeedSync(); }, 5 * 60_000);   // first run 5min after boot
 
 // ═══════════════════════════════════════════════════════════════
 // ─── DARK SOC — APPROVAL EXPIRY WORKER (every 2 minutes) ───────
@@ -3107,6 +3178,53 @@ app.post('/api/auth/reset-password', async (req, res) => {
     console.error('[ResetPassword]', e.message);
     res.status(500).json({ error: e.message });
   }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// ─── OTX ALIENVAULT IOC FEED API ────────────────────────────────
+// ═══════════════════════════════════════════════════════════════
+
+// GET /api/otx/stats — feed summary (total IOCs, last sync, breakdown by type)
+app.get('/api/otx/stats', authMW, async (req, res) => {
+  try {
+    const stats = await db.getOtxStats();
+    res.json({ ...stats, configured: Boolean(OTX_API_KEY) });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/otx/feeds — list IOCs from the feed (paginated, filterable)
+app.get('/api/otx/feeds', authMW, async (req, res) => {
+  try {
+    const { type, search, limit = '100', offset = '0' } = req.query;
+    const iocs = await db.getOtxIocs({
+      type:   type   || undefined,
+      search: search || undefined,
+      limit:  Math.min(parseInt(limit) || 100, 500),
+      offset: parseInt(offset) || 0,
+    });
+    res.json({ iocs, count: iocs.length });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/otx/check/:indicator — check if a specific indicator is in the feed
+app.get('/api/otx/check/:indicator', authMW, async (req, res) => {
+  try {
+    const matches = await db.checkOtxIndicator(req.params.indicator);
+    res.json({ indicator: req.params.indicator, matches, found: matches.length > 0 });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/otx/sync — manually trigger a feed sync (admin only)
+app.post('/api/otx/sync', authMW, requireRole('admin'), async (req, res) => {
+  if (!OTX_API_KEY) return res.status(503).json({ error: 'OTX_API_KEY not configured' });
+  res.json({ ok: true, message: 'OTX sync triggered — check logs for progress' });
+  setImmediate(() => otxFeedSync());
 });
 
 // ─── STATIC (must be last — after all /api routes) ──────────────

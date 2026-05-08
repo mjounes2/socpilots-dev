@@ -78,12 +78,12 @@ n8n (port 5678) reaches `mcp-wazuh:3001` and `thehive-mcp:8080` directly over th
 
 | File | What's in it |
 |---|---|
-| `Socpilots/backend/src/server.js` | Entire Express backend (~2600 lines): auth, all REST routes, hunt scheduler, evidence upload |
+| `Socpilots/backend/src/server.js` | Entire Express backend (~3200 lines): auth, all REST routes, hunt scheduler, OTX feed sync, evidence upload |
 | `Socpilots/backend/src/db.js` | PostgreSQL pool + `initSchema()` + all CRUD functions |
 | `Socpilots/backend/src/playbook-engine.js` | Dark SOC automated playbook execution logic |
 | `Socpilots/backend/src/neo4j.js` | UEBA Neo4j Cypher queries |
-| `Socpilots/frontend/index.html` | Entire SPA (~4000 lines, vanilla JS, no build step) |
-| `langchain-agent/main.py` | ReAct agent with tools: `search_alerts`, `enrich_ip`, `check_cases`, `query_ueba`, `query_assets`, `query_shodan` |
+| `Socpilots/frontend/index.html` | Entire SPA (~4500 lines, vanilla JS, no build step) |
+| `langchain-agent/main.py` | ReAct agent with tools: `search_alerts`, `enrich_ip`, `check_cases`, `query_ueba`, `query_assets`, `query_shodan`; `/enrich` endpoint includes OTX |
 | `services/knowledge-ingestion/src/app.py` | Flask app: `/ingest`, `/upload`, `/evidence/search`, `/evidence/delete` |
 | `services/knowledge-ingestion/src/file_processor.py` | PDF/Excel/CSV/OCR text extraction + chunking |
 | `services/knowledge-ingestion/src/knowledge_ingest.py` | 55 hardcoded MITRE techniques + rule/incident ingestion into Qdrant |
@@ -107,7 +107,7 @@ Schema lives entirely in `db.js:initSchema()`. It runs on every webapp startup. 
 - New **tables**: append a `CREATE TABLE IF NOT EXISTS` block to the `queries` array.
 - New **columns on existing tables**: append `ALTER TABLE … ADD COLUMN IF NOT EXISTS` — never modify the original `CREATE TABLE` statement alone.
 - There is no migration framework. All statements must be idempotent.
-- Postgres tables: `investigations`, `artifacts`, `settings`, `subnets`, `assets`, `scan_jobs`, `playbooks`, `playbook_executions`, `protected_assets`, `isolation_approvals`, `users`, `hunt_schedules`, `chat_messages`, `evidence_files`.
+- Postgres tables: `investigations`, `artifacts`, `settings`, `subnets`, `assets`, `scan_jobs`, `playbooks`, `playbook_executions`, `protected_assets`, `isolation_approvals`, `users`, `hunt_schedules`, `chat_messages`, `evidence_files`, `otx_ioc_feed`.
 
 ## Qdrant collections
 
@@ -146,3 +146,17 @@ Dark SOC is the playbook automation engine. It is **disabled by default** (`dark
 - Playbooks with `require_consensus = true` create an `isolation_approvals` record (30-min TTL) that requires L2+ analyst sign-off before execution.
 - The `protected_assets` table prevents auto-isolation of critical hosts; `critical` tier assets block isolation entirely and escalate instead.
 - Execution history is logged to `playbook_executions`.
+
+## OTX AlienVault IOC Feed
+
+OTX is integrated for both real-time IOC enrichment and a periodic threat feed:
+
+- **Enrichment**: `GET /api/langchain/enrich` (proxied to langchain-agent `/enrich`) now returns an `otx` field with pulse count, matching campaign names, tags, and malware families. Supports all indicator types: IP, domain, URL, hash.
+- **Feed sync**: `otxFeedSync()` in `server.js` runs every 6h (first run 5min after boot). Fetches subscribed OTX pulses, stores IOCs in `otx_ioc_feed` table (capped at 20 pages / 5000 IOCs per run; incremental after first sync using `otx_last_sync` setting).
+- **Cross-reference**: `saveArtifacts()` in `db.js` automatically cross-references new investigation artifacts against `otx_ioc_feed` and boosts the threat score for known-bad indicators.
+- **API routes** (all require auth):
+  - `GET /api/otx/stats` — total IOC count, last sync time, breakdown by type
+  - `GET /api/otx/feeds?type=IPv4&search=...&limit=100` — list/search feed IOCs
+  - `GET /api/otx/check/:indicator` — check if a specific indicator is in the feed
+  - `POST /api/otx/sync` — manual sync trigger (admin only)
+- **Env var**: `OTX_API_KEY` — required in `.env`, set in both `webapp` and `langchain-agent` environments in `docker-compose.yml`.

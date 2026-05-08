@@ -56,30 +56,66 @@ async function callWazuhMCP(toolName, args) {
   return r.data?.result ?? r.data;
 }
 
+// ── TheHive Case Status Updater ───────────────────────────────
+// Resolves an open case as FalsePositive or TruePositive via PATCH
+async function updateHiveCaseStatus(caseId, isFP, summary = '') {
+  if (!THEHIVE_URL || !THEHIVE_KEY || !caseId) return { skipped: true };
+  const status  = isFP ? 'FalsePositive' : 'TruePositive';
+  const fallback = isFP
+    ? 'Auto-closed as False Positive by Dark SOC engine'
+    : 'Confirmed True Positive by Dark SOC engine';
+  const r = await axios.patch(`${THEHIVE_URL}/api/v1/case/${caseId}`, {
+    status,
+    summary: summary || fallback,
+  }, {
+    headers: { Authorization: `Bearer ${THEHIVE_KEY}`, 'Content-Type': 'application/json' },
+    httpsAgent, timeout: 15000,
+  });
+  return r.data;
+}
+
 // ── TheHive Case Creator ──────────────────────────────────────
-async function createHiveCase(alert, severity = 'high', customTitle = null) {
+// investigationText: full AI report — included in case description (truncated to 14KB)
+async function createHiveCase(alert, severity = 'high', customTitle = null, investigationText = '') {
   if (!THEHIVE_URL || !THEHIVE_KEY) return { skipped: true, reason: 'TheHive not configured' };
 
   const sevNum   = { low: 1, medium: 2, high: 3, critical: 4 }[severity] || 3;
   const title    = customTitle || `[DarkSOC] ${alert.description || 'Auto-detected threat'} — ${alert.agent || 'unknown'}`;
   const mitreTxt = Array.isArray(alert.mitre) && alert.mitre.length
-    ? `\n\n**MITRE:** ${alert.mitre.join(', ')}`
+    ? alert.mitre.join(', ')
+    : '—';
+
+  const MAX_REPORT = 14000;
+  const reportSection = investigationText
+    ? [
+        '',
+        '---',
+        '',
+        '## Full AI Investigation Report',
+        '',
+        investigationText.slice(0, MAX_REPORT),
+        investigationText.length > MAX_REPORT
+          ? '\n*(report truncated — full version available in SOCPilots Investigations view)*'
+          : '',
+      ].join('\n')
     : '';
 
   const r = await axios.post(`${THEHIVE_URL}/api/v1/case`, {
     title,
     description: [
-      `**Automated case created by Dark SOC engine**`,
+      `## Automated Case — Dark SOC Engine`,
       ``,
       `| Field | Value |`,
       `|---|---|`,
       `| Rule ID | ${alert.ruleId || '—'} |`,
-      `| Level | ${alert.level || '—'} |`,
-      `| Agent | ${alert.agent || '—'} |`,
+      `| Rule Level | ${alert.level || '—'} |`,
+      `| Severity | **${severity.toUpperCase()}** |`,
+      `| Agent / Host | ${alert.agent || '—'} |`,
       `| Source IP | ${alert.srcIp || '—'} |`,
-      `| Severity | ${severity} |`,
+      `| MITRE ATT&CK | ${mitreTxt} |`,
       `| Timestamp | ${alert.timestamp || new Date().toISOString()} |`,
-      mitreTxt,
+      `| Description | ${alert.description || '—'} |`,
+      reportSection,
     ].join('\n'),
     severity: sevNum,
     tags:   ['dark-soc', 'auto-response', `rule-${alert.ruleId}`, `agent-${alert.agent}`].filter(Boolean),
@@ -149,7 +185,7 @@ function extractProcessName(investigationText, alert) {
 }
 
 // ── Execute Single Action ─────────────────────────────────────
-async function executeAction(action, alert, investigationText) {
+async function executeAction(action, alert, investigationText, investigationId = null) {
   const result = { action: action.type, success: false, detail: '' };
 
   try {
@@ -307,16 +343,38 @@ async function executeAction(action, alert, investigationText) {
       }
 
       case 'create_case': {
-        const c = await createHiveCase(alert, action.severity || alert.severity || 'high');
-        result.success = true;
-        result.detail  = `Created TheHive case #${c.caseId || c._id || '?'}`;
+        const sev = action.severity || alert.severity || 'high';
+        const c = await createHiveCase(alert, sev, null, investigationText);
+        const caseId = c.caseId || c._id || null;
+        result.success    = true;
+        result.detail     = `Created TheHive case #${caseId || '?'}`;
+        result.hiveCaseId = caseId ? String(caseId) : null;
+        if (investigationId && result.hiveCaseId) {
+          await db.updateInvestigationHiveCaseId(investigationId, result.hiveCaseId).catch(() => {});
+        }
         break;
       }
 
       case 'close_case': {
-        // Logical close — marks in DB, no TheHive API needed
+        let hiveClosed = false;
+        if (investigationId) {
+          try {
+            const inv = await db.getInvestigationById(investigationId);
+            if (inv?.hive_case_id) {
+              const summary = action.reason
+                ? `Auto-closed: ${action.reason}`
+                : 'Auto-closed as False Positive by Dark SOC playbook — FP probability exceeded threshold.';
+              await updateHiveCaseStatus(inv.hive_case_id, true, summary);
+              result.hiveCaseId = inv.hive_case_id;
+              hiveClosed = true;
+            }
+          } catch (e) {
+            console.warn('[Playbook] TheHive close_case update failed:', e.message);
+          }
+        }
         result.success = true;
-        result.detail  = `FP auto-close: ${action.reason || 'auto_fp'}`;
+        result.detail  = `FP auto-close: ${action.reason || 'auto_fp'}` +
+          (hiveClosed ? ` | TheHive case ${result.hiveCaseId} → FalsePositive` : '');
         break;
       }
 
@@ -334,7 +392,7 @@ async function executeAction(action, alert, investigationText) {
 
 // ── Main: Run Playbook ────────────────────────────────────────
 // Returns: { skipped, reason, consensusApproved, results[], actionsTaken }
-async function runPlaybook(playbook, alert, investigationReport, fpProbability = 0) {
+async function runPlaybook(playbook, alert, investigationReport, fpProbability = 0, investigationId = null) {
   const actions = Array.isArray(playbook.actions)
     ? playbook.actions
     : (() => { try { return JSON.parse(playbook.actions || '[]'); } catch { return []; } })();
@@ -389,16 +447,18 @@ async function runPlaybook(playbook, alert, investigationReport, fpProbability =
       continue;
     }
 
-    const r = await executeAction(action, alert, investigationReport);
+    const r = await executeAction(action, alert, investigationReport, investigationId);
     results.push(r);
     console.log(`[Playbook] ${playbook.name} → ${action.type}: ${r.success ? '✓ OK' : '✗ FAIL'} — ${r.detail}`);
 
-    // Send email notification for successful actions
-    if (r.success && action.type !== 'create_case' && action.type !== 'close_case') {
+    // Send email notification for successful actions (including create_case)
+    if (r.success && action.type !== 'close_case') {
       const assetRef = alert.agent || alert.agentId || alert.srcIp || 'unknown';
-      const emailBody = email.generatePlaybookExecutionEmail(playbook.name, action.type, assetRef, r);
+      const emailBody = email.generatePlaybookExecutionEmail(
+        playbook.name, action.type, assetRef, r, alert, investigationReport
+      );
       await email.sendToRecipients(
-        `[SOCPilots] Playbook Executed: ${playbook.name}`,
+        `[SOCPilots] Playbook Executed: ${playbook.name} — ${action.type} on ${assetRef}`,
         emailBody
       ).catch(err => console.warn('[Playbook] Email send failed:', err.message));
     }
@@ -441,4 +501,4 @@ async function expireStaleApprovals() {
   }
 }
 
-module.exports = { runPlaybook, callWazuhMCP, createHiveCase, createHiveCaseRich, executeIsolationNow, expireStaleApprovals };
+module.exports = { runPlaybook, callWazuhMCP, createHiveCase, createHiveCaseRich, updateHiveCaseStatus, executeIsolationNow, expireStaleApprovals };

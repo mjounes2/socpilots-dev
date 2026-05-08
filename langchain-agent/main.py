@@ -49,6 +49,7 @@ REDIS_URL        = os.getenv("REDIS_URL", "")
 RAG_URL          = os.getenv("RAG_URL", "http://rag-retrieval:5005")
 RAG_API_KEY      = os.getenv("RAG_API_KEY", "")
 SHODAN_API_KEY   = os.getenv("SHODAN_API_KEY", "")
+OTX_API_KEY      = os.getenv("OTX_API_KEY", "")
 
 # ── Redis IOC Cache ───────────────────────────────────────────
 _redis = None
@@ -136,9 +137,9 @@ def search_alerts(query: str) -> str:
 @tool
 def enrich_ip(ip_address: str) -> str:
     """
-    Enrich an IP address with threat intelligence from VirusTotal and AbuseIPDB.
+    Enrich an IP address with threat intelligence from VirusTotal, AbuseIPDB, Shodan, and OTX AlienVault.
     Input: an IPv4 address like '1.2.3.4'.
-    Returns: reputation score, malicious votes, country, ISP, categories.
+    Returns: reputation score, malicious votes, country, ISP, categories, OTX pulse matches.
     """
     ip = ip_address.strip()
     if not re.match(r'^\d{1,3}(\.\d{1,3}){3}$', ip):
@@ -213,6 +214,25 @@ def enrich_ip(ip_address: str) -> str:
                 results.append(f"Shodan: no data found for {ip}")
         except Exception as e:
             results.append(f"Shodan error: {e}")
+
+    if OTX_API_KEY:
+        try:
+            r = _sync_client.get(
+                f"https://otx.alienvault.com/api/v1/indicators/IPv4/{ip}/general",
+                headers={"X-OTX-API-KEY": OTX_API_KEY},
+                timeout=10
+            )
+            if r.status_code == 200:
+                d = r.json()
+                pulse_count = d.get("pulse_info", {}).get("count", 0)
+                pulses = d.get("pulse_info", {}).get("pulses", [])[:3]
+                pulse_names = [p.get("name", "") for p in pulses if p.get("name")]
+                results.append(
+                    f"OTX AlienVault: {pulse_count} pulse(s) match this IP"
+                    + (f" — {', '.join(pulse_names)}" if pulse_names else "")
+                )
+        except Exception as e:
+            results.append(f"OTX error: {e}")
 
     result_text = "\n".join(results) if results else f"No threat intel API keys configured — cannot enrich {ip}"
     if results:
@@ -507,6 +527,7 @@ def health():
         "vt":         bool(os.getenv("VIRUSTOTAL_API_KEY")),
         "abuseipdb":  bool(os.getenv("ABUSEIPDB_API_KEY")),
         "shodan":     bool(SHODAN_API_KEY),
+        "otx":        bool(OTX_API_KEY),
         "model": "gpt-4o-mini" if OPENAI_API_KEY else ("mistral-small-latest" if MISTRAL_API_KEY else "none"),
     }
 
@@ -605,7 +626,7 @@ def enrich_direct(req: EnrichRequest):
         data["cached"] = True
         return data
 
-    result: dict = {"indicator": indicator, "type": ioc_type, "vt": None, "abuse": None, "shodan": None, "cached": False}
+    result: dict = {"indicator": indicator, "type": ioc_type, "vt": None, "abuse": None, "shodan": None, "otx": None, "cached": False}
     vt_key = os.getenv("VIRUSTOTAL_API_KEY", "")
     ab_key  = os.getenv("ABUSEIPDB_API_KEY", "")
 
@@ -704,6 +725,39 @@ def enrich_direct(req: EnrichRequest):
                 result["shodan"] = {"error": f"Shodan HTTP {r.status_code}"}
         except Exception as e:
             result["shodan"] = {"error": str(e)}
+
+    # ── OTX AlienVault (all indicator types) ──
+    if OTX_API_KEY:
+        try:
+            otx_type_map = {"ip": "IPv4", "domain": "domain", "url": "url", "hash": "file"}
+            otx_type = otx_type_map.get(ioc_type, "IPv4")
+            # IPv6 detection
+            if ioc_type == "ip" and ":" in indicator:
+                otx_type = "IPv6"
+            r = _sync_client.get(
+                f"https://otx.alienvault.com/api/v1/indicators/{otx_type}/{indicator}/general",
+                headers={"X-OTX-API-KEY": OTX_API_KEY},
+                timeout=10
+            )
+            if r.status_code == 200:
+                d = r.json()
+                pulse_info = d.get("pulse_info", {})
+                pulses = pulse_info.get("pulses", [])[:5]
+                result["otx"] = {
+                    "pulse_count":       pulse_info.get("count", 0),
+                    "pulses":            [{"name": p.get("name",""), "tags": p.get("tags",[])[:5],
+                                           "malware_families": p.get("malware_families",[]),
+                                           "author": p.get("author_name","")} for p in pulses],
+                    "reputation":        d.get("reputation", 0),
+                    "false_positive":    d.get("false_positive", []),
+                    "sections":          d.get("sections", []),
+                }
+            elif r.status_code == 404:
+                result["otx"] = {"error": "Not found in OTX"}
+            else:
+                result["otx"] = {"error": f"OTX HTTP {r.status_code}"}
+        except Exception as e:
+            result["otx"] = {"error": str(e)}
 
     _cache_set(cache_key, json.dumps(result))
     return result

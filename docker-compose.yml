@@ -146,6 +146,8 @@ services:
       MCP_AUTH_SECRET: ${AUTH_SECRET_KEY:-}
       # Threat hunt scheduler
       HUNT_SCHEDULER_ENABLED: ${HUNT_SCHEDULER_ENABLED:-true}
+      # OTX AlienVault IOC feed
+      OTX_API_KEY:    ${OTX_API_KEY:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -357,6 +359,7 @@ services:
       VIRUSTOTAL_API_KEY:  ${VIRUSTOTAL_API_KEY}
       ABUSEIPDB_API_KEY:   ${ABUSEIPDB_API_KEY}
       SHODAN_API_KEY:      ${SHODAN_API_KEY:-}
+      OTX_API_KEY:         ${OTX_API_KEY:-}
       WEBAPP_URL:          http://webapp:3000
       LANGCHAIN_INTERNAL_TOKEN: ${LANGCHAIN_INTERNAL_TOKEN:-}
       REDIS_URL:           redis://redis:6379

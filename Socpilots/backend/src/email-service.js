@@ -182,25 +182,59 @@ function generateInvestigationTPEmail(investigation) {
   `;
 }
 
-// Email template: Playbook action executed
-function generatePlaybookExecutionEmail(playbookName, actionType, assetRef, result) {
+// Email template: Playbook action executed (with full alert context and AI investigation report)
+function generatePlaybookExecutionEmail(playbookName, actionType, assetRef, result, alert = {}, investigationText = '') {
   const statusColor = result.success ? '#4caf50' : '#f32013';
-  const statusText = result.success ? '✓ EXECUTED' : '✗ FAILED';
+  const statusText  = result.success ? '✓ EXECUTED' : '✗ FAILED';
+  const severity    = (alert.severity || '').toUpperCase();
+  const sevColor    = severity === 'CRITICAL' ? '#f32013' : severity === 'HIGH' ? '#ff9800' : '#2196f3';
+  const mitre       = Array.isArray(alert.mitre) && alert.mitre.length
+    ? alert.mitre.join(', ')
+    : (alert.mitre || '—');
+
+  const escHtml = s => String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const MAX_REPORT = 3000;
+  const reportSnippet = investigationText
+    ? escHtml(investigationText.slice(0, MAX_REPORT)) +
+      (investigationText.length > MAX_REPORT ? '\n\n*(truncated — full report in SOCPilots Investigations view)*' : '')
+    : '';
 
   return `
-    <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;background:#f5f5f5">
-      <div style="background:white;padding:20px;border-radius:8px;border-left:4px solid ${statusColor}">
-        <h2 style="margin-top:0;color:#333">${statusText}: ${playbookName}</h2>
+    <div style="font-family:Arial,sans-serif;max-width:700px;margin:0 auto;padding:20px;background:#f5f5f5">
+      <div style="background:white;padding:24px;border-radius:8px;border-left:4px solid ${statusColor}">
+        <h2 style="margin-top:0;color:#333">${statusText}: ${escHtml(playbookName)}</h2>
 
         <div style="background:#f9f9f9;padding:15px;border-radius:4px;margin:15px 0">
-          <p style="margin:0"><strong>Action:</strong> ${actionType}</p>
-          <p style="margin:5px 0"><strong>Target:</strong> ${assetRef || 'Unknown'}</p>
-          ${result.detail ? `<p style="margin:5px 0"><strong>Detail:</strong> ${result.detail}</p>` : ''}
-          ${result.duration ? `<p style="margin:5px 0"><strong>Duration:</strong> ${result.duration}ms</p>` : ''}
+          <h3 style="margin:0 0 10px;color:#555;font-size:13px;text-transform:uppercase;letter-spacing:.5px">Action Executed</h3>
+          <p style="margin:0"><strong>Action:</strong> ${escHtml(actionType)}</p>
+          <p style="margin:5px 0"><strong>Target:</strong> ${escHtml(assetRef || 'Unknown')}</p>
+          ${result.detail ? `<p style="margin:5px 0"><strong>Detail:</strong> ${escHtml(result.detail)}</p>` : ''}
+          ${result.hiveCaseId ? `<p style="margin:5px 0"><strong>TheHive Case:</strong> #${escHtml(result.hiveCaseId)}</p>` : ''}
         </div>
 
-        <p style="color:#999;font-size:11px">
-          Executed at: ${new Date().toLocaleString()} UTC
+        <div style="background:#e8f4fd;padding:15px;border-radius:4px;margin:15px 0">
+          <h3 style="margin:0 0 10px;color:#555;font-size:13px;text-transform:uppercase;letter-spacing:.5px">Alert Details</h3>
+          <table style="width:100%;border-collapse:collapse;font-size:13px">
+            <tr><td style="padding:5px 10px;color:#666;width:140px;vertical-align:top">Rule ID</td><td style="padding:5px 10px"><strong>${escHtml(alert.ruleId || '—')}</strong></td></tr>
+            <tr style="background:#f0f8ff"><td style="padding:5px 10px;color:#666;vertical-align:top">Rule Level</td><td style="padding:5px 10px">${escHtml(String(alert.level || '—'))}</td></tr>
+            <tr><td style="padding:5px 10px;color:#666;vertical-align:top">Severity</td><td style="padding:5px 10px"><span style="color:${sevColor};font-weight:bold">${escHtml(severity || '—')}</span></td></tr>
+            <tr style="background:#f0f8ff"><td style="padding:5px 10px;color:#666;vertical-align:top">Agent / Host</td><td style="padding:5px 10px">${escHtml(alert.agent || '—')}</td></tr>
+            <tr><td style="padding:5px 10px;color:#666;vertical-align:top">Source IP</td><td style="padding:5px 10px">${escHtml(alert.srcIp || '—')}</td></tr>
+            <tr style="background:#f0f8ff"><td style="padding:5px 10px;color:#666;vertical-align:top">MITRE ATT&amp;CK</td><td style="padding:5px 10px">${escHtml(mitre)}</td></tr>
+            <tr><td style="padding:5px 10px;color:#666;vertical-align:top">Timestamp</td><td style="padding:5px 10px">${escHtml(alert.timestamp || new Date().toISOString())}</td></tr>
+            <tr style="background:#f0f8ff"><td style="padding:5px 10px;color:#666;vertical-align:top">Description</td><td style="padding:5px 10px">${escHtml(alert.description || '—')}</td></tr>
+          </table>
+        </div>
+
+        ${reportSnippet ? `
+        <div style="background:#fff8e1;padding:15px;border-radius:4px;margin:15px 0;border-left:3px solid #ffc107">
+          <h3 style="margin:0 0 10px;color:#555;font-size:13px;text-transform:uppercase;letter-spacing:.5px">AI Investigation Report</h3>
+          <pre style="font-size:12px;color:#333;white-space:pre-wrap;word-wrap:break-word;margin:0;font-family:monospace">${reportSnippet}</pre>
+        </div>
+        ` : ''}
+
+        <p style="color:#999;font-size:11px;margin-top:15px;border-top:1px solid #eee;padding-top:10px">
+          Executed at: ${new Date().toUTCString()} &mdash; SOCPilots Dark SOC Engine
         </p>
       </div>
     </div>

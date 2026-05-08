@@ -640,6 +640,27 @@ if(localStorage.getItem("soc_dim")==="1")document.body.classList.add("dim");
     <div class="card-hd"><div class="card-ttl"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 010 20"/></svg>GEO MAP — IOC LOCATION</div></div>
     <div id="ioc-map-wrap" style="position:relative;background:var(--bg2);border-radius:4px;border:1px solid var(--b1);overflow:hidden"><canvas id="ioc-canvas" height="200"></canvas><div id="ioc-dots"></div></div>
   </div>
+
+  <!-- OTX Feed -->
+  <div class="card">
+    <div class="card-hd">
+      <div class="card-ttl">OTX ALIENVAULT THREAT FEED</div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span id="otx-stats-badge" style="font-size:10px;color:var(--txt3);font-family:var(--fm)">Loading...</span>
+        <input class="fi" id="otx-feed-search" placeholder="Search IOCs..." style="width:160px;font-size:11px;padding:4px 8px" oninput="loadOtxFeed()">
+        <select class="fs" id="otx-feed-type" style="width:100px;font-size:11px;padding:4px 6px" onchange="loadOtxFeed()">
+          <option value="">All types</option>
+          <option value="IPv4">IPv4</option>
+          <option value="domain">Domain</option>
+          <option value="FileHash-MD5">MD5</option>
+          <option value="FileHash-SHA256">SHA256</option>
+          <option value="URL">URL</option>
+        </select>
+        <button class="btn btn-h btn-sm" onclick="otxManualSync()">Sync Now</button>
+      </div>
+    </div>
+    <div id="otx-feed-table"><div class="empty"><p>Loading OTX feed...</p></div></div>
+  </div>
 </div>
 
 <!-- CORRELATION -->
@@ -2315,7 +2336,7 @@ function errBnr(t){return`<div class="banner err">${esc(t)}</div>`;}
 let CUR='dashboard';
 const LOAD_MAP={dashboard:loadDashboard,agents:loadAgents,alerts:loadAlerts,rules:loadRules,'create-rules':loadCustomRules,investigation:()=>{loadInvAlerts();loadAutoTriageSettings();loadInvHistory();},
   cases:loadCases,'hive-alerts':loadHiveAlerts,threatmap:loadThreatMap,
-  ioc:loadIOCQuick,reports:loadReportMetrics,
+  ioc:()=>{loadIOCQuick();loadOtxFeed();},reports:loadReportMetrics,
   assets:()=>{loadSubnets();loadAssets();loadScanStatus();},
   ueba:()=>{loadUebaStats();loadUebaAnomalies();},
   correlate:()=>{loadUebaCorrelations();loadAlertGroups();renderCorrLiveFeed();},
@@ -3291,7 +3312,12 @@ async function doIOC(){
     const sh=enrich.shodan;
     aiMsg+=`Shodan Results:\n- Organisation: ${sh.org||'unknown'}\n- ISP: ${sh.isp||'unknown'}\n- Country: ${sh.country||'unknown'}\n- OS: ${sh.os||'unknown'}\n- Open ports: ${(sh.ports||[]).join(', ')||'none'}\n- Hostnames: ${(sh.hostnames||[]).join(', ')||'none'}\n- Known CVEs: ${(sh.vulns||[]).join(', ')||'none'}\n- Tags: ${(sh.tags||[]).join(', ')||'none'}\n\n`;
   }
-  if(!enrich?.vt && !enrich?.abuse && !enrich?.shodan){
+  if(enrich?.otx && !enrich.otx.error){
+    const ox=enrich.otx;
+    const pulseNames=(ox.pulses||[]).map(p=>p.name).filter(Boolean).slice(0,3).join(', ');
+    aiMsg+=`OTX AlienVault Results:\n- Threat pulses: ${ox.pulse_count||0}\n- Reputation score: ${ox.reputation||0}\n${pulseNames?`- Matching campaigns: ${pulseNames}\n`:''}\n`;
+  }
+  if(!enrich?.vt && !enrich?.abuse && !enrich?.shodan && !enrich?.otx){
     aiMsg+=`No enrichment API data available. Analyze based on indicator value only.\n\n`;
   }
   aiMsg+=`Based on this data, provide:\n1. Risk level (Critical/High/Medium/Low)\n2. Threat actor association if known\n3. Likely attack type / MITRE technique\n4. Recommended immediate action\n\nBe concise — max 5 sentences.`;
@@ -3301,7 +3327,7 @@ async function doIOC(){
   const aiText = aiRes?.response || aiRes?.output || aiRes?.text || '';
 
   // Build structured display
-  let vtHtml='', abuseHtml='', shodanHtml='', cacheHtml='';
+  let vtHtml='', abuseHtml='', shodanHtml='', otxHtml='', cacheHtml='';
   if(enrich){
     if(enrich.cached) cacheHtml=`<span style="font-size:8px;color:var(--g);font-family:var(--fm);padding:2px 6px;background:var(--gdim);border:1px solid rgba(0,230,118,.2);border-radius:3px">CACHED</span>`;
     if(enrich.vt&&!enrich.vt.error){
@@ -3361,10 +3387,37 @@ async function doIOC(){
     } else if(enrich.shodan?.error){
       shodanHtml=`<div class="ioc-section"><div class="ioc-lbl">Shodan</div><span style="color:var(--txt2);font-size:11px">${esc(enrich.shodan.error)}</span></div>`;
     }
+    if(enrich.otx&&!enrich.otx.error){
+      const ox=enrich.otx;
+      const pulseCount=ox.pulse_count||0;
+      const repCol=pulseCount>5?'var(--r)':pulseCount>0?'var(--y)':'var(--g)';
+      const pulseRows=(ox.pulses||[]).slice(0,5).map(p=>{
+        const tags=(p.tags||[]).slice(0,3).map(t=>`<span class="badge low" style="font-size:8px">${esc(t)}</span>`).join('');
+        const mf=(p.malware_families||[]).slice(0,2).map(m=>`<span class="badge crit" style="font-size:8px">${esc(m)}</span>`).join('');
+        return `<div style="padding:4px 0;border-bottom:1px solid var(--b1);font-size:11px">
+          <div style="color:var(--c);font-family:var(--fm)">${esc(p.name||'Unknown pulse')}</div>
+          ${p.author?`<div style="color:var(--txt3);font-size:10px;font-family:var(--fm)">by ${esc(p.author)}</div>`:''}
+          ${tags||mf?`<div style="margin-top:3px;display:flex;gap:3px;flex-wrap:wrap">${tags}${mf}</div>`:''}
+        </div>`;
+      }).join('');
+      otxHtml=`<div class="ioc-section">
+        <div class="ioc-lbl" style="display:flex;align-items:center;gap:6px">OTX AlienVault
+          <span style="font-size:8px;color:var(--txt3);font-family:var(--fm);text-transform:uppercase;letter-spacing:1px">alienvault</span>
+        </div>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:${pulseRows?'8px':'0'}">
+          <span style="font-family:var(--fm);font-size:18px;color:${repCol};font-weight:700">${pulseCount}</span>
+          <span style="font-size:11px;color:var(--txt2);font-family:var(--fm)">threat pulse${pulseCount!==1?'s':''}</span>
+          ${ox.reputation!=null?`<span style="font-size:11px;color:var(--txt2);font-family:var(--fm)">reputation: ${ox.reputation}</span>`:''}
+        </div>
+        ${pulseRows?`<div style="max-height:160px;overflow-y:auto">${pulseRows}</div>`:''}
+      </div>`;
+    } else if(enrich.otx?.error && enrich.otx.error !== 'Not found in OTX'){
+      otxHtml=`<div class="ioc-section"><div class="ioc-lbl">OTX AlienVault</div><span style="color:var(--txt2);font-size:11px">${esc(enrich.otx.error)}</span></div>`;
+    }
   }
 
-  const noEnrichMsg = (!enrich||(!vtHtml&&!abuseHtml&&!shodanHtml)) ?
-    `<div class="banner info" style="margin-bottom:10px">Direct enrichment unavailable — check VIRUSTOTAL_API_KEY / ABUSEIPDB_API_KEY / SHODAN_API_KEY in .env</div>` : '';
+  const noEnrichMsg = (!enrich||(!vtHtml&&!abuseHtml&&!shodanHtml&&!otxHtml)) ?
+    `<div class="banner info" style="margin-bottom:10px">Direct enrichment unavailable — check VIRUSTOTAL_API_KEY / ABUSEIPDB_API_KEY / SHODAN_API_KEY / OTX_API_KEY in .env</div>` : '';
 
   document.getElementById('ioc-result').innerHTML=`
     <div style="padding:10px;background:var(--bg2);border:1px solid var(--b1);border-radius:4px;margin-bottom:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
@@ -3373,12 +3426,60 @@ async function doIOC(){
       ${geo.c?`<span style="font-size:11px;color:var(--txt2);font-family:var(--fm)">📍 ${esc(geo.c)}</span>`:''}
       ${cacheHtml}
     </div>
-    ${noEnrichMsg}${vtHtml}${abuseHtml}${shodanHtml}
+    ${noEnrichMsg}${vtHtml}${abuseHtml}${shodanHtml}${otxHtml}
     ${aiText?`<div class="ioc-section"><div class="ioc-lbl">AI Analysis</div><div style="font-size:12px;line-height:1.7;font-family:var(--fm);color:var(--txt2)">${fmtAI(aiText)}</div></div>`:''}`;
 
   if(_iocMap&&type==='ip'){
     renderDots([{...geo,ip:val,count:1,c:geo.c}],'ioc-dots',_iocMap.ll2xy,_iocMap.W,_iocMap.H);
   }
+}
+
+// ─── OTX FEED PANEL ──────────────────────────────────────────
+let _otxFeedTimeout=null;
+async function loadOtxFeed(){
+  if(_otxFeedTimeout)clearTimeout(_otxFeedTimeout);
+  _otxFeedTimeout=setTimeout(async()=>{
+    const search=(document.getElementById('otx-feed-search')?.value||'').trim();
+    const type=document.getElementById('otx-feed-type')?.value||'';
+    const el=document.getElementById('otx-feed-table');
+    if(!el)return;
+    el.innerHTML=spin('Loading OTX feed...');
+    const params=new URLSearchParams({limit:'200'});
+    if(search)params.set('search',search);
+    if(type)params.set('type',type);
+    const data=await G(`/api/otx/feeds?${params}`).catch(()=>null);
+    const stats=await G('/api/otx/stats').catch(()=>null);
+    if(stats){
+      const sb=document.getElementById('otx-stats-badge');
+      if(sb)sb.textContent=`${Number(stats.total||0).toLocaleString()} IOCs · last sync: ${stats.last_sync?new Date(stats.last_sync).toLocaleString():'never'}`;
+    }
+    if(!data?.iocs?.length){el.innerHTML=`<div class="empty"><p>${stats?.configured===false?'OTX_API_KEY not configured':'No IOCs in feed yet — sync will run within 5 minutes of startup'}</p></div>`;return;}
+    el.innerHTML=`<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11px;font-family:var(--fm)">
+      <thead><tr style="color:var(--txt3);text-transform:uppercase;font-size:9px;letter-spacing:1px;border-bottom:1px solid var(--b1)">
+        <th style="padding:6px 8px;text-align:left;width:90px">Type</th>
+        <th style="padding:6px 8px;text-align:left">Indicator</th>
+        <th style="padding:6px 8px;text-align:left">Pulse</th>
+        <th style="padding:6px 8px;text-align:left">Tags</th>
+        <th style="padding:6px 8px;text-align:right;width:50px">Score</th>
+      </tr></thead>
+      <tbody>${data.iocs.map(r=>{
+        const scoreCol=(r.threat_score||0)>=70?'var(--r)':(r.threat_score||0)>=50?'var(--y)':'var(--g)';
+        const tags=(r.tags||[]).slice(0,3).map(t=>`<span class="badge low" style="font-size:8px">${esc(t)}</span>`).join('');
+        const mf=(r.malware_families||[]).slice(0,2).map(m=>`<span class="badge crit" style="font-size:8px">${esc(m)}</span>`).join('');
+        return `<tr style="border-bottom:1px solid rgba(255,255,255,.04);cursor:pointer" onclick="document.getElementById('ioc-val').value='${esc(r.indicator)}';document.getElementById('ioc-type').value='${r.indicator_type==='IPv4'?'ip':r.indicator_type==='domain'?'domain':r.indicator_type==='URL'?'url':'hash'}';go('ioc')">
+          <td style="padding:5px 8px"><span class="badge low" style="font-size:8px">${esc(r.indicator_type)}</span></td>
+          <td style="padding:5px 8px;color:var(--c);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.indicator)}</td>
+          <td style="padding:5px 8px;color:var(--txt2);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.pulse_name||'')}</td>
+          <td style="padding:5px 8px">${tags}${mf}</td>
+          <td style="padding:5px 8px;text-align:right;font-weight:700;color:${scoreCol}">${r.threat_score||0}</td>
+        </tr>`;
+      }).join('')}</tbody></table></div>`;
+  },300);
+}
+async function otxManualSync(){
+  const r=await P('/api/otx/sync',{}).catch(e=>({error:e.message}));
+  if(r?.error)toast(r.error,'error');
+  else{toast('OTX sync triggered','ok');setTimeout(()=>loadOtxFeed(),3000);}
 }
 
 // ─── UEBA CORRELATION PANELS ──────────────────────────────────

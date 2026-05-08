@@ -52,6 +52,7 @@ async function initSchema() {
     `ALTER TABLE investigations ADD COLUMN IF NOT EXISTS tp_status VARCHAR(30) DEFAULT NULL`,
     `ALTER TABLE investigations ADD COLUMN IF NOT EXISTS tp_marked_by VARCHAR(50)`,
     `ALTER TABLE investigations ADD COLUMN IF NOT EXISTS tp_marked_at TIMESTAMPTZ`,
+    `ALTER TABLE investigations ADD COLUMN IF NOT EXISTS hive_case_id VARCHAR(50)`,
 
     // Artifacts (IOCs extracted from investigations)
     `CREATE TABLE IF NOT EXISTS artifacts (
@@ -350,6 +351,24 @@ async function initSchema() {
     )`,
     `CREATE INDEX IF NOT EXISTS idx_ag_lookup ON alert_groups(src_ip, rule_id, window_end)`,
 
+    // ── OTX AlienVault IOC Feed ─────────────────────────────────
+    `CREATE TABLE IF NOT EXISTS otx_ioc_feed (
+      id               SERIAL PRIMARY KEY,
+      pulse_id         VARCHAR(100) NOT NULL,
+      pulse_name       TEXT         NOT NULL,
+      indicator_type   VARCHAR(50)  NOT NULL,
+      indicator        VARCHAR(500) NOT NULL,
+      description      TEXT,
+      tags             TEXT[]       DEFAULT '{}',
+      malware_families TEXT[]       DEFAULT '{}',
+      threat_score     INT          DEFAULT 50,
+      fetched_at       TIMESTAMPTZ  DEFAULT NOW(),
+      UNIQUE(pulse_id, indicator)
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_otx_indicator ON otx_ioc_feed(indicator)`,
+    `CREATE INDEX IF NOT EXISTS idx_otx_type      ON otx_ioc_feed(indicator_type)`,
+    `CREATE INDEX IF NOT EXISTS idx_otx_fetched   ON otx_ioc_feed(fetched_at DESC)`,
+
     // Add composite_risk and group_id to investigations
     `ALTER TABLE investigations ADD COLUMN IF NOT EXISTS composite_risk INT`,
     `ALTER TABLE investigations ADD COLUMN IF NOT EXISTS group_id INT REFERENCES alert_groups(id)`,
@@ -615,14 +634,32 @@ async function getInvestigationStatus(investigationId) {
   return r.rows[0] || null;
 }
 
+async function updateInvestigationHiveCaseId(investigationId, hiveCaseId) {
+  await pool.query(
+    `UPDATE investigations SET hive_case_id=$1 WHERE id=$2`,
+    [String(hiveCaseId), investigationId]
+  );
+}
+
 // ── Artifacts ────────────────────────────────────────────
 async function saveArtifacts(investigationId, artifacts) {
   if (!artifacts?.length) return;
   for (const art of artifacts) {
     try {
+      // Cross-reference against OTX feed — boost threat score for known-bad IOCs
+      let score = art.score || null;
+      try {
+        const otxMatch = await pool.query(
+          `SELECT threat_score FROM otx_ioc_feed WHERE indicator=$1 LIMIT 1`,
+          [art.value]
+        );
+        if (otxMatch.rows.length && score == null) score = otxMatch.rows[0].threat_score;
+        else if (otxMatch.rows.length && score != null) score = Math.max(score, otxMatch.rows[0].threat_score);
+      } catch { /* non-fatal */ }
+
       await pool.query(
         `INSERT INTO artifacts(investigation_id, artifact_type, value, threat_score) VALUES($1,$2,$3,$4)`,
-        [investigationId, art.type, art.value, art.score || null]
+        [investigationId, art.type, art.value, score]
       );
     } catch(e) { /* skip duplicates */ }
   }
@@ -1159,6 +1196,55 @@ async function seedDefaultHuntSchedules() {
   }
 }
 
+// ── OTX AlienVault IOC Feed ───────────────────────────────────
+async function upsertOtxIoc({ pulseId, pulseName, indicatorType, indicator, description, tags, malwareFamilies, threatScore }) {
+  await pool.query(`
+    INSERT INTO otx_ioc_feed(pulse_id, pulse_name, indicator_type, indicator, description, tags, malware_families, threat_score, fetched_at)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,NOW())
+    ON CONFLICT(pulse_id, indicator) DO UPDATE
+      SET pulse_name=EXCLUDED.pulse_name, description=EXCLUDED.description,
+          tags=EXCLUDED.tags, malware_families=EXCLUDED.malware_families,
+          threat_score=EXCLUDED.threat_score, fetched_at=NOW()
+  `, [pulseId, pulseName, indicatorType, indicator, description || '', tags || [], malwareFamilies || [], threatScore || 50]);
+}
+
+async function getOtxIocs({ type, search, limit = 100, offset = 0 } = {}) {
+  const conditions = [];
+  const params = [];
+  if (type) { params.push(type); conditions.push(`indicator_type=$${params.length}`); }
+  if (search) { params.push(`%${search}%`); conditions.push(`indicator ILIKE $${params.length}`); }
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  params.push(limit, offset);
+  const r = await pool.query(
+    `SELECT * FROM otx_ioc_feed ${where} ORDER BY fetched_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`,
+    params
+  );
+  return r.rows;
+}
+
+async function getOtxStats() {
+  const r = await pool.query(`
+    SELECT
+      COUNT(*) AS total,
+      MAX(fetched_at) AS last_sync,
+      COUNT(*) FILTER (WHERE indicator_type='IPv4') AS ipv4_count,
+      COUNT(*) FILTER (WHERE indicator_type='domain') AS domain_count,
+      COUNT(*) FILTER (WHERE indicator_type IN ('FileHash-MD5','FileHash-SHA1','FileHash-SHA256')) AS hash_count,
+      COUNT(*) FILTER (WHERE indicator_type='URL') AS url_count
+    FROM otx_ioc_feed
+  `);
+  return r.rows[0];
+}
+
+async function checkOtxIndicator(indicator) {
+  const r = await pool.query(
+    `SELECT pulse_id, pulse_name, indicator_type, tags, malware_families, threat_score, fetched_at
+     FROM otx_ioc_feed WHERE indicator=$1 LIMIT 5`,
+    [indicator]
+  );
+  return r.rows;
+}
+
 // ── Health check ─────────────────────────────────────────────
 async function ping() {
   try {
@@ -1183,6 +1269,7 @@ module.exports = {
   updateSmtpSettings,
   updateInvestigationStatus,
   getInvestigationStatus,
+  updateInvestigationHiveCaseId,
   saveArtifacts,
   ping,
   listSubnets,
@@ -1261,6 +1348,11 @@ module.exports = {
   // Alert deduplication groups
   upsertAlertGroup,
   listAlertGroups,
+  // OTX AlienVault IOC feed
+  upsertOtxIoc,
+  getOtxIocs,
+  getOtxStats,
+  checkOtxIndicator,
 };
 
 // ── Evidence Files CRUD ──────────────────────────────────
