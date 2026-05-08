@@ -311,6 +311,181 @@ body.dim .live-dot{box-shadow:0 0 3px var(--g)}
 .audit-result.ok{background:var(--gdim);color:var(--g)}
 .audit-result.skip{background:var(--cdim);color:var(--c)}
 .audit-result.fail{background:var(--rdim);color:var(--r)}
+
+/* ═══════════════════════════════════════════════════════════
+   PREMIUM VISUAL UPGRADE — Glassmorphism · Glow · Animate
+═══════════════════════════════════════════════════════════ */
+
+/* — Ambient background mesh — */
+body::before{
+  content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
+  background:
+    radial-gradient(ellipse 80% 55% at 15% 5%,  rgba(0,229,255,.035) 0%,transparent 60%),
+    radial-gradient(ellipse 55% 45% at 85% 85%,  rgba(0,100,200,.04) 0%,transparent 55%),
+    radial-gradient(ellipse 35% 35% at 50% 50%,  rgba(0,30,80,.06)   0%,transparent 50%);
+}
+#app{position:relative;z-index:1}
+
+/* — Glassmorphism cards — */
+.card{
+  background:rgba(9,21,36,.78);
+  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  border-color:rgba(26,47,74,.7);
+  transition:border-color .25s,box-shadow .25s,transform .2s;
+}
+.card:hover{
+  border-color:rgba(0,229,255,.22);
+  box-shadow:0 6px 28px rgba(0,0,0,.45),0 0 0 1px rgba(0,229,255,.07) inset;
+}
+
+/* — KPI cards — */
+.kpi{
+  background:rgba(9,21,36,.82);
+  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+}
+.kpi:hover{
+  transform:translateY(-3px);
+  border-color:var(--kc,var(--c));
+  box-shadow:0 10px 32px rgba(0,0,0,.55),0 0 18px -4px var(--kc,var(--c));
+}
+.kpi::before{
+  content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;
+  background:radial-gradient(ellipse at 0% 0%,rgba(0,229,255,.04),transparent 60%);
+}
+
+/* — Sidebar polish — */
+#sb{transition:width .26s cubic-bezier(.4,0,.2,1)}
+.sbi{transition:background .15s,border-left-color .15s,color .15s,box-shadow .15s}
+.sbi.on{
+  background:linear-gradient(90deg,rgba(0,229,255,.11),rgba(0,229,255,.03));
+  box-shadow:inset 0 0 14px rgba(0,229,255,.06);
+}
+.sbi.on svg{filter:drop-shadow(0 0 5px rgba(0,229,255,.55))}
+.sbi:hover{box-shadow:inset 0 0 10px rgba(0,229,255,.04)}
+.sb-sec{position:relative}
+.sb-sec::after{
+  content:"";position:absolute;bottom:2px;left:16px;right:16px;height:1px;
+  background:linear-gradient(90deg,transparent,rgba(0,229,255,.15),transparent);
+}
+.sb-logo-icon{
+  box-shadow:0 0 18px rgba(0,229,255,.18);
+  transition:box-shadow .3s;
+}
+.sb-logo-icon:hover{box-shadow:0 0 28px rgba(0,229,255,.35)}
+
+/* — Collapsible sidebar — */
+#app.sb-collapsed{--sb:56px}
+#app.sb-collapsed .sbi-lbl,
+#app.sb-collapsed .sbi-n,
+#app.sb-collapsed .sb-sec,
+#app.sb-collapsed .sb-name,
+#app.sb-collapsed .sb-uname,
+#app.sb-collapsed .sb-badge{opacity:0;width:0;overflow:hidden;display:inline-block;white-space:nowrap}
+#app.sb-collapsed .sb-user{padding:10px 8px;justify-content:center}
+#app.sb-collapsed .sbi{padding:10px 0;justify-content:center}
+#app.sb-collapsed .sb-logo{padding:14px 0;justify-content:center}
+#sb-toggle{
+  background:none;border:none;color:var(--txt2);cursor:pointer;
+  padding:6px 7px;border-radius:var(--r3);display:flex;align-items:center;
+  transition:color .15s,background .15s;margin-right:2px;flex-shrink:0;
+}
+#sb-toggle:hover{color:var(--c);background:rgba(0,229,255,.07)}
+#sb-toggle svg{width:17px;height:17px;transition:transform .26s}
+#app.sb-collapsed #sb-toggle svg{transform:scaleX(-1)}
+
+/* — Topbar glass — */
+#tb{
+  background:rgba(7,16,32,.88);
+  backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
+  border-bottom-color:rgba(26,47,74,.55);
+  box-shadow:0 1px 24px rgba(0,0,0,.45);
+}
+.tb-btn{transition:all .18s}
+.tb-btn:hover{background:rgba(0,229,255,.07);box-shadow:0 0 10px rgba(0,229,255,.12)}
+.tb-clock{
+  background:linear-gradient(135deg,rgba(0,229,255,.07),rgba(0,229,255,.02));
+  border-color:rgba(0,229,255,.22);
+  box-shadow:0 0 14px rgba(0,229,255,.07) inset;
+}
+.tb-clock-hms{text-shadow:0 0 14px rgba(0,229,255,.55)}
+.tb-av{box-shadow:0 0 14px rgba(0,229,255,.35);transition:box-shadow .2s}
+.tb-av:hover{box-shadow:0 0 22px rgba(0,229,255,.55)}
+
+/* — Notification badge pulse — */
+.notif-badge:not(.hidden){
+  animation:badgePulse 2.4s infinite;
+  box-shadow:0 0 8px rgba(255,23,68,.6);
+}
+@keyframes badgePulse{
+  0%,100%{box-shadow:0 0 6px rgba(255,23,68,.55);transform:scale(1)}
+  50%{box-shadow:0 0 14px rgba(255,23,68,.85);transform:scale(1.12)}
+}
+
+/* — Modal glass — */
+.modal{
+  background:rgba(9,21,36,.92);
+  backdrop-filter:blur(22px);-webkit-backdrop-filter:blur(22px);
+  border-color:rgba(0,229,255,.16);
+  box-shadow:0 36px 88px rgba(0,0,0,.92),0 0 60px rgba(0,100,200,.1);
+}
+.modal-ov{background:rgba(0,0,0,.78)}
+
+/* — Buttons glow — */
+.btn{transition:all .18s}
+.btn-p:hover{box-shadow:0 0 18px rgba(0,229,255,.32),0 2px 8px rgba(0,0,0,.4);transform:translateY(-1px)}
+.btn-g:hover{box-shadow:0 0 18px rgba(0,230,118,.3);transform:translateY(-1px)}
+.btn-r:hover{box-shadow:0 0 18px rgba(255,23,68,.3);transform:translateY(-1px)}
+
+/* — Inputs focus glow — */
+.fi:focus,.fs:focus,.fta:focus{
+  box-shadow:0 0 0 2px rgba(0,229,255,.15),0 0 10px rgba(0,229,255,.1);
+}
+
+/* — Toasts glow — */
+.toast.ok{box-shadow:0 4px 22px rgba(0,230,118,.22)}
+.toast.err{box-shadow:0 4px 22px rgba(255,23,68,.22)}
+.toast.info{box-shadow:0 4px 22px rgba(0,229,255,.22)}
+.toast.warn{box-shadow:0 4px 22px rgba(255,171,0,.22)}
+
+/* — Live dot enhanced glow — */
+.live-dot{box-shadow:0 0 8px var(--g),0 0 18px rgba(0,230,118,.3)}
+
+/* — Map dots enhanced glow — */
+.mdot{filter:drop-shadow(0 0 5px currentColor)}
+
+/* — Page headings gradient text — */
+.ph h1{
+  background:linear-gradient(120deg,var(--txt) 40%,rgba(0,229,255,.75) 100%);
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
+}
+
+/* — Dark SOC ring animated glow — */
+.dark-soc-status-ring.active{
+  animation:activePulse 3s ease-in-out infinite;
+}
+@keyframes activePulse{
+  0%,100%{box-shadow:0 0 30px rgba(0,230,118,.2),0 0 60px rgba(0,230,118,.08) inset}
+  50%{box-shadow:0 0 50px rgba(0,230,118,.4),0 0 80px rgba(0,230,118,.16) inset}
+}
+
+/* — Kanban glass — */
+.kb-col{
+  background:rgba(7,16,32,.82);
+  backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+  transition:border-color .2s;
+}
+.kb-card{transition:border-color .18s,box-shadow .18s}
+.kb-card:hover{border-color:rgba(0,229,255,.28);box-shadow:0 4px 18px rgba(0,0,0,.35)}
+
+/* — Badges highlight — */
+.badge.critical{box-shadow:0 0 8px rgba(255,23,68,.22)}
+.badge.ok,.badge.active{box-shadow:0 0 6px rgba(0,230,118,.16)}
+
+/* — Scrollbar accent on hover — */
+::-webkit-scrollbar-thumb:hover{background:var(--c2)}
+
+/* — Spinner glow — */
+.spin{box-shadow:0 0 8px rgba(0,229,255,.18)}
 </style>
 </head>
 <body>
@@ -369,6 +544,9 @@ if(localStorage.getItem("soc_dim")==="1")document.body.classList.add("dim");
 
 <!-- ══ TOPBAR ══════════════════════════════════════════════════ -->
 <header id="tb">
+  <button id="sb-toggle" onclick="toggleSidebar()" title="Toggle sidebar">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+  </button>
   <div class="tb-brand">
     <div class="tb-icon">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#00e5ff" stroke-width="1.5"><path d="M12 2L20 7V17L12 22L4 17V7Z"/><circle cx="12" cy="12" r="2.5" fill="#00e5ff"/></svg>
@@ -5750,6 +5928,17 @@ function lcQuick(q){
 }
 
 function lcKey(e){if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){e.preventDefault();lcInvestigate();}}
+
+// ─── SIDEBAR COLLAPSE ─────────────────────────────────────────
+function toggleSidebar(){
+  const app=document.getElementById('app');
+  const collapsed=app.classList.toggle('sb-collapsed');
+  localStorage.setItem('soc_sb_collapsed',collapsed?'1':'0');
+}
+(function(){
+  if(localStorage.getItem('soc_sb_collapsed')==='1')
+    document.getElementById('app').classList.add('sb-collapsed');
+})();
 
 // ─── DIM MODE TOGGLE ──────────────────────────────────────────
 function toggleDim(){
