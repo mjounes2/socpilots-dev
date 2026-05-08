@@ -550,14 +550,20 @@ app.get('/api/dashboard', authMW, async (req, res) => {
 // ── ALERTS ── OpenSearch ──
 app.get('/api/alerts', authMW, async (req, res) => {
   try {
-    const limit  = Math.min(parseInt(req.query.limit) || 100, 500);
-    const sev    = req.query.severity; // critical|high|medium|low
+    const page      = Math.max(parseInt(req.query.page) || 1, 1);
+    const page_size = Math.min(parseInt(req.query.page_size) || parseInt(req.query.limit) || 50, 500);
+    const sev    = req.query.severity;
     const search = req.query.q;
     const hours  = parseInt(req.query.hours) || 0;
     const fromTs = req.query.from || null;
     const toTs   = req.query.to   || null;
     const agent  = req.query.agent;
     const srcip  = req.query.srcip;
+
+    const from = (page - 1) * page_size;
+    // OpenSearch hard limit is 10000 hits; cap gracefully
+    const cappedFrom = Math.min(from, 9500);
+    const cappedSize = Math.min(page_size, 10000 - cappedFrom);
 
     const must = [];
     if (fromTs || toTs) {
@@ -577,13 +583,16 @@ app.get('/api/alerts', authMW, async (req, res) => {
     if (search) must.push({ multi_match: { query: search, fields: ['rule.description', 'full_log', 'agent.name', 'data.srcip'] } });
 
     const body = {
-      size: limit,
+      from: cappedFrom,
+      size: cappedSize,
+      track_total_hits: true,
       sort: [{ '@timestamp': 'desc' }],
       query: must.length ? { bool: { must } } : { match_all: {} },
       _source: ['@timestamp', 'rule', 'agent', 'data', 'srcip', 'full_log', 'location', 'manager'],
     };
 
     const r = await osSearch(body);
+    const total = typeof r.hits.total === 'object' ? r.hits.total.value : (r.hits.total || 0);
     const alerts = r.hits.hits.map(h => {
       const s = h._source;
       return {
@@ -606,7 +615,7 @@ app.get('/api/alerts', authMW, async (req, res) => {
         location:    s.location || '',
       };
     });
-    res.json({ alerts, total: r.hits.total?.value || alerts.length });
+    res.json({ alerts, total, page, page_size, has_more: page * page_size < total });
   } catch (e) {
     console.error('[alerts]', e.message);
     res.status(502).json({ error: e.message });
@@ -1209,14 +1218,14 @@ app.post('/api/ai/investigate', authMW, async (req, res) => {
 // ── INVESTIGATION HISTORY ──
 app.get('/api/investigations', authMW, async (req, res) => {
   try {
-    const { severity, agent, ruleId, q, limit=100, offset=0 } = req.query;
-    const items = await db.listInvestigations({
-      severity, agent, ruleId, q,
-      limit: Math.min(parseInt(limit)||100, 500),
-      offset: parseInt(offset)||0,
-    });
-    const stats = await db.getInvestigationStats();
-    res.json({ items, stats, total: items.length });
+    const { severity, agent, ruleId, q, sort_by, sort_dir, time_from, time_to } = req.query;
+    const page      = parseInt(req.query.page)      || 1;
+    const page_size = Math.min(parseInt(req.query.page_size) || parseInt(req.query.limit) || 50, 500);
+    const [{ rows: items, total }, stats] = await Promise.all([
+      db.listInvestigations({ severity, agent, ruleId, q, sort_by, sort_dir, time_from, time_to, page, page_size }),
+      db.getInvestigationStats(),
+    ]);
+    res.json({ items, stats, total, page, page_size, has_more: page * page_size < total });
   } catch(e) {
     res.status(503).json({ error: 'DB unavailable: ' + e.message });
   }
@@ -1236,9 +1245,10 @@ app.get('/api/investigations/:id', authMW, async (req, res) => {
 // ── ALERT GROUPS (deduplication view) ──
 app.get('/api/alert-groups', authMW, async (req, res) => {
   try {
-    const { limit = 50, offset = 0 } = req.query;
-    const groups = await db.listAlertGroups({ limit: parseInt(limit)||50, offset: parseInt(offset)||0 });
-    res.json({ groups, total: groups.length });
+    const page      = parseInt(req.query.page)      || 1;
+    const page_size = Math.min(parseInt(req.query.page_size) || parseInt(req.query.limit) || 50, 500);
+    const { rows: groups, total } = await db.listAlertGroups({ page, page_size });
+    res.json({ groups, total, page, page_size, has_more: page * page_size < total });
   } catch(e) {
     res.status(503).json({ error: e.message });
   }
@@ -1424,13 +1434,13 @@ app.delete('/api/playbooks/:id', authMW, async (req, res) => {
 // List playbook executions
 app.get('/api/playbook-executions', authMW, async (req, res) => {
   try {
-    const limit  = Math.min(parseInt(req.query.limit) || 100, 500);
-    const offset = parseInt(req.query.offset) || 0;
-    const [execs, stats] = await Promise.all([
-      db.listPlaybookExecutions({ limit, offset }),
+    const page      = Math.max(parseInt(req.query.page) || 1, 1);
+    const page_size = Math.min(parseInt(req.query.page_size) || parseInt(req.query.limit) || 50, 500);
+    const [{ rows: execs, total }, stats] = await Promise.all([
+      db.listPlaybookExecutions({ page, page_size }),
       db.getPlaybookExecStats(),
     ]);
-    res.json({ executions: execs, stats, total: execs.length });
+    res.json({ executions: execs, stats, total, page, page_size, has_more: page * page_size < total });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -1506,7 +1516,7 @@ app.get('/api/system-events', authMW, async (req, res) => {
         metadata:    n.metadata,
         created_at:  n.created_at,
       })),
-      ...executions.map(e => ({
+      ...(executions.rows || []).map(e => ({
         id:          `pb_${e.id}`,
         source:      'playbook',
         event_type:  'playbook',
@@ -2368,11 +2378,13 @@ app.delete('/api/subnets/:id', authMW, async (req, res) => {
 app.get('/api/assets', authMW, async (req, res) => {
   try {
     const { status, q } = req.query;
-    const [assets, stats] = await Promise.all([
-      db.listAssets({ status, q }),
+    const page      = parseInt(req.query.page)      || 1;
+    const page_size = Math.min(parseInt(req.query.page_size) || parseInt(req.query.limit) || 50, 500);
+    const [{ rows: assets, total }, stats] = await Promise.all([
+      db.listAssets({ status, q, page, page_size }),
       db.getAssetStats(),
     ]);
-    res.json({ assets, stats });
+    res.json({ assets, stats, total, page, page_size, has_more: page * page_size < total });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -2627,8 +2639,11 @@ app.post('/api/ueba/analyze-anomaly', authMW, async (req, res) => {
 
 app.get('/api/ueba/leaderboard', authMW, async (req, res) => {
   try {
-    const users = await ueba.getRiskLeaderboard(parseInt(req.query.limit) || 20);
-    res.json({ users });
+    const page      = Math.max(parseInt(req.query.page) || 1, 1);
+    const page_size = Math.min(parseInt(req.query.page_size) || parseInt(req.query.limit) || 20, 200);
+    const skip      = (page - 1) * page_size;
+    const { users, total } = await ueba.getRiskLeaderboard(page_size, skip);
+    res.json({ users, total, page, page_size, has_more: page * page_size < total });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -2789,8 +2804,10 @@ app.delete('/api/chat/sessions/:sid', authMW, async (req, res) => {
 
 app.get('/api/hunt/schedules', authMW, async (req, res) => {
   try {
-    const schedules = await db.listHuntSchedules();
-    res.json({ schedules, total: schedules.length });
+    const page      = parseInt(req.query.page)      || 1;
+    const page_size = Math.min(parseInt(req.query.page_size) || parseInt(req.query.limit) || 50, 200);
+    const { rows: schedules, total } = await db.listHuntSchedules({ page, page_size });
+    res.json({ schedules, total, page, page_size, has_more: page * page_size < total });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -2820,7 +2837,7 @@ app.delete('/api/hunt/schedules/:id', authMW, requireRole('l2'), async (req, res
 
 app.post('/api/hunt/schedules/:id/run', authMW, requireRole('l2'), async (req, res) => {
   try {
-    const schedules = await db.listHuntSchedules();
+    const { rows: schedules } = await db.listHuntSchedules({ limit: 1000 });
     const sched = schedules.find(s => s.id === parseInt(req.params.id));
     if (!sched) return res.status(404).json({ error: 'schedule not found' });
     res.json({ ok: true, message: 'Hunt triggered', schedule_id: sched.id });
@@ -2898,7 +2915,7 @@ function cronNextRun(cronExpr) {
 async function startHuntScheduler() {
   setInterval(async () => {
     try {
-      const schedules = await db.listHuntSchedules();
+      const { rows: schedules } = await db.listHuntSchedules({ limit: 1000 });
       const now = new Date();
       for (const sched of schedules) {
         if (!sched.enabled) continue;
@@ -3197,14 +3214,15 @@ app.get('/api/otx/stats', authMW, async (req, res) => {
 // GET /api/otx/feeds — list IOCs from the feed (paginated, filterable)
 app.get('/api/otx/feeds', authMW, async (req, res) => {
   try {
-    const { type, search, limit = '100', offset = '0' } = req.query;
-    const iocs = await db.getOtxIocs({
+    const { type, search } = req.query;
+    const page      = parseInt(req.query.page)      || 1;
+    const page_size = Math.min(parseInt(req.query.page_size) || parseInt(req.query.limit) || 100, 500);
+    const { rows: iocs, total } = await db.getOtxIocs({
       type:   type   || undefined,
       search: search || undefined,
-      limit:  Math.min(parseInt(limit) || 100, 500),
-      offset: parseInt(offset) || 0,
+      page, page_size,
     });
-    res.json({ iocs, count: iocs.length });
+    res.json({ iocs, total, page, page_size, has_more: page * page_size < total, count: iocs.length });
   } catch(e) {
     res.status(500).json({ error: e.message });
   }

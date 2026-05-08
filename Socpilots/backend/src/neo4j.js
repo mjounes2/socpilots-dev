@@ -297,29 +297,40 @@ async function ingestEvent(ev) {
 }
 
 // ── Risk Leaderboard ─────────────────────────────────────────
-async function getRiskLeaderboard(limit = 20) {
-  const records = await run(
-    `MATCH (u:User)
-     WHERE u.total_events > 0
-     OPTIONAL MATCH (u)-[r:LOGGED_IN]->(h:Host)
-     WHERE r.time >= toString(datetime() - duration({hours: 24}))
-     WITH u, count(r) AS events_24h, collect(DISTINCT h.name)[..5] AS recent_hosts
-     RETURN u.name AS user,
-            coalesce(u.risk_score, 0) AS risk_score,
-            coalesce(u.anomaly_count, 0) AS anomaly_count,
-            u.last_anomaly AS last_anomaly,
-            events_24h, recent_hosts
-     ORDER BY risk_score DESC, u.total_events DESC LIMIT $limit`,
-    { limit }
-  );
-  return records.map(r => ({
-    user:          r.get('user'),
-    risk_score:    r.get('risk_score')?.toNumber?.() ?? r.get('risk_score') ?? 0,
-    anomaly_count: r.get('anomaly_count')?.toNumber?.() ?? 0,
-    last_anomaly:  r.get('last_anomaly'),
-    events_24h:    r.get('events_24h')?.toNumber?.() ?? 0,
-    recent_hosts:  r.get('recent_hosts') || [],
-  }));
+async function getRiskLeaderboard(limit = 20, skip = 0) {
+  const d = getDriver();
+  if (!d) return { users: [], total: 0 };
+  const neo4j = require('neo4j-driver');
+  const s1 = d.session(), s2 = d.session();
+  try {
+    const [dataRes, countRes] = await Promise.all([
+      s1.run(
+        `MATCH (u:User)
+         WHERE u.total_events > 0
+         OPTIONAL MATCH (u)-[r:LOGGED_IN]->(h:Host)
+         WHERE r.time >= toString(datetime() - duration({hours: 24}))
+         WITH u, count(r) AS events_24h, collect(DISTINCT h.name)[..5] AS recent_hosts
+         RETURN u.name AS user,
+                coalesce(u.risk_score, 0) AS risk_score,
+                coalesce(u.anomaly_count, 0) AS anomaly_count,
+                u.last_anomaly AS last_anomaly,
+                events_24h, recent_hosts
+         ORDER BY risk_score DESC, u.total_events DESC SKIP $skip LIMIT $limit`,
+        { limit: neo4j.int(limit), skip: neo4j.int(skip) }
+      ),
+      s2.run(`MATCH (u:User) WHERE u.total_events > 0 RETURN count(u) AS total`),
+    ]);
+    const users = dataRes.records.map(r => ({
+      user:          r.get('user'),
+      risk_score:    r.get('risk_score')?.toNumber?.() ?? r.get('risk_score') ?? 0,
+      anomaly_count: r.get('anomaly_count')?.toNumber?.() ?? 0,
+      last_anomaly:  r.get('last_anomaly'),
+      events_24h:    r.get('events_24h')?.toNumber?.() ?? 0,
+      recent_hosts:  r.get('recent_hosts') || [],
+    }));
+    const total = countRes.records[0]?.get('total')?.toNumber?.() ?? 0;
+    return { users, total };
+  } finally { await Promise.all([s1.close(), s2.close()]); }
 }
 
 // ── Behavioral Profile per User / Host / IP ──────────────────

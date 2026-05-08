@@ -455,16 +455,20 @@ async function upsertAlertGroup(srcIp, ruleId, agent) {
   return { id: r.rows[0].id, count: 1, is_new: true };
 }
 
-async function listAlertGroups({ limit = 50, offset = 0 } = {}) {
+async function listAlertGroups({ limit = 50, offset = 0, page, page_size } = {}) {
+  if (page !== undefined) { page_size = Math.min(parseInt(page_size)||50, 500); offset = (Math.max(parseInt(page)||1,1)-1)*page_size; limit = page_size; }
   const r = await pool.query(
-    `SELECT ag.*, COUNT(i.id)::int AS investigation_count
+    `SELECT ag.*, COUNT(i.id)::int AS investigation_count,
+            COUNT(*) OVER() AS total_count
      FROM alert_groups ag
      LEFT JOIN investigations i ON i.group_id = ag.id
      GROUP BY ag.id
      ORDER BY ag.last_seen DESC LIMIT $1 OFFSET $2`,
     [limit, offset]
   );
-  return r.rows;
+  const total = r.rows.length ? parseInt(r.rows[0].total_count) : 0;
+  const rows = r.rows.map(({ total_count, ...row }) => row);
+  return { rows, total };
 }
 
 // ── Investigations CRUD ──────────────────────────────────
@@ -512,12 +516,18 @@ async function getInvestigationByAlertKey(alertKey) {
   return r.rows[0] || null;
 }
 
-async function listInvestigations({ limit=100, offset=0, severity, agent, ruleId, q } = {}) {
-  let where = ['1=1'];
-  let params = [];
-  if (severity) { params.push(severity); where.push(`severity=$${params.length}`); }
-  if (agent)    { params.push(agent);    where.push(`agent=$${params.length}`); }
-  if (ruleId)   { params.push(ruleId);   where.push(`rule_id=$${params.length}`); }
+async function listInvestigations({ limit=50, offset=0, page, page_size, severity, agent, ruleId, q, time_from, time_to, sort_by='created_at', sort_dir='desc' } = {}) {
+  const ALLOWED_SORT = { created_at:1, severity:1, rule_level:1, agent:1, src_ip:1, duration_ms:1 };
+  const col = ALLOWED_SORT[sort_by] ? sort_by : 'created_at';
+  const dir = sort_dir === 'asc' ? 'ASC' : 'DESC';
+  if (page !== undefined) { page_size = Math.min(parseInt(page_size)||50, 500); offset = (Math.max(parseInt(page)||1,1)-1)*page_size; limit = page_size; }
+  else { limit = Math.min(parseInt(limit)||50, 500); offset = parseInt(offset)||0; }
+  let where = ['1=1'], params = [];
+  if (severity)  { params.push(severity);  where.push(`severity=$${params.length}`); }
+  if (agent)     { params.push(agent);     where.push(`agent=$${params.length}`); }
+  if (ruleId)    { params.push(ruleId);    where.push(`rule_id=$${params.length}`); }
+  if (time_from) { params.push(time_from); where.push(`created_at >= $${params.length}`); }
+  if (time_to)   { params.push(time_to);   where.push(`created_at <= $${params.length}`); }
   if (q) {
     params.push(`%${q}%`);
     where.push(`(description ILIKE $${params.length} OR src_ip ILIKE $${params.length} OR report_short ILIKE $${params.length})`);
@@ -525,11 +535,15 @@ async function listInvestigations({ limit=100, offset=0, severity, agent, ruleId
   params.push(limit, offset);
   const sql = `SELECT id, alert_key, rule_id, rule_level, severity, agent, src_ip,
     description, mitre, timestamp, report_short, created_by, auto_triaged,
-    duration_ms, created_at FROM investigations
+    duration_ms, created_at, tp_status, hive_case_id,
+    COUNT(*) OVER() AS total_count
+    FROM investigations
     WHERE ${where.join(' AND ')}
-    ORDER BY created_at DESC LIMIT $${params.length-1} OFFSET $${params.length}`;
+    ORDER BY ${col} ${dir} LIMIT $${params.length-1} OFFSET $${params.length}`;
   const r = await pool.query(sql, params);
-  return r.rows;
+  const total = r.rows.length ? parseInt(r.rows[0].total_count) : 0;
+  const rows = r.rows.map(({ total_count, ...row }) => row);
+  return { rows, total };
 }
 
 async function getInvestigationById(id) {
@@ -682,18 +696,23 @@ async function deleteSubnet(id) {
 }
 
 // ── Asset Discovery — Assets ─────────────────────────────
-async function listAssets({ status, q, limit=500 } = {}) {
+async function listAssets({ status, q, limit=50, offset=0, page, page_size } = {}) {
+  if (page !== undefined) { page_size = Math.min(parseInt(page_size)||50, 500); offset = (Math.max(parseInt(page)||1,1)-1)*page_size; limit = page_size; }
+  else { limit = Math.min(parseInt(limit)||50, 500); offset = parseInt(offset)||0; }
   let where = ['1=1'], params = [];
   if (status) { params.push(status); where.push(`status=$${params.length}`); }
   if (q) { params.push(`%${q}%`); where.push(`(ip ILIKE $${params.length} OR hostname ILIKE $${params.length} OR os_guess ILIKE $${params.length})`); }
-  params.push(limit);
+  params.push(limit, offset);
   const r = await pool.query(
-    `SELECT a.*, s.cidr as subnet_cidr, s.label as subnet_label
+    `SELECT a.*, s.cidr as subnet_cidr, s.label as subnet_label,
+            COUNT(*) OVER() AS total_count
      FROM assets a LEFT JOIN subnets s ON a.subnet_id=s.id
-     WHERE ${where.join(' AND ')} ORDER BY a.ip LIMIT $${params.length}`,
+     WHERE ${where.join(' AND ')} ORDER BY a.ip LIMIT $${params.length-1} OFFSET $${params.length}`,
     params
   );
-  return r.rows;
+  const total = r.rows.length ? parseInt(r.rows[0].total_count) : 0;
+  const rows = r.rows.map(({ total_count, ...row }) => row);
+  return { rows, total };
 }
 async function upsertAsset({ ip, hostname, mac, vendor, os_guess, open_ports, subnet_id,
                              wazuh_agent_id, wazuh_agent_name, wazuh_agent_status }) {
@@ -849,12 +868,15 @@ async function savePlaybookExecution({ playbookId, playbookName, investigationId
   return r.rows[0];
 }
 
-async function listPlaybookExecutions({ limit = 100, offset = 0 } = {}) {
+async function listPlaybookExecutions({ limit = 50, offset = 0, page, page_size } = {}) {
+  if (page !== undefined) { page_size = Math.min(parseInt(page_size)||50, 500); offset = (Math.max(parseInt(page)||1,1)-1)*page_size; limit = page_size; }
   const r = await pool.query(
-    `SELECT * FROM playbook_executions ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
+    `SELECT *, COUNT(*) OVER() AS total_count FROM playbook_executions ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
     [limit, offset]
   );
-  return r.rows;
+  const total = r.rows.length ? parseInt(r.rows[0].total_count) : 0;
+  const rows = r.rows.map(({ total_count, ...row }) => row);
+  return { rows, total };
 }
 
 async function getPlaybookExecStats() {
@@ -1131,9 +1153,15 @@ async function deleteSession(sessionId, username) {
 }
 
 // ── Hunt schedules CRUD ──────────────────────────────────────
-async function listHuntSchedules() {
-  const r = await pool.query(`SELECT * FROM hunt_schedules ORDER BY id`);
-  return r.rows;
+async function listHuntSchedules({ limit=50, offset=0, page, page_size } = {}) {
+  if (page !== undefined) { page_size = Math.min(parseInt(page_size)||50, 200); offset = (Math.max(parseInt(page)||1,1)-1)*page_size; limit = page_size; }
+  const r = await pool.query(
+    `SELECT *, COUNT(*) OVER() AS total_count FROM hunt_schedules ORDER BY id LIMIT $1 OFFSET $2`,
+    [limit, offset]
+  );
+  const total = r.rows.length ? parseInt(r.rows[0].total_count) : 0;
+  const rows = r.rows.map(({ total_count, ...row }) => row);
+  return { rows, total };
 }
 
 async function createHuntSchedule(name, query, cronExpr, createdBy) {
@@ -1208,7 +1236,8 @@ async function upsertOtxIoc({ pulseId, pulseName, indicatorType, indicator, desc
   `, [pulseId, pulseName, indicatorType, indicator, description || '', tags || [], malwareFamilies || [], threatScore || 50]);
 }
 
-async function getOtxIocs({ type, search, limit = 100, offset = 0 } = {}) {
+async function getOtxIocs({ type, search, limit = 100, offset = 0, page, page_size } = {}) {
+  if (page !== undefined) { page_size = Math.min(parseInt(page_size)||100, 500); offset = (Math.max(parseInt(page)||1,1)-1)*page_size; limit = page_size; }
   const conditions = [];
   const params = [];
   if (type) { params.push(type); conditions.push(`indicator_type=$${params.length}`); }
@@ -1216,10 +1245,12 @@ async function getOtxIocs({ type, search, limit = 100, offset = 0 } = {}) {
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
   params.push(limit, offset);
   const r = await pool.query(
-    `SELECT * FROM otx_ioc_feed ${where} ORDER BY fetched_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`,
+    `SELECT *, COUNT(*) OVER() AS total_count FROM otx_ioc_feed ${where} ORDER BY fetched_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`,
     params
   );
-  return r.rows;
+  const total = r.rows.length ? parseInt(r.rows[0].total_count) : 0;
+  const rows = r.rows.map(({ total_count, ...row }) => row);
+  return { rows, total };
 }
 
 async function getOtxStats() {

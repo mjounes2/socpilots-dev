@@ -544,8 +544,8 @@ if(localStorage.getItem("soc_dim")==="1")document.body.classList.add("dim");
   <div class="card">
     <div class="card-hd"><div class="card-ttl">Alert Feed</div>
       <div class="row">
-        <input class="fi" style="width:140px" placeholder="Search..." id="al-q" oninput="filterAlerts()">
-        <select class="fs" style="width:100px" id="al-sev" onchange="loadAlerts()"><option value="">All Sev</option><option value="critical">Critical</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select>
+        <input class="fi" style="width:140px" placeholder="Search..." id="al-q" oninput="_alertPage=1;loadAlerts()">
+        <select class="fs" style="width:100px" id="al-sev" onchange="_alertPage=1;loadAlerts()"><option value="">All Sev</option><option value="critical">Critical</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select>
         <select class="fs" style="width:105px" id="al-hrs" onchange="onAlHrsChange()">
           <option value="0">All Time</option>
           <option value="1">Last 1h</option>
@@ -561,9 +561,9 @@ if(localStorage.getItem("soc_dim")==="1")document.body.classList.add("dim");
           <span style="color:var(--txt3);font-size:11px;white-space:nowrap">→</span>
           <input type="date" class="fi" id="al-to-date" style="width:130px;padding:4px 7px;font-size:11px" onchange="loadAlerts()">
         </div>
-        <input class="fi" style="width:130px" placeholder="Agent..." id="al-agent" oninput="loadAlerts()">
-        <input class="fi" style="width:120px" placeholder="Src IP..." id="al-srcip" oninput="loadAlerts()">
-        <button class="btn btn-p btn-sm" onclick="loadAlerts()">↻ Refresh</button>
+        <input class="fi" style="width:130px" placeholder="Agent..." id="al-agent" oninput="_alertPage=1;loadAlerts()">
+        <input class="fi" style="width:120px" placeholder="Src IP..." id="al-srcip" oninput="_alertPage=1;loadAlerts()">
+        <button class="btn btn-p btn-sm" onclick="_alertPage=1;loadAlerts()">↻ Refresh</button>
       </div>
     </div>
     <div id="al-total" style="font-size:10px;color:#8ab0d0;font-family:var(--fm);margin-bottom:8px"></div>
@@ -1102,17 +1102,27 @@ sshd: Failed" style="min-height:80px"></textarea></div>
     <div class="card">
       <div class="card-hd">
         <div class="card-ttl">📋 Saved Investigations</div>
-        <div class="row">
-          <input class="fi" style="width:200px" placeholder="Search by rule, IP, agent..." id="hist-q" oninput="loadInvHistory()">
-          <select class="fs" style="width:110px" id="hist-sev" onchange="loadInvHistory()">
+        <div class="row" style="flex-wrap:wrap;gap:6px">
+          <input class="fi" style="width:180px" placeholder="Search rule, IP, agent..." id="hist-q" oninput="_invPage=1;loadInvHistory()">
+          <select class="fs" style="width:110px" id="hist-sev" onchange="_invPage=1;loadInvHistory()">
             <option value="">All Severity</option>
             <option value="critical">Critical</option>
             <option value="high">High</option>
+            <option value="medium">Medium</option>
+            <option value="low">Low</option>
           </select>
-          <button class="btn btn-p btn-sm" onclick="loadInvHistory()">↻ Refresh</button>
+          <select class="fs" style="width:130px" id="hist-sort" onchange="_invPage=1;loadInvHistory()">
+            <option value="created_at">Date ↓</option>
+            <option value="rule_level">Level ↓</option>
+            <option value="agent">Agent</option>
+            <option value="severity">Severity</option>
+          </select>
+          <input type="date" class="fi" id="hist-from" style="width:130px;padding:4px 7px;font-size:11px" onchange="_invPage=1;loadInvHistory()" title="From date">
+          <input type="date" class="fi" id="hist-to" style="width:130px;padding:4px 7px;font-size:11px" onchange="_invPage=1;loadInvHistory()" title="To date">
+          <button class="btn btn-p btn-sm" onclick="_invPage=1;loadInvHistory()">↻ Refresh</button>
         </div>
       </div>
-      <div id="hist-body" style="max-height:calc(100vh - 360px);overflow-y:auto">
+      <div id="hist-body">
         <div class="empty"><p>Click Refresh to load investigation history</p></div>
       </div>
     </div>
@@ -1431,8 +1441,8 @@ sshd: Failed" style="min-height:80px"></textarea></div>
         <div class="card-ttl">FILTERS</div>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <input class="fi" id="asset-q" placeholder="Search IP / hostname / OS..." style="flex:1;min-width:160px" oninput="loadAssets()">
-        <select class="fs" id="asset-status" onchange="loadAssets()" style="width:120px">
+        <input class="fi" id="asset-q" placeholder="Search IP / hostname / OS..." style="flex:1;min-width:160px" oninput="_assetPage=1;loadAssets()">
+        <select class="fs" id="asset-status" onchange="_assetPage=1;loadAssets()" style="width:120px">
           <option value="">All Status</option>
           <option value="online">Online</option>
           <option value="offline">Offline</option>
@@ -1448,6 +1458,7 @@ sshd: Failed" style="min-height:80px"></textarea></div>
         <tbody id="asset-tbody"><tr><td colspan="8" style="text-align:center;color:#8ab0d0">Run a scan to discover assets</td></tr></tbody>
       </table>
     </div>
+    <div id="asset-pgn"></div>
   </div>
 </div>
 
@@ -2332,6 +2343,28 @@ function spin(t='Loading...'){return`<div class="loading"><div class="spin"></di
 function empty(t){return`<div class="empty"><p>${esc(t)}</p></div>`;}
 function errBnr(t){return`<div class="banner err">${esc(t)}</div>`;}
 
+// ─── PAGINATION HELPER ────────────────────────────────────────
+function buildPaginator(page, pageSize, total, prevFn, nextFn, sizeFn) {
+  const pages = Math.ceil(total / pageSize) || 1;
+  const hasPrev = page > 1, hasNext = page < pages;
+  const sizeOpts = [20,50,100].map(n=>`<option value="${n}" ${pageSize==n?'selected':''}>${n}/pg</option>`).join('');
+  return `<div style="display:flex;align-items:center;gap:8px;padding:8px 0 2px;font-size:11px;font-family:var(--fm);border-top:1px solid var(--b1);margin-top:6px">
+    <span style="flex:1;color:var(--txt3)">${total.toLocaleString()} total · page <strong style="color:var(--txt2)">${page}</strong> of ${pages}</span>
+    <select class="fs" style="width:75px;font-size:11px;padding:3px 5px" onchange="${sizeFn}">${sizeOpts}</select>
+    <button class="btn btn-sm" ${hasPrev?'':'disabled style="opacity:.4"'} onclick="${prevFn}">◀ Prev</button>
+    <button class="btn btn-sm" ${hasNext?'':'disabled style="opacity:.4"'} onclick="${nextFn}">Next ▶</button>
+  </div>`;
+}
+
+// ─── PAGE STATE ───────────────────────────────────────────────
+let _alertPage=1,_alertPageSize=50;
+let _invPage=1,_invPageSize=50;
+let _assetPage=1,_assetPageSize=50;
+let _agPage=1,_agPageSize=20;
+let _lbPage=1,_lbPageSize=20;
+let _rulesPage=1,_rulesPageSize=50;
+let _pbExecPage=1,_pbExecPageSize=10;
+
 // ─── NAV ─────────────────────────────────────────────────────
 let CUR='dashboard';
 const LOAD_MAP={dashboard:loadDashboard,agents:loadAgents,alerts:loadAlerts,rules:loadRules,'create-rules':loadCustomRules,investigation:()=>{loadInvAlerts();loadAutoTriageSettings();loadInvHistory();},
@@ -2813,17 +2846,20 @@ function onAlHrsChange(){
   cr.style.display='none';
   loadAlerts();
 }
-async function loadAlerts(){
+async function loadAlerts(page){
+  if(page!==undefined){_alertPage=page;}
   document.getElementById('al-body').innerHTML=spin('Loading from SIEM...');
   refreshInvestigatedKeys();
   const sev=document.getElementById('al-sev')?.value||'';
   const hrs=document.getElementById('al-hrs')?.value||'24';
   const agent=(document.getElementById('al-agent')?.value||'').trim();
   const srcip=(document.getElementById('al-srcip')?.value||'').trim();
-  const p=new URLSearchParams({limit:200});
+  const q=(document.getElementById('al-q')?.value||'').trim();
+  const p=new URLSearchParams({page:_alertPage,page_size:_alertPageSize});
   if(sev) p.set('severity',sev);
   if(agent) p.set('agent',agent);
   if(srcip) p.set('srcip',srcip);
+  if(q) p.set('q',q);
   if(hrs==='custom'){
     const fd=document.getElementById('al-from-date')?.value;
     const td=document.getElementById('al-to-date')?.value;
@@ -2835,7 +2871,7 @@ async function loadAlerts(){
   const d=await G(`/api/alerts?${p}`);
   if(!d||d.error){document.getElementById('al-body').innerHTML=errBnr(d?.error||'SIEM unavailable');return;}
   _alerts=d.alerts||[];
-  // Build a human label for the filter summary
+  const total=d.total||_alerts.length;
   let rangeLabel='';
   if(hrs==='custom'){
     const fd=document.getElementById('al-from-date')?.value||'';
@@ -2845,10 +2881,11 @@ async function loadAlerts(){
     const labels={'1':'1h','6':'6h','24':'24h','72':'3d','168':'7d','720':'30d'};
     rangeLabel=` · last ${labels[hrs]||hrs+'h'}`;
   }
-  document.getElementById('al-total').textContent=`Showing ${_alerts.length} of ${(d.total||_alerts.length).toLocaleString()} alerts${rangeLabel}`;
-  filterAlerts();
+  document.getElementById('al-total').textContent=`Showing ${_alerts.length} of ${total.toLocaleString()} alerts${rangeLabel}`;
+  renderAlerts(_alerts, total);
 }
-function filterAlerts(){const q=(document.getElementById('al-q')?.value||'').toLowerCase();renderAlerts(q?_alerts.filter(a=>(a.description||'').toLowerCase().includes(q)||(a.srcIp||'').includes(q)||(a.agent||'').toLowerCase().includes(q)):_alerts);}
+function filterAlerts(){_alertPage=1;loadAlerts();}
+function setAlertPageSize(sel){_alertPageSize=parseInt(sel.value)||50;_alertPage=1;loadAlerts();}
 // Investigated alert keys cache (refreshed every 30s)
 let _investigatedKeys = new Set();
 async function refreshInvestigatedKeys(){
@@ -2860,40 +2897,42 @@ async function refreshInvestigatedKeys(){
 function getAlertKey(a){return `${a.ruleId}_${a.timestamp}_${a.agent}_${a.srcIp||''}`;}
 function isInvestigated(a){return _investigatedKeys.has(getAlertKey(a));}
 
-function renderAlerts(alerts){
+function renderAlerts(alerts, total){
   const el=document.getElementById('al-body');
   if(!alerts.length){el.innerHTML=empty('No alerts match');return;}
-  window._renderedAlerts = alerts.slice(0,200);
+  window._renderedAlerts = alerts;
 
-  el.innerHTML=`<div class="tbl"><table><thead><tr><th>Time</th><th>Sev</th><th>Rule</th><th>Description</th><th>Agent</th><th>Src IP</th><th>MITRE</th><th>Status</th><th>Action</th></tr></thead><tbody>${
-    window._renderedAlerts.map((a,i)=>{
-      const investigated = isInvestigated(a);
-      const lvl = parseInt(a.level) || 0;
-      const isHighCritical = lvl >= 8;
-      const investigateBtn = isHighCritical
-        ? `<button type="button" class="btn btn-sm" onclick="investigateFromAlert(${i})" style="padding:5px 8px;background:var(--cdim);border:1px solid var(--c);color:var(--c);margin-right:4px" title="Run AI Investigation">🔍 Investigate</button>`
-        : '';
-      const reportBtn = investigated
-        ? `<button type="button" class="btn btn-h btn-sm" onclick="viewInvestigation(${i})" style="padding:5px 8px" title="View Saved Report">📋 Report</button>`
-        : '';
-      const statusBadge = investigated
-        ? '<span class="badge ok" style="font-size:9px" title="Investigated by AI">🤖 INVESTIGATED</span>'
-        : (isHighCritical ? '<span style="font-size:9px;color:var(--txt3);font-family:var(--fm)">pending</span>' : '');
-      return `<tr ${investigated?'style="background:rgba(0,229,255,.04)"':''}>
-        <td style="color:#8ab0d0;white-space:nowrap">${fmtDate(a.timestamp)}</td>
-        <td><span class="badge ${sbadge(a.severity)}">${a.level}</span></td>
-        <td style="color:var(--c)">${esc(a.ruleId)}</td>
-        <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(a.description)}</td>
-        <td>${esc(a.agent)}</td>
-        <td style="color:var(--txt2)">${esc(a.srcIp)}</td>
-        <td>${(a.mitre||[]).slice(0,1).map(m=>`<span class="badge low" style="font-size:8px">${esc(m)}</span>`).join('')}</td>
-        <td>${statusBadge}</td>
-        <td style="white-space:nowrap;min-width:200px">
-          <button type="button" class="btn btn-p btn-sm" onclick="showAlert(${i})" style="padding:5px 10px;margin-right:4px">View Details</button>${investigateBtn}${reportBtn}
-        </td>
-      </tr>`;
-    }).join('')
-  }</tbody></table></div>`;
+  const rows=alerts.map((a,i)=>{
+    const investigated = isInvestigated(a);
+    const lvl = parseInt(a.level) || 0;
+    const isHighCritical = lvl >= 8;
+    const investigateBtn = isHighCritical
+      ? `<button type="button" class="btn btn-sm" onclick="investigateFromAlert(${i})" style="padding:5px 8px;background:var(--cdim);border:1px solid var(--c);color:var(--c);margin-right:4px" title="Run AI Investigation">🔍 Investigate</button>`
+      : '';
+    const reportBtn = investigated
+      ? `<button type="button" class="btn btn-h btn-sm" onclick="viewInvestigation(${i})" style="padding:5px 8px" title="View Saved Report">📋 Report</button>`
+      : '';
+    const statusBadge = investigated
+      ? '<span class="badge ok" style="font-size:9px" title="Investigated by AI">🤖 INVESTIGATED</span>'
+      : (isHighCritical ? '<span style="font-size:9px;color:var(--txt3);font-family:var(--fm)">pending</span>' : '');
+    return `<tr ${investigated?'style="background:rgba(0,229,255,.04)"':''}>
+      <td style="color:#8ab0d0;white-space:nowrap">${fmtDate(a.timestamp)}</td>
+      <td><span class="badge ${sbadge(a.severity)}">${a.level}</span></td>
+      <td style="color:var(--c)">${esc(a.ruleId)}</td>
+      <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(a.description)}</td>
+      <td>${esc(a.agent)}</td>
+      <td style="color:var(--txt2)">${esc(a.srcIp)}</td>
+      <td>${(a.mitre||[]).slice(0,1).map(m=>`<span class="badge low" style="font-size:8px">${esc(m)}</span>`).join('')}</td>
+      <td>${statusBadge}</td>
+      <td style="white-space:nowrap;min-width:200px">
+        <button type="button" class="btn btn-p btn-sm" onclick="showAlert(${i})" style="padding:5px 10px;margin-right:4px">View Details</button>${investigateBtn}${reportBtn}
+      </td>
+    </tr>`;
+  }).join('');
+  const pgn=buildPaginator(_alertPage,_alertPageSize,total||alerts.length,
+    `loadAlerts(${_alertPage-1})`,`loadAlerts(${_alertPage+1})`,
+    'setAlertPageSize(this)');
+  el.innerHTML=`<div class="tbl"><table><thead><tr><th>Time</th><th>Sev</th><th>Rule</th><th>Description</th><th>Agent</th><th>Src IP</th><th>MITRE</th><th>Status</th><th>Action</th></tr></thead><tbody>${rows}</tbody></table></div>${pgn}`;
 }
 // View previous AI investigation from DB (cached report)
 async function viewInvestigation(i){
@@ -3027,12 +3066,19 @@ function escalateToCase(){if(!_selAlert)return;closeModal('modal-alert');documen
 
 // ─── RULES ───────────────────────────────────────────────────
 let _rules=[];
-async function loadRules(){document.getElementById('rl-body').innerHTML=spin('Loading from SIEM...');const d=await G('/api/rules');if(!d||d.error){document.getElementById('rl-body').innerHTML=errBnr(d?.error||'SIEM unavailable');return;}_rules=d.rules||[];filterRules();}
-function filterRules(){const q=(document.getElementById('rl-q')?.value||'').toLowerCase();renderRules(_rules.filter(r=>`${r.id} ${r.description} ${r.groups}`.toLowerCase().includes(q)));}
-function renderRules(rules){
-  const el=document.getElementById('rl-body');if(!rules.length){el.innerHTML=empty('No rules');return;}
-  el.innerHTML=`<div class="tbl"><table><thead><tr><th>ID</th><th>Level</th><th>Description</th><th>Groups</th><th>MITRE</th><th>Fires</th></tr></thead><tbody>${rules.slice(0,300).map(r=>`<tr><td style="color:var(--c)">${esc(r.id)}</td><td><span class="badge ${sbadge(r.severity)}">${r.level}</span></td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.description)}</td><td style="color:var(--txt2)">${esc((r.groups||'').slice(0,40))}</td><td>${r.mitre?`<span class="badge low" style="font-size:8px">${esc(r.mitre)}</span>`:''}</td><td style="color:var(--c)">${r.count}</td></tr>`).join('')}</tbody></table></div>`;
+async function loadRules(){document.getElementById('rl-body').innerHTML=spin('Loading from SIEM...');const d=await G('/api/rules');if(!d||d.error){document.getElementById('rl-body').innerHTML=errBnr(d?.error||'SIEM unavailable');return;}_rules=d.rules||[];_rulesPage=1;filterRules();}
+function filterRules(){const q=(document.getElementById('rl-q')?.value||'').toLowerCase();_rulesPage=1;renderRules(_rules.filter(r=>`${r.id} ${r.description} ${r.groups}`.toLowerCase().includes(q)));}
+function renderRules(filtered){
+  const el=document.getElementById('rl-body');if(!filtered.length){el.innerHTML=empty('No rules');return;}
+  window._filteredRules=filtered;
+  const start=(_rulesPage-1)*_rulesPageSize, page=filtered.slice(start,start+_rulesPageSize);
+  const pgn=buildPaginator(_rulesPage,_rulesPageSize,filtered.length,
+    `rulesGoPage(${_rulesPage-1})`,`rulesGoPage(${_rulesPage+1})`,
+    'rulesSetPageSize(this)');
+  el.innerHTML=`<div class="tbl"><table><thead><tr><th>ID</th><th>Level</th><th>Description</th><th>Groups</th><th>MITRE</th><th>Fires</th></tr></thead><tbody>${page.map(r=>`<tr><td style="color:var(--c)">${esc(r.id)}</td><td><span class="badge ${sbadge(r.severity)}">${r.level}</span></td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.description)}</td><td style="color:var(--txt2)">${esc((r.groups||'').slice(0,40))}</td><td>${r.mitre?`<span class="badge low" style="font-size:8px">${esc(r.mitre)}</span>`:''}</td><td style="color:var(--c)">${r.count}</td></tr>`).join('')}</tbody></table></div>${pgn}`;
 }
+function rulesGoPage(p){_rulesPage=p;renderRules(window._filteredRules||[]);}
+function rulesSetPageSize(sel){_rulesPageSize=parseInt(sel.value)||50;_rulesPage=1;renderRules(window._filteredRules||[]);}
 
 // ─── INVESTIGATION TABS / AUTO-TRIAGE / HISTORY ─────────────
 function switchInvTab(tab){
@@ -3098,14 +3144,20 @@ function updateAutoTriageStatusDetail(){
   if(el) el.innerHTML='<span style="color:var(--g)">●</span> Running every ' + document.getElementById('auto-triage-interval').value + 's';
 }
 
-async function loadInvHistory(){
-  const q = document.getElementById('hist-q')?.value || '';
+async function loadInvHistory(page){
+  if(page!==undefined) _invPage=page;
+  const q   = document.getElementById('hist-q')?.value   || '';
   const sev = document.getElementById('hist-sev')?.value || '';
+  const tf  = document.getElementById('hist-from')?.value || '';
+  const tt  = document.getElementById('hist-to')?.value   || '';
+  const sb  = document.getElementById('hist-sort')?.value || 'created_at';
   document.getElementById('hist-body').innerHTML = spin('Loading from database...');
 
-  const params = new URLSearchParams({limit: 100});
-  if(q) params.set('q', q);
+  const params = new URLSearchParams({page:_invPage, page_size:_invPageSize, sort_by:sb, sort_dir:'desc'});
+  if(q)  params.set('q', q);
   if(sev) params.set('severity', sev);
+  if(tf)  params.set('time_from', new Date(tf).toISOString());
+  if(tt)  params.set('time_to',   new Date(tt+'T23:59:59').toISOString());
 
   const d = await G('/api/investigations?' + params);
   if(!d || d.error){
@@ -3115,8 +3167,8 @@ async function loadInvHistory(){
 
   const items = d.items || [];
   const stats = d.stats || {};
+  const total = d.total || 0;
 
-  // Update KPIs
   if(stats.total!==undefined) document.getElementById('inv-done').textContent = stats.total;
   if(stats.auto_triaged!==undefined) document.getElementById('inv-auto').textContent = stats.auto_triaged;
   if(stats.last_24h!==undefined) document.getElementById('inv-24h').textContent = stats.last_24h;
@@ -3126,6 +3178,9 @@ async function loadInvHistory(){
     return;
   }
 
+  const pgn = buildPaginator(_invPage,_invPageSize,total,
+    `loadInvHistory(${_invPage-1})`,`loadInvHistory(${_invPage+1})`,
+    'setInvPageSize(this)');
   document.getElementById('hist-body').innerHTML = `<div class="tbl"><table>
     <thead><tr>
       <th>Date</th><th>Severity</th><th>Rule</th><th>Description</th><th>Agent</th>
@@ -3140,8 +3195,9 @@ async function loadInvHistory(){
       <td>${inv.auto_triaged?'<span class="badge ok" style="font-size:9px">🤖 AUTO</span>':'<span class="badge low" style="font-size:9px">👤 MANUAL</span>'}</td>
       <td style="color:var(--txt3);font-size:10px">${(inv.duration_ms/1000).toFixed(1)}s</td>
       <td><button class="btn btn-p btn-sm" style="padding:4px 8px" onclick="viewSavedInvestigation(${inv.id})">View</button></td>
-    </tr>`).join('')}</tbody></table></div>`;
+    </tr>`).join('')}</tbody></table></div>${pgn}`;
 }
+function setInvPageSize(sel){_invPageSize=parseInt(sel.value)||50;_invPage=1;loadInvHistory();}
 
 async function viewSavedInvestigation(id){
   const d = await G(`/api/investigations/${id}`);
@@ -3435,8 +3491,9 @@ async function doIOC(){
 }
 
 // ─── OTX FEED PANEL ──────────────────────────────────────────
-let _otxFeedTimeout=null;
-async function loadOtxFeed(){
+let _otxFeedTimeout=null, _otxPage=1, _otxPageSize=100;
+async function loadOtxFeed(page){
+  if(page!==undefined) _otxPage=page;
   if(_otxFeedTimeout)clearTimeout(_otxFeedTimeout);
   _otxFeedTimeout=setTimeout(async()=>{
     const search=(document.getElementById('otx-feed-search')?.value||'').trim();
@@ -3444,16 +3501,21 @@ async function loadOtxFeed(){
     const el=document.getElementById('otx-feed-table');
     if(!el)return;
     el.innerHTML=spin('Loading OTX feed...');
-    const params=new URLSearchParams({limit:'200'});
-    if(search)params.set('search',search);
+    const params=new URLSearchParams({page:_otxPage,page_size:_otxPageSize});
+    if(search){params.set('search',search);_otxPage=1;}
     if(type)params.set('type',type);
-    const data=await G(`/api/otx/feeds?${params}`).catch(()=>null);
-    const stats=await G('/api/otx/stats').catch(()=>null);
+    const [data,stats]=await Promise.all([
+      G(`/api/otx/feeds?${params}`).catch(()=>null),
+      G('/api/otx/stats').catch(()=>null),
+    ]);
     if(stats){
       const sb=document.getElementById('otx-stats-badge');
       if(sb)sb.textContent=`${Number(stats.total||0).toLocaleString()} IOCs · last sync: ${stats.last_sync?new Date(stats.last_sync).toLocaleString():'never'}`;
     }
     if(!data?.iocs?.length){el.innerHTML=`<div class="empty"><p>${stats?.configured===false?'OTX_API_KEY not configured':'No IOCs in feed yet — sync will run within 5 minutes of startup'}</p></div>`;return;}
+    const pgn=buildPaginator(_otxPage,_otxPageSize,data.total||data.iocs.length,
+      `loadOtxFeed(${_otxPage-1})`,`loadOtxFeed(${_otxPage+1})`,
+      'setOtxPageSize(this)');
     el.innerHTML=`<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11px;font-family:var(--fm)">
       <thead><tr style="color:var(--txt3);text-transform:uppercase;font-size:9px;letter-spacing:1px;border-bottom:1px solid var(--b1)">
         <th style="padding:6px 8px;text-align:left;width:90px">Type</th>
@@ -3473,9 +3535,10 @@ async function loadOtxFeed(){
           <td style="padding:5px 8px">${tags}${mf}</td>
           <td style="padding:5px 8px;text-align:right;font-weight:700;color:${scoreCol}">${r.threat_score||0}</td>
         </tr>`;
-      }).join('')}</tbody></table></div>`;
+      }).join('')}</tbody></table></div>${pgn}`;
   },300);
 }
+function setOtxPageSize(sel){_otxPageSize=parseInt(sel.value)||100;_otxPage=1;loadOtxFeed();}
 async function otxManualSync(){
   const r=await P('/api/otx/sync',{}).catch(e=>({error:e.message}));
   if(r?.error)toast(r.error,'error');
@@ -3515,12 +3578,16 @@ async function loadUebaCorrelations(){
       </div>`).join('')}</div>`;
 }
 
-async function loadAlertGroups(){
+async function loadAlertGroups(page){
+  if(page!==undefined) _agPage=page;
   const el = document.getElementById('corr-alert-groups');
   if(!el) return;
   el.innerHTML=spin();
-  const data = await G('/api/alert-groups?limit=20').catch(()=>null);
+  const data = await G(`/api/alert-groups?page=${_agPage}&page_size=${_agPageSize}`).catch(()=>null);
   if(!data||!data.groups?.length){ el.innerHTML=empty('No alert groups yet — groups form when the same rule fires from the same IP within 5 minutes'); return; }
+  const pgn=buildPaginator(_agPage,_agPageSize,data.total||data.groups.length,
+    `loadAlertGroups(${_agPage-1})`,`loadAlertGroups(${_agPage+1})`,
+    'setAgPageSize(this)');
   el.innerHTML=`<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:10px;font-family:var(--fm)">
     <thead><tr style="color:var(--txt3);border-bottom:1px solid var(--b1)">
       <th style="text-align:left;padding:5px 8px">Source IP</th>
@@ -3538,8 +3605,9 @@ async function loadAlertGroups(){
       <td style="padding:5px 8px;color:var(--txt2)">${fmtDate(g.first_seen)}</td>
       <td style="padding:5px 8px;color:var(--txt2)">${fmtDate(g.last_seen)}</td>
     </tr>`).join('')}</tbody>
-  </table></div>`;
+  </table></div>${pgn}`;
 }
+function setAgPageSize(sel){_agPageSize=parseInt(sel.value)||20;_agPage=1;loadAlertGroups();}
 
 // ─── CORRELATION with GRAPH ───────────────────────────────────
 async function doCorrelate(){
@@ -4690,15 +4758,19 @@ async function togglePlaybook(id, enabled){
   else { toast('Failed to update playbook','err'); await loadPlaybooks(); }
 }
 
-async function loadPlaybookExecutions(){
-  const d = await G('/api/playbook-executions?limit=10');
+async function loadPlaybookExecutions(page){
+  if(page!==undefined) _pbExecPage=page;
+  const d = await G(`/api/playbook-executions?page=${_pbExecPage}&page_size=${_pbExecPageSize}`);
   const listEl = document.getElementById('pb-exec-list');
   const wrapEl = document.getElementById('pb-exec-history');
   if(!d?.executions||!listEl||!wrapEl) return;
   if(!d.executions.length){ wrapEl.style.display='none'; return; }
   wrapEl.style.display='block';
+  const pgn=buildPaginator(_pbExecPage,_pbExecPageSize,d.total||d.executions.length,
+    `loadPlaybookExecutions(${_pbExecPage-1})`,`loadPlaybookExecutions(${_pbExecPage+1})`,
+    'setPbExecPageSize(this)');
   listEl.innerHTML=`<div style="display:flex;flex-direction:column;gap:4px">${
-    d.executions.slice(0,8).map(e=>{
+    d.executions.map(e=>{
       const acts=(e.actions_taken||[]).join(', ')||'none';
       const col=e.outcome==='executed'?'var(--g)':e.outcome==='skipped'?'var(--y)':'var(--r)';
       return `<div style="padding:6px 8px;background:var(--bg0);border:1px solid var(--b1);border-radius:3px;font-family:var(--fm);font-size:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
@@ -4710,8 +4782,9 @@ async function loadPlaybookExecutions(){
         <span style="color:var(--txt3);margin-left:auto">${fmtDate(e.created_at)}</span>
       </div>`;
     }).join('')
-  }</div>`;
+  }</div>${pgn}`;
 }
+function setPbExecPageSize(sel){_pbExecPageSize=parseInt(sel.value)||10;_pbExecPage=1;loadPlaybookExecutions();}
 
 // ─── PROTECTED ASSETS ─────────────────────────────────────────
 async function loadProtectedAssets(){
@@ -4890,18 +4963,22 @@ async function loadSubnets(){
     </tr>`).join('')+'</tbody></table>';
 }
 
-async function loadAssets(){
+async function loadAssets(page){
+  if(page!==undefined) _assetPage=page;
   const q=document.getElementById('asset-q')?.value||'';
   const status=document.getElementById('asset-status')?.value||'';
-  const url='/api/assets'+(q||status?`?q=${encodeURIComponent(q)}&status=${status}`:'');
-  const d=await G(url);
+  const p=new URLSearchParams({page:_assetPage,page_size:_assetPageSize});
+  if(q) p.set('q',q);
+  if(status) p.set('status',status);
+  const d=await G('/api/assets?'+p);
   if(!d)return;
   const s=d.stats||{};
   ['total','online','offline','new'].forEach(k=>{const el=document.getElementById(`ak-${k}`);if(el)el.textContent=s[k]??'0';});
   document.getElementById('n-assets').textContent=s.online||'0';
   const tbody=document.getElementById('asset-tbody');
   if(!tbody)return;
-  if(!d.assets?.length){tbody.innerHTML='<tr><td colspan="7" style="text-align:center;color:#8ab0d0">No assets found</td></tr>';return;}
+  if(!d.assets?.length){tbody.innerHTML='<tr><td colspan="8" style="text-align:center;color:#8ab0d0">No assets found</td></tr>';
+    document.getElementById('asset-pgn')&&(document.getElementById('asset-pgn').innerHTML='');return;}
   tbody.innerHTML=d.assets.map(a=>{
     const ports=(a.open_ports||[]).slice(0,5).map(p=>`<span style="background:rgba(0,229,255,.1);color:var(--c);padding:1px 5px;border-radius:3px;font-size:10px" title="${p.product||''}">${p.port}/${p.service||p.proto}</span>`).join(' ');
     const morePorts=(a.open_ports||[]).length>5?`<span style="color:#8ab0d0;font-size:10px"> +${(a.open_ports||[]).length-5}</span>`:'';
@@ -4921,7 +4998,12 @@ async function loadAssets(){
       <td><span style="color:${statusColor};font-size:11px;font-family:var(--fm)">${(a.status||'').toUpperCase()}</span></td>
     </tr>`;
   }).join('');
+  const pgnEl=document.getElementById('asset-pgn');
+  if(pgnEl) pgnEl.innerHTML=buildPaginator(_assetPage,_assetPageSize,d.total||d.assets.length,
+    `loadAssets(${_assetPage-1})`,`loadAssets(${_assetPage+1})`,
+    'setAssetPageSize(this)');
 }
+function setAssetPageSize(sel){_assetPageSize=parseInt(sel.value)||50;_assetPage=1;loadAssets();}
 
 async function loadScanStatus(){
   const d=await G('/api/assets/scan/status');
@@ -5023,10 +5105,16 @@ async function loadUebaStats(){
   const hr=document.getElementById('ub-highrisk');if(hr)hr.textContent=s.high_risk_users??'0';
 }
 
+async function loadUebaLeaderboard(page){
+  if(page!==undefined) _lbPage=page;
+  const d=await G(`/api/ueba/leaderboard?page=${_lbPage}&page_size=${_lbPageSize}`);
+  renderLeaderboard(d?.users||[], d?.total||0);
+}
+function setLbPageSize(sel){_lbPageSize=parseInt(sel.value)||20;_lbPage=1;loadUebaLeaderboard();}
+
 async function loadUebaAnomalies(){
   // Load leaderboard
-  const lb=await G('/api/ueba/leaderboard');
-  renderLeaderboard(lb?.users||[]);
+  loadUebaLeaderboard();
 
   // Load all anomalies + correlations in parallel
   const [d, corr]=await Promise.all([
@@ -5138,19 +5226,23 @@ async function loadUebaAnomalies(){
   document.getElementById('n-ueba').textContent=total||'0';
 }
 
-function renderLeaderboard(users){
+function renderLeaderboard(users, total){
   const el=document.getElementById('ueba-leaderboard');
   if(!el)return;
   if(!users.length){el.innerHTML='<div style="color:#8ab0d0;padding:8px 0">No behavioral data yet. Feed Wazuh alerts via POST /api/ueba/event or wait for auto-ingest.</div>';return;}
+  const offset=(_lbPage-1)*_lbPageSize;
+  const pgn=buildPaginator(_lbPage,_lbPageSize,total||users.length,
+    `loadUebaLeaderboard(${_lbPage-1})`,`loadUebaLeaderboard(${_lbPage+1})`,
+    'setLbPageSize(this)');
   el.innerHTML=`<table class="tbl"><thead><tr><th>#</th><th>USER</th><th>RISK</th><th>ANOMALIES</th><th>EVENTS 24H</th><th>RECENT HOSTS</th></tr></thead><tbody>`+
     users.map((u,i)=>`<tr>
-      <td style="color:#8ab0d0">${i+1}</td>
+      <td style="color:#8ab0d0">${offset+i+1}</td>
       <td style="cursor:pointer;color:var(--c)" onclick="uebaLookup('${u.user}')">${u.user}</td>
       <td>${riskBadge(u.risk_score)}</td>
       <td style="color:#8ab0d0">${u.anomaly_count||0}</td>
       <td style="color:#8ab0d0">${u.events_24h||0}</td>
       <td style="font-size:10px;color:var(--txt2)">${(u.recent_hosts||[]).join(', ')||'—'}</td>
-    </tr>`).join('')+'</tbody></table>';
+    </tr>`).join('')+'</tbody></table>'+pgn;
 }
 
 function renderUebaSection(elId,items,rowFn,emptyMsg){
