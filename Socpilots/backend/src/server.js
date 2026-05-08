@@ -2742,10 +2742,13 @@ app.post('/api/users/:id/password', authMW, async (req, res) => {
 
 app.get('/api/notifications', authMW, async (req, res) => {
   try {
-    const limit     = Math.min(parseInt(req.query.limit) || 50, 200);
+    const page       = Math.max(parseInt(req.query.page) || 1, 1);
+    const page_size  = Math.min(parseInt(req.query.page_size) || 50, 200);
     const unreadOnly = req.query.unread === 'true';
-    const items = await db.listNotifications(req.user.username, limit, unreadOnly);
-    res.json({ notifications: items, total: items.length });
+    const { rows, total } = await db.listNotifications(
+      req.user.username, page_size, (page - 1) * page_size, unreadOnly
+    );
+    res.json({ notifications: rows, total, page, page_size, has_more: page * page_size < total });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 

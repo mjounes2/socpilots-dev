@@ -396,7 +396,7 @@ if(localStorage.getItem("soc_dim")==="1")document.body.classList.add("dim");
         <button class="notif-mark-all" onclick="markAllNotifRead()">Mark all read</button>
       </div>
       <div class="notif-list" id="notif-list"><div class="notif-empty">No notifications</div></div>
-      <div class="notif-drop-ft"><a onclick="go('notifications')">View all</a></div>
+      <div class="notif-drop-ft"><a onclick="_notifOpen=false;document.getElementById('notif-drop').classList.remove('open');go('notifications')">View all notifications</a></div>
     </div>
   </div>
   <div class="tb-user"><div class="tb-av" id="tb-av">Y</div><span class="tb-uname" id="tb-un">—</span></div>
@@ -1951,6 +1951,29 @@ sshd: Failed" style="min-height:80px"></textarea></div>
   </div>
 </div>
 
+<!-- NOTIFICATIONS PAGE -->
+<div class="page" id="page-notifications">
+  <div style="margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+    <div>
+      <h2 style="font-family:var(--fw);font-size:20px;font-weight:700;letter-spacing:2px;color:var(--c);text-transform:uppercase">Notifications</h2>
+      <p style="font-size:11px;color:var(--txt2);margin-top:4px;font-family:var(--fm)">All system notifications — investigations, cases, playbooks, correlations</p>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <select id="notif-pg-filter" class="inp" style="font-size:10px;padding:4px 8px;width:auto" onchange="_notifPgPage=1;loadNotificationsPage()">
+        <option value="">All</option>
+        <option value="true">Unread only</option>
+      </select>
+      <button class="btn btn-sm" onclick="markAllNotifRead();loadNotificationsPage()">Mark all read</button>
+      <button class="btn btn-sm" onclick="loadNotificationsPage()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:11px;height:11px"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg> Refresh</button>
+    </div>
+  </div>
+
+  <div class="card" style="padding:0;overflow:hidden">
+    <div id="notif-pg-list" style="min-height:200px"></div>
+    <div id="notif-pg-pgn" style="padding:0 14px"></div>
+  </div>
+</div>
+
 </main>
 
 <!-- CREATE CASE MODAL -->
@@ -2375,7 +2398,8 @@ const LOAD_MAP={dashboard:loadDashboard,agents:loadAgents,alerts:loadAlerts,rule
   correlate:()=>{loadUebaCorrelations();loadAlertGroups();renderCorrLiveFeed();},
   darksoc:()=>loadDarkSocPage(),
   langchain:()=>{lcCheckHealth();},
-  settings:loadSmtpSettings};
+  settings:loadSmtpSettings,
+  notifications:()=>{_notifPgPage=1;loadNotificationsPage();}};
 
 function go(p){
   document.querySelectorAll('.page').forEach(x=>x.classList.remove('active'));
@@ -5771,7 +5795,7 @@ function closeNotifOnOutside(e) {
 async function loadNotifDrop() {
   const list = document.getElementById('notif-list');
   try {
-    const data = await G('/api/notifications?limit=20');
+    const data = await G('/api/notifications?page=1&page_size=20');
     const items = data.notifications || [];
     if (!items.length) {
       list.innerHTML = '<div class="notif-empty">No notifications yet</div>';
@@ -5837,6 +5861,75 @@ function e(s){ const d=document.createElement('div');d.textContent=s;return d.in
 // Poll every 30 seconds
 _notifInterval = setInterval(pollNotifCount, 30000);
 document.addEventListener('DOMContentLoaded', ()=>{ setTimeout(pollNotifCount, 2000); });
+
+// ─── NOTIFICATIONS FULL PAGE ───────────────────────────────────────────
+let _notifPgPage = 1, _notifPgPageSize = 50;
+
+async function loadNotificationsPage() {
+  const listEl = document.getElementById('notif-pg-list');
+  const pgnEl  = document.getElementById('notif-pg-pgn');
+  const unreadOnly = (document.getElementById('notif-pg-filter')?.value === 'true') ? 'true' : '';
+  if (!listEl) return;
+  listEl.innerHTML = '<div class="notif-empty" style="padding:24px;text-align:center;color:var(--txt2);font-size:11px;font-family:var(--fm)">Loading...</div>';
+  try {
+    const qs = `page=${_notifPgPage}&page_size=${_notifPgPageSize}${unreadOnly ? '&unread=true' : ''}`;
+    const data = await G(`/api/notifications?${qs}`);
+    const items = data.notifications || [];
+    const total = data.total || 0;
+    if (!items.length) {
+      listEl.innerHTML = '<div class="notif-empty" style="padding:32px;text-align:center;color:var(--txt2);font-size:11px;font-family:var(--fm)">No notifications</div>';
+      if (pgnEl) pgnEl.innerHTML = '';
+      return;
+    }
+    const typeIcon = t => {
+      const icons = {
+        investigation: '🔍', case_created: '📁', true_positive: '✅',
+        correlation: '🔗', playbook: '⚙️', alert: '🚨', system: 'ℹ️'
+      };
+      return icons[t] || '🔔';
+    };
+    listEl.innerHTML = items.map(n => {
+      const unreadCls = !n.read ? 'border-left:2px solid ' + (n.severity==='critical'?'var(--r)':n.severity==='warning'?'var(--y)':'var(--c)') + ';' : 'border-left:2px solid transparent;';
+      const bg = !n.read ? 'background:rgba(0,229,255,.03);' : '';
+      const time = new Date(n.created_at).toLocaleString();
+      const sevColor = n.severity==='critical'?'var(--r)':n.severity==='warning'?'var(--y)':n.severity==='info'?'var(--c)':'var(--txt2)';
+      return `<div style="display:flex;align-items:flex-start;gap:12px;padding:12px 16px;border-bottom:1px solid var(--b1);cursor:pointer;transition:background .1s;${unreadCls}${bg}" onclick="markNotifReadPg(${n.id},this)" onmouseenter="this.style.background='rgba(0,229,255,.06)'" onmouseleave="this.style.background='${!n.read?'rgba(0,229,255,.03)':'transparent'}'">
+        <div style="font-size:18px;line-height:1;margin-top:2px;flex-shrink:0">${typeIcon(n.type)}</div>
+        <div style="flex:1;min-width:0">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:3px">
+            <span style="font-family:var(--fb);font-size:12px;font-weight:600;color:var(--txt)">${e(n.title)}</span>
+            ${!n.read ? `<span style="font-size:8px;font-family:var(--fm);font-weight:700;letter-spacing:1px;color:${sevColor};text-transform:uppercase">${n.severity||'info'}</span>` : ''}
+          </div>
+          ${n.message ? `<div style="font-size:11px;color:var(--txt2);font-family:var(--fm);line-height:1.45">${e(n.message)}</div>` : ''}
+          <div style="font-size:9px;color:var(--txt3);font-family:var(--fm);margin-top:4px">${time}</div>
+        </div>
+        ${!n.read ? `<div style="width:7px;height:7px;border-radius:50%;background:${sevColor};flex-shrink:0;margin-top:5px"></div>` : ''}
+      </div>`;
+    }).join('');
+    if (pgnEl) pgnEl.innerHTML = buildPaginator(
+      _notifPgPage, _notifPgPageSize, total,
+      'notifPgPrev()', 'notifPgNext()',
+      'notifPgSetSize(this.value)'
+    );
+    pollNotifCount();
+  } catch(err) {
+    listEl.innerHTML = `<div class="notif-empty" style="padding:32px;text-align:center;color:var(--r);font-size:11px;font-family:var(--fm)">Failed to load notifications</div>`;
+  }
+}
+
+async function markNotifReadPg(id, el) {
+  await P(`/api/notifications/${id}/read`, {}).catch(()=>null);
+  el.style.borderLeftColor = 'transparent';
+  el.style.background = 'transparent';
+  const dot = el.querySelector('[data-dot]');
+  if (dot) dot.style.display = 'none';
+  el.onmouseleave = () => { el.style.background = 'transparent'; };
+  pollNotifCount();
+}
+
+function notifPgPrev() { if(_notifPgPage>1){_notifPgPage--;loadNotificationsPage();} }
+function notifPgNext() { _notifPgPage++;loadNotificationsPage(); }
+function notifPgSetSize(v){ _notifPgPageSize=parseInt(v)||50;_notifPgPage=1;loadNotificationsPage(); }
 
 // ─── DARK SOC PAGE ─────────────────────────────────────────────────────
 async function loadDarkSocPage() {

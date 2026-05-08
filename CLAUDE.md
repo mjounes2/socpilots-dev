@@ -78,11 +78,11 @@ n8n (port 5678) reaches `mcp-wazuh:3001` and `thehive-mcp:8080` directly over th
 
 | File | What's in it |
 |---|---|
-| `Socpilots/backend/src/server.js` | Entire Express backend (~3200 lines): auth, all REST routes, hunt scheduler, OTX feed sync, evidence upload |
-| `Socpilots/backend/src/db.js` | PostgreSQL pool + `initSchema()` + all CRUD functions |
+| `Socpilots/backend/src/server.js` | Entire Express backend (~3276 lines): auth, all REST routes, hunt scheduler, OTX feed sync, evidence upload |
+| `Socpilots/backend/src/db.js` | PostgreSQL pool + `initSchema()` + all CRUD functions (~1522 lines) |
 | `Socpilots/backend/src/playbook-engine.js` | Dark SOC automated playbook execution logic |
-| `Socpilots/backend/src/neo4j.js` | UEBA Neo4j Cypher queries |
-| `Socpilots/frontend/index.html` | Entire SPA (~4500 lines, vanilla JS, no build step) |
+| `Socpilots/backend/src/neo4j.js` | UEBA Neo4j Cypher queries (~818 lines) |
+| `Socpilots/frontend/index.html` | Entire SPA (~6482 lines, vanilla JS, no build step) |
 | `langchain-agent/main.py` | ReAct agent with tools: `search_alerts`, `enrich_ip`, `check_cases`, `query_ueba`, `query_assets`, `query_shodan`; `/enrich` endpoint includes OTX |
 | `services/knowledge-ingestion/src/app.py` | Flask app: `/ingest`, `/upload`, `/evidence/search`, `/evidence/delete` |
 | `services/knowledge-ingestion/src/file_processor.py` | PDF/Excel/CSV/OCR text extraction + chunking |
@@ -156,7 +156,39 @@ OTX is integrated for both real-time IOC enrichment and a periodic threat feed:
 - **Cross-reference**: `saveArtifacts()` in `db.js` automatically cross-references new investigation artifacts against `otx_ioc_feed` and boosts the threat score for known-bad indicators.
 - **API routes** (all require auth):
   - `GET /api/otx/stats` — total IOC count, last sync time, breakdown by type
-  - `GET /api/otx/feeds?type=IPv4&search=...&limit=100` — list/search feed IOCs
+  - `GET /api/otx/feeds?page=1&page_size=100&type=IPv4&search=...` — paginated list/search feed IOCs
   - `GET /api/otx/check/:indicator` — check if a specific indicator is in the feed
   - `POST /api/otx/sync` — manual sync trigger (admin only)
 - **Env var**: `OTX_API_KEY` — required in `.env`, set in both `webapp` and `langchain-agent` environments in `docker-compose.yml`.
+
+## Pagination
+
+All list endpoints use a unified contract. Always use `page` + `page_size` — never raw `limit`/`offset` in new code.
+
+**Request:** `?page=1&page_size=50&sort_by=created_at&sort_dir=desc&time_from=ISO&time_to=ISO&q=...`
+**Response:** `{ items (or alerts/groups/etc), total, page, page_size, has_more }`
+
+### Paginated endpoints
+
+| Endpoint | Backend | Default page_size | Extra filters |
+|---|---|---|---|
+| `GET /api/investigations` | PostgreSQL | 50 | `severity`, `agent`, `ruleId`, `q`, `sort_by`, `sort_dir`, `time_from`, `time_to` |
+| `GET /api/alerts` | OpenSearch | 50 | `severity`, `hours`, `from`, `to`, `agent`, `srcip`, `q`; capped at 10 000 from+size |
+| `GET /api/alert-groups` | PostgreSQL | 50 | — |
+| `GET /api/assets` | PostgreSQL | 50 | `status`, `q` |
+| `GET /api/hunt/schedules` | PostgreSQL | 50 | — |
+| `GET /api/playbook-executions` | PostgreSQL | 50 | — |
+| `GET /api/otx/feeds` | PostgreSQL | 100 | `type`, `search` |
+| `GET /api/ueba/leaderboard` | Neo4j | 20 | — |
+
+### db.js pattern (PostgreSQL)
+
+All paginated functions use `COUNT(*) OVER() AS total_count` (window function — one query, no race). Sort column is whitelisted against an `ALLOWED_SORT` map before interpolation. Return shape: `{ rows, total }`.
+
+### Frontend pagination
+
+Shared helper: `buildPaginator(page, pageSize, total, prevFn, nextFn, sizeFn)` — returns HTML with Prev/Next buttons and 20/50/100 page-size selector.
+
+Page state variables (top-level JS): `_alertPage`, `_invPage`, `_assetPage`, `_agPage`, `_lbPage`, `_rulesPage`, `_pbExecPage`, `_otxPage`.
+
+Investigation History gained date-range (`hist-from` / `hist-to`) and sort-by (`hist-sort`) filter inputs in addition to pagination controls.

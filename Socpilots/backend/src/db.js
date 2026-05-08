@@ -1073,16 +1073,17 @@ async function createNotification(type, title, message, severity, username, meta
   return r.rows[0];
 }
 
-async function listNotifications(username, limit = 50, unreadOnly = false) {
-  const params = [username, limit];
-  let unreadClause = unreadOnly ? 'AND read=false' : '';
+async function listNotifications(username, limit = 50, offset = 0, unreadOnly = false) {
+  const unreadClause = unreadOnly ? 'AND read=false' : '';
   const r = await pool.query(
-    `SELECT * FROM notifications
+    `SELECT *, COUNT(*) OVER() AS total_count FROM notifications
      WHERE (username=$1 OR username IS NULL) ${unreadClause}
-     ORDER BY created_at DESC LIMIT $2`,
-    params
+     ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
+    [username, limit, offset]
   );
-  return r.rows;
+  const total = r.rows.length ? parseInt(r.rows[0].total_count) : 0;
+  const rows = r.rows.map(({ total_count, ...row }) => row);
+  return { rows, total };
 }
 
 async function markNotificationRead(id, username) {
