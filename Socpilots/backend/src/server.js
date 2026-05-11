@@ -2660,6 +2660,112 @@ setInterval(() => { otxFeedSync(); }, 6 * 3600_000);
 setTimeout (() => { otxFeedSync(); }, 5 * 60_000);   // first run 5min after boot
 
 // ═══════════════════════════════════════════════════════════════
+// ─── UEBA WEEKLY DIGEST SCHEDULER ──────────────────────────────
+// Runs hourly check; generates digest if >7d since last run.
+// Survives webapp restarts via ueba_last_digest_at setting.
+// ═══════════════════════════════════════════════════════════════
+
+async function uebaDigestScheduler() {
+  try {
+    const enabled = await db.getSetting('ueba_digest_enabled').catch(() => 'false');
+    if (enabled !== 'true') return;
+
+    const lastRun = await db.getSetting('ueba_last_digest_at').catch(() => null);
+    if (lastRun) {
+      const age = Date.now() - new Date(lastRun).getTime();
+      if (age < 7 * 86400_000) return; // not yet 7 days
+    }
+
+    console.log('[UEBA-Digest] Generating weekly digest...');
+    const now = new Date();
+    const periodStart = new Date(now.getTime() - 7 * 86400_000);
+
+    // Fetch top-20 risk users from Neo4j (no time filter — uses persisted scores)
+    let topEntities = [];
+    try {
+      console.log('[UEBA-Digest] fetching leaderboard...');
+      const lb = await ueba.getRiskLeaderboard(20, 0, 24, '', 30);
+      topEntities = lb.users || [];
+      console.log(`[UEBA-Digest] leaderboard: ${topEntities.length} entities`);
+    } catch (e) {
+      console.error('[UEBA-Digest] leaderboard fetch failed:', e.message);
+    }
+
+    // Derive anomaly summary from top-entity profiles — no extra queries needed
+    const anomalySummary = {};
+    try {
+      const totalAnomalies = topEntities.reduce((s, e) => s + (e.anomaly_count || 0), 0);
+      const criticalCount  = topEntities.filter(e => (e.risk_score || 0) >= 90).length;
+      const highCount      = topEntities.filter(e => (e.risk_score || 0) >= 70 && (e.risk_score || 0) < 90).length;
+      if (totalAnomalies)  anomalySummary.total_anomalies_top20_entities = totalAnomalies;
+      if (criticalCount)   anomalySummary.critical_risk_entities = criticalCount;
+      if (highCount)       anomalySummary.high_risk_entities = highCount;
+      console.log('[UEBA-Digest] anomaly summary:', JSON.stringify(anomalySummary));
+    } catch (e) {
+      console.error('[UEBA-Digest] anomaly summary failed:', e.message);
+    }
+
+    // Call LangChain for LLM-generated digest
+    let digestMd = null;
+    let llmSuccess = true;
+    let llmError = null;
+    try {
+      const r = await axios.post(`${LANGCHAIN_URL}/ueba/digest`, {
+        top_entities: topEntities,
+        anomaly_summary: anomalySummary,
+        period_days: 7,
+      }, { timeout: 120_000 });
+      digestMd = r.data.digest_md;
+    } catch (e) {
+      llmSuccess = false;
+      llmError = e.message;
+      console.error('[UEBA-Digest] LLM call failed:', e.message);
+    }
+
+    const highRiskCount = topEntities.filter(e => (e.risk_score || 0) >= 70).length;
+
+    // Persist to DB
+    const digest = await db.createUebaDigest({
+      periodStart: periodStart.toISOString(),
+      periodEnd: now.toISOString(),
+      digestMd,
+      entityCount: topEntities.length,
+      highRiskCount,
+      topEntities,
+      success: llmSuccess,
+      error: llmError,
+      emailed: false,
+    });
+
+    // Update last-run timestamp
+    await db.setSetting('ueba_last_digest_at', now.toISOString(), 'system');
+    console.log(`[UEBA-Digest] Saved digest #${digest.id} (${topEntities.length} entities, ${highRiskCount} high-risk)`);
+
+    // Optional email delivery
+    const emailEnabled = await db.getSetting('ueba_digest_email_enabled').catch(() => 'false');
+    if (emailEnabled === 'true' && digestMd) {
+      try {
+        const emailHtml = `<h2>Weekly UEBA Threat Digest</h2>
+<p><strong>Period:</strong> ${periodStart.toISOString().slice(0, 10)} → ${now.toISOString().slice(0, 10)}</p>
+<p><strong>Entities monitored:</strong> ${topEntities.length} | <strong>High-risk:</strong> ${highRiskCount}</p>
+<hr>
+<pre style="font-family:monospace;white-space:pre-wrap">${digestMd}</pre>`;
+        await email.sendToRecipients(`SOCPilots UEBA Weekly Digest — ${now.toISOString().slice(0, 10)}`, emailHtml);
+        await db.markUebaDigestEmailed(digest.id);
+        console.log('[UEBA-Digest] Email sent');
+      } catch (e) {
+        console.error('[UEBA-Digest] Email send failed:', e.message);
+      }
+    }
+  } catch (e) {
+    console.error('[UEBA-Digest] scheduler error:', e.message);
+  }
+}
+
+setInterval(() => { uebaDigestScheduler(); }, 3600_000);       // check every hour
+setTimeout (() => { uebaDigestScheduler(); }, 15 * 60_000);    // first check 15min after boot
+
+// ═══════════════════════════════════════════════════════════════
 // ─── MITRE ATT&CK AUTO-ANALYSIS WORKER (every 24 hours) ────────
 // Fetches live 7d coverage, computes covered vs gap techniques,
 // calls LangChain /mitre/analyze, and caches the result so the
@@ -3422,6 +3528,53 @@ app.get('/api/ueba/baseline/:entity', authMW, async (req, res) => {
     res.json({ entity, has_baseline: true, ...baseline, fp_assessment: fp });
   } catch (e) {
     console.error('[ueba/baseline]', e.message);
+    res.status(502).json({ error: e.message });
+  }
+});
+
+// ── UEBA Digests ──────────────────────────────────────────────
+app.get('/api/ueba/digests', authMW, async (req, res) => {
+  try {
+    const page      = Math.max(1, parseInt(req.query.page) || 1);
+    const page_size = Math.min(50, Math.max(1, parseInt(req.query.page_size) || 10));
+    const { rows, total } = await db.listUebaDigests(page, page_size);
+    res.json({ items: rows, total, page, page_size, has_more: page * page_size < total });
+  } catch (e) {
+    console.error('[ueba/digests]', e.message);
+    res.status(502).json({ error: e.message });
+  }
+});
+
+app.get('/api/ueba/digest/latest', authMW, async (req, res) => {
+  try {
+    const digest = await db.getLatestUebaDigest();
+    res.json(digest || {});
+  } catch (e) {
+    console.error('[ueba/digest/latest]', e.message);
+    res.status(502).json({ error: e.message });
+  }
+});
+
+app.get('/api/ueba/digest/:id', authMW, async (req, res) => {
+  try {
+    const digest = await db.getUebaDigest(parseInt(req.params.id));
+    if (!digest) return res.status(404).json({ error: 'Not found' });
+    res.json(digest);
+  } catch (e) {
+    console.error('[ueba/digest]', e.message);
+    res.status(502).json({ error: e.message });
+  }
+});
+
+app.post('/api/ueba/digest/generate', authMW, requireRole('admin'), async (req, res) => {
+  try {
+    // Reset last-run timestamp so scheduler fires immediately
+    await db.setSetting('ueba_digest_enabled', 'true', req.user.username);
+    await db.setSetting('ueba_last_digest_at', '', req.user.username);
+    res.json({ ok: true, message: 'UEBA digest generation triggered — check digests in a moment' });
+    setImmediate(() => uebaDigestScheduler());
+  } catch (e) {
+    console.error('[ueba/digest/generate]', e.message);
     res.status(502).json({ error: e.message });
   }
 });

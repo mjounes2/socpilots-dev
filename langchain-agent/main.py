@@ -1478,9 +1478,98 @@ Return ONLY a JSON array (no markdown):
 #  UEBA EXPLAIN — Direct LLM risk narrative (no agent loop)
 # ═══════════════════════════════════════════════════════════════
 
+class UebaDigestRequest(BaseModel):
+    top_entities: list
+    anomaly_summary: dict
+    period_days: int = 7
+
+
 class UebaExplainRequest(BaseModel):
     entity: str
     profile: dict
+
+
+@app.post("/ueba/digest")
+async def ueba_digest(req: UebaDigestRequest):
+    """
+    Generate a weekly UEBA threat intelligence digest as Markdown.
+    Summarises the worst offenders, anomaly trends, and recommended actions.
+    Uses Mistral (fast) with a direct invoke — no agent loop.
+    """
+    llm = _get_mistral() or _get_gpt_mini()
+    if not llm:
+        raise HTTPException(status_code=503, detail="No LLM available for UEBA digest")
+
+    # Build entity summary lines
+    entity_lines = []
+    for e in req.top_entities[:10]:
+        name        = e.get("name") or e.get("entity") or "unknown"
+        score       = e.get("risk_score", 0)
+        anomalies   = e.get("anomaly_count", 0)
+        entity_type = e.get("entity_type", "user")
+        hosts       = e.get("all_hosts") or []
+        host_str    = ", ".join(str(h) for h in hosts[:5]) if hosts else "N/A"
+        entity_lines.append(f"- {name} ({entity_type}): risk={score}/100, anomalies={anomalies}, hosts={host_str}")
+
+    entity_block = "\n".join(entity_lines) if entity_lines else "- No high-risk entities detected"
+
+    # Build anomaly trend block
+    anomaly_lines = []
+    for atype, count in req.anomaly_summary.items():
+        anomaly_lines.append(f"- {atype}: {count} occurrence(s)")
+    anomaly_block = "\n".join(anomaly_lines) if anomaly_lines else "- No anomalies recorded"
+
+    total_anomalies = sum(req.anomaly_summary.values())
+    high_risk_count = sum(1 for e in req.top_entities if (e.get("risk_score") or 0) >= 70)
+
+    prompt_text = f"""You are a senior SOC analyst writing a weekly UEBA threat intelligence digest for the security team.
+Write a concise, actionable Markdown report covering the past {req.period_days} days.
+Use specific data provided — no generic filler. Be direct and professional.
+
+Data:
+- Total entities monitored: {len(req.top_entities)}
+- High-risk entities (score ≥70): {high_risk_count}
+- Total anomalies detected: {total_anomalies}
+
+Top risk entities:
+{entity_block}
+
+Anomaly breakdown:
+{anomaly_block}
+
+Write the digest with these EXACT Markdown sections:
+## Executive Summary
+(2-3 sentences: overall threat posture, headline risk, trend vs typical week)
+
+## Top Risk Entities
+(Bullet list: name, score, key concern, recommended immediate action)
+
+## Anomaly Trends
+(Which anomaly types are spiking or notable, what they indicate)
+
+## Recommended Actions
+(Numbered list of 3-5 prioritised actions for the SOC team this week)
+
+Digest:"""
+
+    from langchain_core.messages import SystemMessage, HumanMessage as HM
+    try:
+        response = await llm.ainvoke([
+            SystemMessage(content="You are a senior SOC analyst producing weekly UEBA threat intelligence digests. Be specific, data-driven, and actionable. Output valid Markdown only."),
+            HM(content=prompt_text),
+        ])
+        digest_md = response.content.strip()
+    except Exception as e:
+        log.error(f"[ueba/digest] LLM error: {e}")
+        raise HTTPException(status_code=500, detail=f"LLM error: {str(e)}")
+
+    return {
+        "digest_md": digest_md,
+        "period_days": req.period_days,
+        "entity_count": len(req.top_entities),
+        "high_risk_count": high_risk_count,
+        "total_anomalies": total_anomalies,
+    }
 
 
 @app.post("/ueba/explain")

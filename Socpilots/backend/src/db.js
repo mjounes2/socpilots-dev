@@ -429,6 +429,23 @@ async function initSchema() {
          false, true
        )
      ON CONFLICT (name) DO NOTHING`,
+
+    // ── UEBA Weekly Digests ────────────────────────────────────────
+    `CREATE TABLE IF NOT EXISTS ueba_digests (
+      id               SERIAL PRIMARY KEY,
+      generated_at     TIMESTAMPTZ DEFAULT NOW(),
+      period_start     TIMESTAMPTZ,
+      period_end       TIMESTAMPTZ,
+      digest_md        TEXT,
+      digest_type      VARCHAR(20) DEFAULT 'weekly',
+      entity_count     INT DEFAULT 0,
+      high_risk_count  INT DEFAULT 0,
+      top_entities     JSONB,
+      success          BOOL DEFAULT true,
+      error            TEXT,
+      emailed          BOOL DEFAULT false
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_ueba_digests_at ON ueba_digests(generated_at DESC)`,
   ];
 
   for (const q of queries) {
@@ -1324,6 +1341,46 @@ async function checkOtxIndicator(indicator) {
   return r.rows;
 }
 
+// ── UEBA Digests ──────────────────────────────────────────────
+async function createUebaDigest({ periodStart, periodEnd, digestMd, entityCount, highRiskCount, topEntities, success, error, emailed }) {
+  const r = await pool.query(
+    `INSERT INTO ueba_digests(period_start, period_end, digest_md, entity_count, high_risk_count, top_entities, success, error, emailed)
+     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+    [
+      periodStart || null, periodEnd || null, digestMd || null,
+      entityCount || 0, highRiskCount || 0,
+      topEntities ? JSON.stringify(topEntities) : null,
+      success !== false, error || null, emailed === true,
+    ]
+  );
+  return r.rows[0];
+}
+
+async function listUebaDigests(page = 1, pageSize = 10) {
+  const offset = (page - 1) * pageSize;
+  const r = await pool.query(
+    `SELECT id, generated_at, period_start, period_end, digest_type, entity_count, high_risk_count, success, emailed, error,
+            COUNT(*) OVER() AS total_count
+     FROM ueba_digests ORDER BY generated_at DESC LIMIT $1 OFFSET $2`,
+    [pageSize, offset]
+  );
+  return { rows: r.rows, total: parseInt(r.rows[0]?.total_count || 0) };
+}
+
+async function getUebaDigest(id) {
+  const r = await pool.query(`SELECT * FROM ueba_digests WHERE id=$1`, [id]);
+  return r.rows[0] || null;
+}
+
+async function getLatestUebaDigest() {
+  const r = await pool.query(`SELECT * FROM ueba_digests WHERE success=true ORDER BY generated_at DESC LIMIT 1`);
+  return r.rows[0] || null;
+}
+
+async function markUebaDigestEmailed(id) {
+  await pool.query(`UPDATE ueba_digests SET emailed=true WHERE id=$1`, [id]);
+}
+
 // ── Health check ─────────────────────────────────────────────
 async function ping() {
   try {
@@ -1436,6 +1493,12 @@ module.exports = {
   getOtxIocs,
   getOtxStats,
   checkOtxIndicator,
+  // UEBA Digests
+  createUebaDigest,
+  listUebaDigests,
+  getUebaDigest,
+  getLatestUebaDigest,
+  markUebaDigestEmailed,
 };
 
 // ── Evidence Files CRUD ──────────────────────────────────

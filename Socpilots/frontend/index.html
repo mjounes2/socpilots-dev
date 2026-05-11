@@ -2074,6 +2074,33 @@ sshd: Failed" style="min-height:80px"></textarea></div>
       <div id="ueba-sharedcreds" style="font-size:12px;color:#8ab0d0;font-family:var(--fm)"><div class="loading"><div class="spin"></div></div></div>
     </div>
   </div>
+
+  <!-- Weekly UEBA Digest Section -->
+  <div class="card" style="margin-bottom:14px" id="ueba-digest-card">
+    <div class="card-hd" style="flex-wrap:wrap;gap:8px">
+      <div style="display:flex;align-items:center;gap:8px">
+        <div class="card-ttl">WEEKLY THREAT DIGEST</div>
+        <span style="font-size:9px;font-family:var(--fm);background:rgba(0,229,255,.1);color:var(--c);padding:1px 6px;border-radius:3px;letter-spacing:.5px">AI-GENERATED</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <span id="digest-last-label" style="font-size:10px;color:var(--txt3);font-family:var(--fm)"></span>
+        <button id="digest-gen-btn" class="btn btn-sm" onclick="triggerUebaDigest()" style="display:none;background:rgba(0,229,255,.08);border-color:rgba(0,229,255,.35);color:var(--c);font-size:10px;padding:3px 10px">⚡ Generate Now</button>
+        <button class="btn btn-sm" onclick="loadUebaDigests()" style="font-size:10px;padding:3px 8px">⟳ Refresh</button>
+        <button class="btn btn-sm" onclick="toggleDigestHistory()" style="font-size:10px;padding:3px 8px" id="digest-hist-btn">📋 History</button>
+      </div>
+    </div>
+
+    <!-- Latest digest content -->
+    <div id="ueba-digest-latest" style="min-height:60px">
+      <div class="loading"><div class="spin"></div></div>
+    </div>
+
+    <!-- Digest history (collapsed by default) -->
+    <div id="ueba-digest-history" style="display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--b1)">
+      <div style="font-size:10px;color:var(--txt3);font-family:var(--fm);letter-spacing:.8px;margin-bottom:8px">DIGEST HISTORY</div>
+      <div id="ueba-digest-list"><div class="loading"><div class="spin"></div></div></div>
+    </div>
+  </div>
 </div>
 
 <!-- DARK SOC AUTONOMOUS MODE PAGE -->
@@ -2611,6 +2638,14 @@ sshd: Failed" style="min-height:80px"></textarea></div>
   </div>
 </div>
 
+<div class="modal-ov" id="modal-digest">
+  <div class="modal" style="width:720px;max-height:85vh;overflow:hidden;display:flex;flex-direction:column">
+    <div class="modal-hd"><div class="modal-ttl" id="modal-digest-title">UEBA Digest</div><button class="modal-x" onclick="closeModal('modal-digest')">✕</button></div>
+    <div class="modal-body" id="modal-digest-body" style="overflow-y:auto;flex:1"></div>
+    <div class="modal-ft"><button class="btn btn-h" onclick="closeModal('modal-digest')">Close</button></div>
+  </div>
+</div>
+
 <div id="toasts"></div>
 <div class="mtt" id="map-tt"></div>
 <script>
@@ -3018,7 +3053,7 @@ const LOAD_MAP={dashboard:loadDashboard,agents:loadAgents,alerts:loadAlerts,rule
   cases:()=>{setCaseTimeframe(_cTimeframe);},'hive-alerts':()=>{setHaTimeframe(_haTimeframe);},threatmap:loadThreatMap,
   ioc:()=>{loadIOCQuick();loadOtxFeed();},reports:loadReportMetrics,
   assets:()=>{loadSubnets();loadAssets();loadScanStatus();},
-  ueba:()=>{loadUebaStats();loadUebaAnomalies();},
+  ueba:()=>{loadUebaStats();loadUebaAnomalies();loadUebaDigests();},
   correlate:()=>{loadUebaCorrelations();loadAlertGroups();renderCorrLiveFeed();},
   darksoc:()=>loadDarkSocPage(),
   langchain:()=>{lcCheckHealth();},
@@ -7107,6 +7142,139 @@ async function loadEntityBaseline(entity){
       ${hosts.length?`<div style="margin-top:6px;font-size:10px"><span style="color:var(--txt3)">Known hosts: </span><span style="color:var(--txt2)">${hosts.slice(0,8).map(h=>esc(h)).join(', ')}${hosts.length>8?` +${hosts.length-8} more`:''}</span></div>`:''}
       ${fpHtml}
     </div>`;
+}
+
+// ── UEBA Weekly Digest ────────────────────────────────────────
+let _digestHistOpen = false;
+let _digestPage = 1, _digestPageSize = 5;
+
+async function loadUebaDigests() {
+  const latestEl = document.getElementById('ueba-digest-latest');
+  const genBtn   = document.getElementById('digest-gen-btn');
+  const lastLbl  = document.getElementById('digest-last-label');
+  if (!latestEl) return;
+
+  // Show generate button for admins
+  if (CU.role === 'admin' && genBtn) genBtn.style.display = '';
+
+  latestEl.innerHTML = spin('Loading digest…');
+  const d = await G('/api/ueba/digest/latest');
+
+  if (!d || !d.id) {
+    latestEl.innerHTML = `<div style="padding:18px;text-align:center;color:var(--txt3);font-size:12px;font-family:var(--fm)">
+      No digest generated yet. ${_userRole==='admin'?'Click <strong style="color:var(--c)">⚡ Generate Now</strong> to run the first digest.':'Enable weekly digests in settings.'}
+    </div>`;
+    return;
+  }
+
+  if (lastLbl) {
+    const age = Date.now() - new Date(d.generated_at).getTime();
+    const ageLabel = age < 3600_000 ? 'just now'
+      : age < 86400_000 ? `${Math.round(age/3600_000)}h ago`
+      : `${Math.round(age/86400_000)}d ago`;
+    lastLbl.textContent = `Last: ${ageLabel}`;
+  }
+
+  if (!d.success) {
+    latestEl.innerHTML = `<div style="padding:12px 14px;background:rgba(255,23,68,.06);border-left:3px solid var(--r);border-radius:0 4px 4px 0;font-size:11px;color:var(--r);font-family:var(--fm)">
+      Digest generation failed: ${esc(d.error || 'unknown error')}
+    </div>`;
+    return;
+  }
+
+  const periodStart = d.period_start ? new Date(d.period_start).toLocaleDateString() : '?';
+  const periodEnd   = d.period_end   ? new Date(d.period_end).toLocaleDateString()   : '?';
+  const emailBadge  = d.emailed
+    ? `<span style="font-size:9px;font-family:var(--fm);background:rgba(0,230,118,.12);color:var(--g);padding:1px 6px;border-radius:3px">✉ emailed</span>`
+    : '';
+
+  latestEl.innerHTML = `
+    <div style="padding:14px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">
+        <span style="font-size:10px;font-family:var(--fm);color:var(--txt3)">${periodStart} → ${periodEnd}</span>
+        <span style="font-size:9px;font-family:var(--fm);background:rgba(156,39,176,.12);color:#ce93d8;padding:1px 6px;border-radius:3px">${d.entity_count} entities</span>
+        <span style="font-size:9px;font-family:var(--fm);background:rgba(255,23,68,.12);color:var(--r);padding:1px 6px;border-radius:3px">${d.high_risk_count} high-risk</span>
+        ${emailBadge}
+      </div>
+      <div class="ai-txt" style="font-size:12px;line-height:1.7;color:var(--txt2)">${parseAIMarkdown(d.digest_md || '')}</div>
+    </div>`;
+}
+
+async function loadDigestHistory() {
+  const listEl = document.getElementById('ueba-digest-list');
+  if (!listEl) return;
+  listEl.innerHTML = spin('Loading…');
+  const d = await G(`/api/ueba/digests?page=${_digestPage}&page_size=${_digestPageSize}`);
+  if (!d || d.error) { listEl.innerHTML = errBnr(d?.error || 'Load failed'); return; }
+  const items = d.items || [];
+  if (!items.length) { listEl.innerHTML = `<div style="padding:10px;text-align:center;color:var(--txt3);font-size:12px">No digests yet</div>`; return; }
+
+  const rows = items.map(r => {
+    const pStart = r.period_start ? new Date(r.period_start).toLocaleDateString() : '?';
+    const pEnd   = r.period_end   ? new Date(r.period_end).toLocaleDateString()   : '?';
+    const statusDot = r.success
+      ? `<span style="color:var(--g)">●</span>`
+      : `<span style="color:var(--r)" title="${esc(r.error||'')}">●</span>`;
+    return `<div style="display:flex;align-items:center;justify-content:space-between;padding:7px 10px;border-bottom:1px solid var(--b1);font-size:11px;gap:8px;flex-wrap:wrap">
+      <div style="display:flex;align-items:center;gap:8px">
+        ${statusDot}
+        <span style="font-family:var(--fm);color:var(--txt2)">${pStart} → ${pEnd}</span>
+        <span style="font-size:9px;color:var(--txt3)">${r.entity_count} entities · ${r.high_risk_count} high-risk</span>
+        ${r.emailed?`<span style="font-size:9px;color:var(--g)">✉</span>`:''}
+      </div>
+      ${r.success?`<button class="btn btn-sm" onclick="openDigestModal(${r.id})" style="font-size:10px;padding:2px 8px">View</button>`:''}
+    </div>`;
+  }).join('');
+
+  const pgn = buildPaginator(_digestPage, _digestPageSize, d.total,
+    `digestPrev()`, `digestNext(${d.total})`, `digestSetSize(this)`);
+  listEl.innerHTML = `<div style="border:1px solid var(--b1);border-radius:4px;overflow:hidden">${rows}</div>${pgn}`;
+}
+
+function toggleDigestHistory() {
+  const el = document.getElementById('ueba-digest-history');
+  const btn = document.getElementById('digest-hist-btn');
+  if (!el) return;
+  _digestHistOpen = !_digestHistOpen;
+  el.style.display = _digestHistOpen ? '' : 'none';
+  if (btn) btn.textContent = _digestHistOpen ? '📋 Hide' : '📋 History';
+  if (_digestHistOpen) loadDigestHistory();
+}
+
+function digestPrev() { if (_digestPage > 1) { _digestPage--; loadDigestHistory(); } }
+function digestNext(total) { if (_digestPage * _digestPageSize < total) { _digestPage++; loadDigestHistory(); } }
+function digestSetSize(sel) { _digestPageSize = parseInt(sel.value) || 5; _digestPage = 1; loadDigestHistory(); }
+
+async function openDigestModal(id) {
+  const d = await G(`/api/ueba/digest/${id}`);
+  if (!d || d.error) { alert('Failed to load digest'); return; }
+  const periodStart = d.period_start ? new Date(d.period_start).toLocaleDateString() : '?';
+  const periodEnd   = d.period_end   ? new Date(d.period_end).toLocaleDateString()   : '?';
+  const body = document.getElementById('modal-digest-body');
+  if (!body) return;
+  body.innerHTML = `
+    <div style="padding:16px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+        <span style="font-size:11px;font-family:var(--fm);color:var(--txt3)">${periodStart} → ${periodEnd}</span>
+        <span style="font-size:9px;font-family:var(--fm);background:rgba(156,39,176,.12);color:#ce93d8;padding:1px 6px;border-radius:3px">${d.entity_count} entities · ${d.high_risk_count} high-risk</span>
+      </div>
+      <div class="ai-txt" style="font-size:12px;line-height:1.7;color:var(--txt2)">${parseAIMarkdown(d.digest_md || '')}</div>
+    </div>`;
+  document.getElementById('modal-digest-title').textContent = `UEBA Digest — ${periodStart}`;
+  openModal('modal-digest');
+}
+
+async function triggerUebaDigest() {
+  const btn = document.getElementById('digest-gen-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Generating…'; }
+  const r = await P('/api/ueba/digest/generate', {});
+  if (btn) { btn.disabled = false; btn.textContent = '⚡ Generate Now'; }
+  if (r && r.ok) {
+    document.getElementById('ueba-digest-latest').innerHTML =
+      `<div style="padding:14px;font-size:11px;font-family:var(--fm);color:var(--g)">✓ Digest generation triggered — it will appear in 30–60 seconds. Click ⟳ Refresh to check.</div>`;
+  } else {
+    alert(r?.error || 'Failed to trigger digest');
+  }
 }
 
 // ── Attack-Path Mode ──────────────────────────────────────────
