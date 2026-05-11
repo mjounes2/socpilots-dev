@@ -1904,7 +1904,20 @@ sshd: Failed" style="min-height:80px"></textarea></div>
   <!-- Risk Leaderboard + Entity Lookup -->
   <div class="g2" style="margin-bottom:14px">
     <div class="card">
-      <div class="card-hd"><div class="card-ttl">RISK LEADERBOARD</div><span id="ueba-tf-label" style="font-size:10px;font-family:var(--fm);color:var(--txt3)">last 24h</span></div>
+      <div class="card-hd" style="flex-wrap:wrap;gap:6px">
+        <div style="display:flex;align-items:center;gap:8px;min-width:0">
+          <div class="card-ttl">RISK LEADERBOARD</div>
+          <span id="ueba-tf-label" style="font-size:10px;font-family:var(--fm);color:var(--txt3)">last 24h</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+          <input id="lb-q" class="fi" placeholder="Search user…" style="width:120px;font-size:10px;padding:3px 7px" oninput="lbFilterDebounce()">
+          <div style="display:flex;align-items:center;gap:4px">
+            <span style="font-size:9px;font-family:var(--fm);color:var(--txt3);white-space:nowrap">Score ≥</span>
+            <input id="lb-min-score" type="number" min="0" max="100" value="0" class="fi" style="width:48px;font-size:10px;padding:3px 5px;text-align:center" oninput="lbFilterDebounce()">
+          </div>
+          <button class="btn btn-h btn-sm" onclick="lbResetFilters()" style="font-size:10px;padding:3px 8px">✕ Reset</button>
+        </div>
+      </div>
       <div id="ueba-leaderboard" style="font-size:12px;color:#8ab0d0;font-family:var(--fm)"><div class="loading"><div class="spin"></div></div></div>
     </div>
     <div class="card">
@@ -1914,6 +1927,9 @@ sshd: Failed" style="min-height:80px"></textarea></div>
         <button class="btn btn-p" onclick="loadEntityGraph()">Graph</button>
       </div>
       <div id="ueba-graph-result" style="font-size:12px;color:#8ab0d0;font-family:var(--fm)"></div>
+      <div id="lb-exp-profile" style="display:none">
+        <div id="lb-exp-profile-content" style="margin-top:8px;padding:10px 14px;background:rgba(156,39,176,.05);border-left:3px solid rgba(156,39,176,.5);font-size:12px;color:var(--txt2);line-height:1.6;border-radius:0 4px 4px 0"></div>
+      </div>
     </div>
   </div>
 
@@ -1939,7 +1955,7 @@ sshd: Failed" style="min-height:80px"></textarea></div>
       </div>
     </div>
     <div id="ueba-force-container" style="width:100%;height:520px;position:relative;overflow:hidden;border-radius:4px;background:var(--bg2)"></div>
-    <div style="font-size:9px;color:var(--txt3);font-family:var(--fm);margin-top:6px;padding:0 2px">Drag nodes · Scroll to zoom · Click node to highlight connections · Double-click node to explore</div>
+    <div style="font-size:9px;color:var(--txt3);font-family:var(--fm);margin-top:6px;padding:0 2px">Drag nodes · Scroll to zoom · Click to highlight · <strong style="color:rgba(0,229,255,.5)">Shift+click</strong> to Ask AI · Double-click to explore · Node size = risk score</div>
   </div>
 
   <!-- Anomaly Panels Row 1 -->
@@ -6780,9 +6796,18 @@ async function loadUebaStats(){
   const hr=document.getElementById('ub-highrisk');if(hr)hr.textContent=s.high_risk_users??'0';
 }
 
+let _lbFilterTimer=null;
+function lbFilterDebounce(){clearTimeout(_lbFilterTimer);_lbFilterTimer=setTimeout(()=>{_lbPage=1;loadUebaLeaderboard();},300);}
+function lbResetFilters(){
+  const q=document.getElementById('lb-q');if(q)q.value='';
+  const s=document.getElementById('lb-min-score');if(s)s.value='0';
+  _lbPage=1;loadUebaLeaderboard();
+}
 async function loadUebaLeaderboard(page){
   if(page!==undefined) _lbPage=page;
-  const d=await G(`/api/ueba/leaderboard?page=${_lbPage}&page_size=${_lbPageSize}&hours=${_uebaHours()}`);
+  const q=encodeURIComponent((document.getElementById('lb-q')?.value||'').trim());
+  const minScore=parseInt(document.getElementById('lb-min-score')?.value||'0')||0;
+  const d=await G(`/api/ueba/leaderboard?page=${_lbPage}&page_size=${_lbPageSize}&hours=${_uebaHours()}&q=${q}&min_score=${minScore}`);
   renderLeaderboard(d?.users||[], d?.total||0);
 }
 function setLbPageSize(sel){_lbPageSize=parseInt(sel.value)||20;_lbPage=1;loadUebaLeaderboard();}
@@ -7015,6 +7040,10 @@ async function loadEntityGraph(){
           ${p.last_anomaly?`<span>Last anomaly</span><span style="color:#ff9800">${new Date(p.last_anomaly).toLocaleString()}</span>`:''}
         </div>
         ${knownLabel?`<div style="margin-top:4px;font-size:10px;color:#8ab0d0">${esc(knownLabel)}</div>`:''}
+        <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
+          <button class="btn btn-sm" onclick="go('copilot');askAIAboutUeba('${esc(p.name)}',${p.risk_score||0})" style="font-size:10px;padding:4px 9px;background:rgba(0,229,255,.08);border-color:rgba(0,229,255,.3);color:var(--c)">💬 Ask AI</button>
+          ${p.anomaly_count>0?`<button class="btn btn-sm" onclick="uebaExplainRisk('${esc(p.name)}','lb-exp-profile')" style="font-size:10px;padding:4px 9px;background:rgba(156,39,176,.08);border:1px solid rgba(156,39,176,.35);color:#ce93d8">🧠 Explain Risk</button>`:''}
+        </div>
       </div>`;
     } else {
       el.innerHTML='<div style="color:#8ab0d0;font-size:11px;padding:4px 0">Entity not found in UEBA graph.</div>';
@@ -7073,7 +7102,8 @@ function renderForceGraphD3(container, allNodes, allEdges, isFullscreen){
     if(n.risk>=50)return'#ff9800';
     return NODE_COLORS[n.type]||'#8ab0d0';
   };
-  const nodeR=n=>Math.max(8,Math.min(26, 8+(n.risk/100)*10+Math.log1p(n.events||0)*2));
+  // Node radius scales directly with risk: 8px (score=0) → 34px (score=100)
+  const nodeR=n=>Math.max(8,Math.min(34, 8+(n.risk/100)*26));
 
   const edgeColor=e=>{
     if(e.deviation>=70)return'rgba(255,23,68,.70)';
@@ -7180,30 +7210,66 @@ function renderForceGraphD3(container, allNodes, allEdges, isFullscreen){
     .attr('font-family','monospace').attr('text-anchor','middle')
     .style('pointer-events','none').style('user-select','none');
 
-  // Legend — node types (bottom-left) + tactic edge colors (bottom-right)
-  const legData=[
-    {l:'User',c:'#00e5ff'},{l:'Host',c:'#66bb6a'},{l:'IP',c:'#ff9800'},
-    {l:'Process',c:'#ab47bc'},{l:'Risk ≥80',c:'#ff1744'},
-  ];
-  const leg=svg.append('g').attr('transform',`translate(10,${H-20})`);
-  legData.forEach((d,i)=>{
-    const lg=leg.append('g').attr('transform',`translate(${i*76},0)`);
-    lg.append('circle').attr('r',5).attr('cx',5).attr('cy',0)
-      .attr('fill',d.c+'33').attr('stroke',d.c).attr('stroke-width',1.5);
-    lg.append('text').text(d.l).attr('x',13).attr('y',4)
-      .attr('fill',d.c+'cc').attr('font-size',9).attr('font-family','monospace');
-  });
-  // Tactic edge legend (only show tactics present in current edges)
+  // ── Persistent legend box (bottom-left, glassmorphism) ────────────────
   const tacticsSeen=[...new Set(edges.flatMap(e=>e.flags||[]).filter(f=>MITRE_TACTIC_COLORS[f]))]
-    .map(f=>MITRE_TACTIC_COLORS[f]).filter((v,i,a)=>a.findIndex(x=>x.tactic===v.tactic)===i);
-  const tleg=svg.append('g').attr('transform',`translate(10,${H-36})`);
-  tacticsSeen.slice(0,5).forEach((tc,i)=>{
-    const tg=tleg.append('g').attr('transform',`translate(${i*110},0)`);
-    tg.append('line').attr('x1',0).attr('y1',0).attr('x2',18).attr('y2',0)
-      .attr('stroke',tc.color).attr('stroke-width',2);
-    tg.append('text').text(tc.tactic).attr('x',22).attr('y',4)
-      .attr('fill',tc.color+'cc').attr('font-size',8).attr('font-family','monospace');
+    .map(f=>MITRE_TACTIC_COLORS[f]).filter((v,i,a)=>a.findIndex(x=>x.tactic===v.tactic)===i).slice(0,4);
+  const legG=svg.append('g').attr('class','ueba-legend').attr('transform','translate(10,10)');
+  // Background box
+  const legRows=5+tacticsSeen.length+(tacticsSeen.length?1:0);
+  const legH=14+legRows*14+4;
+  legG.append('rect').attr('width',148).attr('height',legH).attr('rx',5)
+    .attr('fill','rgba(10,22,40,.82)').attr('stroke','rgba(0,229,255,.18)').attr('stroke-width',1);
+  // Section: Node Types
+  legG.append('text').text('NODE TYPES').attr('x',8).attr('y',12)
+    .attr('fill','rgba(138,176,208,.6)').attr('font-size',7.5).attr('font-family','monospace').attr('letter-spacing','0.6');
+  const typeData=[
+    {l:'User',c:'#00e5ff'},{l:'Host',c:'#66bb6a'},{l:'IP',c:'#ff9800'},{l:'Process',c:'#ab47bc'},
+  ];
+  typeData.forEach(({l,c},i)=>{
+    const y=24+i*13;
+    legG.append('circle').attr('cx',16).attr('cy',y).attr('r',5)
+      .attr('fill',c+'28').attr('stroke',c).attr('stroke-width',1.5);
+    legG.append('text').text(l).attr('x',26).attr('y',y+3.5)
+      .attr('fill',c+'dd').attr('font-size',9).attr('font-family','monospace');
   });
+  // Section: Risk Colouring
+  const riskY=24+typeData.length*13+6;
+  legG.append('text').text('RISK COLOUR').attr('x',8).attr('y',riskY)
+    .attr('fill','rgba(138,176,208,.6)').attr('font-size',7.5).attr('font-family','monospace').attr('letter-spacing','0.6');
+  [{l:'Score ≥ 80',c:'#ff1744'},{l:'Score ≥ 50',c:'#ff9800'}].forEach(({l,c},i)=>{
+    const y=riskY+12+i*13;
+    legG.append('circle').attr('cx',16).attr('cy',y).attr('r',5)
+      .attr('fill',c+'28').attr('stroke',c).attr('stroke-width',1.5);
+    legG.append('text').text(l).attr('x',26).attr('y',y+3.5)
+      .attr('fill',c+'dd').attr('font-size',9).attr('font-family','monospace');
+  });
+  // Section: Node size
+  const sizeY=riskY+12+2*13+4;
+  legG.append('text').text('SIZE = RISK').attr('x',8).attr('y',sizeY)
+    .attr('fill','rgba(138,176,208,.6)').attr('font-size',7.5).attr('font-family','monospace').attr('letter-spacing','0.6');
+  [{r:4,l:'Low (0–30)',c:'#8ab0d0'},{r:7,l:'Med (30–70)',c:'#ff9800'},{r:11,l:'High (70–100)',c:'#ff1744'}].forEach(({r,l,c},i)=>{
+    const baseY=sizeY+14+i*14;
+    legG.append('circle').attr('cx',18).attr('cy',baseY).attr('r',r)
+      .attr('fill',c+'20').attr('stroke',c).attr('stroke-width',1.5);
+    legG.append('text').text(l).attr('x',32).attr('y',baseY+3.5)
+      .attr('fill',c+'cc').attr('font-size',9).attr('font-family','monospace');
+  });
+  // Section: Tactic edges (dynamic — only tactics present in graph)
+  if(tacticsSeen.length){
+    const tacY=sizeY+14+3*14+4;
+    legG.append('text').text('EDGE TACTICS').attr('x',8).attr('y',tacY)
+      .attr('fill','rgba(138,176,208,.6)').attr('font-size',7.5).attr('font-family','monospace').attr('letter-spacing','0.6');
+    tacticsSeen.forEach(({color,tactic},i)=>{
+      const y=tacY+12+i*12;
+      legG.append('line').attr('x1',8).attr('y1',y).attr('x2',26).attr('y2',y)
+        .attr('stroke',color).attr('stroke-width',2).attr('stroke-dasharray','4,2');
+      legG.append('text').text(tactic.replace(/_/g,' ')).attr('x',30).attr('y',y+3.5)
+        .attr('fill',color+'dd').attr('font-size',8).attr('font-family','monospace');
+    });
+  }
+  // Keyboard hint at very bottom
+  legG.append('text').text('Shift+click = Ask AI').attr('x',8).attr('y',legH-4)
+    .attr('fill','rgba(0,229,255,.4)').attr('font-size',7.5).attr('font-family','monospace');
 
   // Force simulation
   const sim=d3.forceSimulation(nodes)
@@ -7239,7 +7305,7 @@ function renderForceGraphD3(container, allNodes, allEdges, isFullscreen){
         ${d.last_anomaly?`<span style="color:#8ab0d0">Last Anomaly</span><span style="color:#ff9800">${new Date(d.last_anomaly).toLocaleString()}</span>`:''}
       </div>
       ${(d.flags&&d.flags.length)?`<div style="margin-top:7px;display:flex;flex-wrap:wrap;gap:3px">${d.flags.map(f=>{const tc=MITRE_TACTIC_COLORS[f];return`<span style="font-size:8px;padding:1px 5px;border-radius:3px;background:${tc?tc.color+'22':'rgba(138,176,208,.1)'};color:${tc?tc.color:'#8ab0d0'};border:1px solid ${tc?tc.color+'44':'var(--b1)'}">${f.replace(/_/g,' ')}</span>`;}).join('')}</div>`:''}
-      <div style="margin-top:7px;font-size:9px;color:var(--txt3)">Click to highlight · Dbl-click to explore</div>`;
+      <div style="margin-top:7px;font-size:9px;color:var(--txt3)">Click to highlight · Shift+click to Ask AI · Dbl-click to explore</div>`;
     t.style.display='block';
     moveTip(event);
   }
@@ -7255,6 +7321,12 @@ function renderForceGraphD3(container, allNodes, allEdges, isFullscreen){
   // Node selection
   let _sel=null;
   function selectNode(ev,d){
+    // Shift+click → Ask AI about this entity
+    if(ev.shiftKey){
+      const t=document.getElementById('ueba-tooltip');if(t)t.style.display='none';
+      askAIAboutUeba(d.id, d.risk||0);
+      return;
+    }
     if(_sel===d.id){ _sel=null; link.attr('opacity',1).attr('stroke-width',e=>e.deviation>=70?2.5:1.5); node.attr('opacity',1); return; }
     _sel=d.id;
     const connected=new Set([d.id]);

@@ -297,16 +297,19 @@ async function ingestEvent(ev) {
 }
 
 // ── Risk Leaderboard ─────────────────────────────────────────
-async function getRiskLeaderboard(limit = 20, skip = 0, hours = 24) {
+async function getRiskLeaderboard(limit = 20, skip = 0, hours = 24, q = '', minScore = 0) {
   const d = getDriver();
   if (!d) return { users: [], total: 0 };
   const neo4j = require('neo4j-driver');
   const s1 = d.session(), s2 = d.session();
+  const searchClause = q
+    ? `AND toLower(u.name) CONTAINS toLower($q)`
+    : '';
   try {
     const [dataRes, countRes] = await Promise.all([
       s1.run(
         `MATCH (u:User)
-         WHERE u.total_events > 0
+         WHERE u.total_events > 0 AND coalesce(u.risk_score, 0) >= $minScore ${searchClause}
          OPTIONAL MATCH (u)-[r:LOGGED_IN]->(h:Host)
          WHERE r.time >= toString(datetime() - duration({hours: $hours}))
          WITH u, count(r) AS events_period, collect(DISTINCT h.name)[..5] AS recent_hosts
@@ -316,9 +319,12 @@ async function getRiskLeaderboard(limit = 20, skip = 0, hours = 24) {
                 u.last_anomaly AS last_anomaly,
                 events_period, recent_hosts
          ORDER BY risk_score DESC, u.total_events DESC SKIP $skip LIMIT $limit`,
-        { limit: neo4j.int(limit), skip: neo4j.int(skip), hours: neo4j.int(hours) }
+        { limit: neo4j.int(limit), skip: neo4j.int(skip), hours: neo4j.int(hours), q, minScore: neo4j.int(minScore) }
       ),
-      s2.run(`MATCH (u:User) WHERE u.total_events > 0 RETURN count(u) AS total`),
+      s2.run(
+        `MATCH (u:User) WHERE u.total_events > 0 AND coalesce(u.risk_score, 0) >= $minScore ${searchClause} RETURN count(u) AS total`,
+        { q, minScore: neo4j.int(minScore) }
+      ),
     ]);
     const users = dataRes.records.map(r => ({
       user:           r.get('user'),
