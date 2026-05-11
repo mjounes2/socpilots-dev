@@ -1672,6 +1672,22 @@ app.post('/api/ai/investigate', authMW, async (req, res) => {
         // UEBA cross-correlation (non-blocking)
         runUebaCorrelation(savedId, alert).catch(() => {});
 
+        // Cross-investigation memory — embed summary in socpilots_knowledge (non-blocking)
+        (() => {
+          const mitreTags = (alert.mitre || []).join(', ');
+          const docTitle  = `Investigation: ${alert.ruleId} on ${alert.agent} (${alertSeverity})`;
+          const docDesc   = `Rule ${alert.ruleId} triggered on agent ${alert.agent}. Severity: ${alertSeverity}. Src IP: ${alert.srcIp || 'N/A'}. MITRE: ${mitreTags || 'N/A'}. Description: ${alert.description || ''}. Report excerpt: ${text.slice(0, 400)}`;
+          const kHeaders  = process.env.RAG_API_KEY ? { 'X-API-Key': process.env.RAG_API_KEY } : {};
+          axios.post(`${KNOWLEDGE_URL}/add_document`, {
+            item_id:     `inv_${savedId}`,
+            title:       docTitle,
+            description: docDesc,
+            item_type:   'past_investigation',
+            source:      'investigation',
+            metadata:    { investigation_id: savedId, rule_id: alert.ruleId, agent: alert.agent, severity: alertSeverity, src_ip: alert.srcIp || null, mitre: alert.mitre || [] },
+          }, { headers: kHeaders, timeout: 15000 }).catch(() => {});
+        })();
+
       } catch(e) { console.warn('[DB] save investigation failed:', e.message); }
     }
 
@@ -2133,6 +2149,21 @@ Use markdown tables. Be concise.`;
           });
           savedId = saved.id;
           triaged++;
+
+          // Cross-investigation memory (non-blocking)
+          (() => {
+            const mitreTags = (alert.mitre || []).join(', ');
+            const kHeaders  = process.env.RAG_API_KEY ? { 'X-API-Key': process.env.RAG_API_KEY } : {};
+            axios.post(`${KNOWLEDGE_URL}/add_document`, {
+              item_id:     `inv_${savedId}`,
+              title:       `Investigation: ${alert.ruleId} on ${alert.agent} (${alert.severity})`,
+              description: `Rule ${alert.ruleId} triggered on agent ${alert.agent}. Severity: ${alert.severity}. Src IP: ${alert.srcIp || 'N/A'}. MITRE: ${mitreTags || 'N/A'}. Description: ${alert.description || ''}. Report excerpt: ${text.slice(0, 400)}`,
+              item_type:   'past_investigation',
+              source:      'investigation',
+              metadata:    { investigation_id: savedId, rule_id: alert.ruleId, agent: alert.agent, severity: alert.severity, src_ip: alert.srcIp || null, mitre: alert.mitre || [] },
+            }, { headers: kHeaders, timeout: 15000 }).catch(() => {});
+          })();
+
           // Notify + email about auto-triaged investigation
           db.createNotification(
             'alert', 'New Investigation Auto-Triaged',

@@ -114,6 +114,41 @@ def ingest():
         return jsonify({"status": "error", "error": str(e)}), 500
 
 
+@app.route("/add_document", methods=["POST"])
+@require_api_key
+def add_document():
+    """
+    Embed and upsert a single document into socpilots_knowledge.
+    Body: { item_id, title, description, item_type, source, metadata }
+    Used for cross-investigation memory.
+    """
+    body = request.get_json(silent=True) or {}
+    item_id     = body.get("item_id", "")
+    title       = body.get("title", "")
+    description = body.get("description", "")
+    item_type   = body.get("item_type", "past_investigation")
+    source      = body.get("source", "investigation")
+    metadata    = body.get("metadata", {})
+
+    if not item_id or not title or not description:
+        return jsonify({"error": "item_id, title, and description are required"}), 400
+
+    try:
+        svc = _get_service()
+        svc._upsert_knowledge_item(
+            item_id=item_id,
+            title=title,
+            description=description,
+            item_type=item_type,
+            source=source,
+            metadata=metadata,
+        )
+        return jsonify({"status": "ok", "item_id": item_id})
+    except Exception as e:
+        log.error(f"add_document error: {e}")
+        return jsonify({"status": "error", "error": str(e)}), 500
+
+
 @app.route("/stats")
 def stats():
     """Return per-type point counts from Qdrant."""

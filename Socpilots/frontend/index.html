@@ -1548,13 +1548,18 @@ sshd: Failed" style="min-height:80px"></textarea></div>
         <button onclick="clearChat()" title="Clear conversation history" style="background:none;border:1px solid var(--b2);border-radius:4px;padding:3px 8px;cursor:pointer;color:var(--txt3);font-size:9px;font-family:var(--fm);letter-spacing:.5px;transition:all .15s" onmouseover="this.style.borderColor='var(--r)';this.style.color='var(--r)'" onmouseout="this.style.borderColor='var(--b2)';this.style.color='var(--txt3)'">✕ CLEAR</button>
       </div>
       <div class="chat-msgs" id="chat-msgs">
-        <div class="cmsg ai"><div class="cav ai">SP</div><div class="cbub">Hello <strong id="chat-uname" style="color:var(--c)">—</strong>!<br><br>I'm SOCPilots AI — connected to your SIEM and SP-CM via MCP tools.<br><br>Ask about alerts, agents, cases, threats, or request automated response actions.</div></div>
+        <div class="cmsg ai"><div class="cav ai">SP</div><div class="cbub">Hello <strong id="chat-uname" style="color:var(--c)">—</strong>!<br><br>I'm SOCPilots AI SOC Analysist How Can i help you</div></div>
       </div>
       <div class="chat-row" style="flex-direction:column;gap:5px;padding:8px 10px">
         <div id="chat-attach-chip" style="display:none;align-items:center;gap:6px;background:rgba(0,229,255,.08);border:1px solid rgba(0,229,255,.25);border-radius:4px;padding:4px 8px;font-size:10px;font-family:var(--fm);color:var(--c)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:10px;height:10px;flex-shrink:0"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
           <span id="chat-attach-name" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
           <button onclick="chatRemoveAttach()" style="background:none;border:none;color:var(--r);cursor:pointer;font-size:13px;line-height:1;padding:0 2px">✕</button>
+        </div>
+        <div id="chat-alert-chip" style="display:none;align-items:center;gap:6px;background:rgba(0,230,118,.07);border:1px solid rgba(0,230,118,.3);border-radius:4px;padding:4px 8px;font-size:10px;font-family:var(--fm);color:var(--g)">
+          <span style="font-size:11px">📌</span>
+          <span id="chat-alert-chip-name" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+          <button onclick="chatClearAlertCtxChip()" style="background:none;border:none;color:var(--r);cursor:pointer;font-size:13px;line-height:1;padding:0 2px">✕</button>
         </div>
         <div style="display:flex;gap:6px;align-items:flex-end;width:100%">
           <button id="chat-clip-btn" onclick="chatAttach()" title="Attach file — PDF, Excel, CSV, TXT, JPG/PNG" style="background:none;border:1px solid var(--b2);border-radius:4px;padding:7px 8px;cursor:pointer;color:var(--txt2);display:flex;align-items:center;flex-shrink:0;transition:all .15s" onmouseover="this.style.borderColor='var(--c)';this.style.color='var(--c)'" onmouseout="this.style.borderColor='var(--b2)';this.style.color='var(--txt2)'"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg></button>
@@ -3516,7 +3521,7 @@ function renderAlerts(alerts, total){
       <td>${(a.mitre||[]).slice(0,1).map(m=>`<span class="badge low" style="font-size:8px">${esc(m)}</span>`).join('')}</td>
       <td>${statusBadge}</td>
       <td style="white-space:nowrap;min-width:200px">
-        <button type="button" class="btn btn-p btn-sm" onclick="showAlert(${i})" style="padding:5px 10px;margin-right:4px">View Details</button>${investigateBtn}${reportBtn}
+        <button type="button" class="btn btn-p btn-sm" onclick="showAlert(${i})" style="padding:5px 10px;margin-right:4px">View Details</button>${investigateBtn}${reportBtn}<button type="button" class="btn btn-sm" onclick="askAIAboutAlert(${i})" style="padding:5px 8px;background:rgba(0,230,118,.08);border:1px solid rgba(0,230,118,.35);color:var(--g);margin-left:2px" title="Ask SOCPilots AI about this alert">💬 Ask AI</button>
       </td>
     </tr>`;
   }).join('');
@@ -3524,6 +3529,21 @@ function renderAlerts(alerts, total){
     `loadAlerts(${_alertPage-1})`,`loadAlerts(${_alertPage+1})`,
     'setAlertPageSize(this)');
   el.innerHTML=`<div class="tbl"><table><thead><tr><th>Time</th><th>Sev</th><th>Rule</th><th>Description</th><th>Agent</th><th>Src IP</th><th>MITRE</th><th>Status</th><th>Action</th></tr></thead><tbody>${rows}</tbody></table></div>${pgn}`;
+}
+function askAIAboutAlert(i){
+  const cached=window._renderedAlerts||_alerts;
+  const a=cached[i];if(!a)return;
+  _alertContext={ruleId:a.ruleId,description:a.description,agent:a.agent,srcIp:a.srcIp||'',severity:a.severity,timestamp:a.timestamp,mitre:a.mitre||[]};
+  go('copilot');
+  // Show chip and pre-fill input
+  const chip=document.getElementById('chat-alert-chip');
+  const lbl=document.getElementById('chat-alert-chip-name');
+  if(chip&&lbl){
+    lbl.textContent=`Alert ${a.ruleId} — ${a.severity} — ${a.agent}`;
+    chip.style.display='flex';
+  }
+  const inp=document.getElementById('chat-in');
+  if(inp){inp.placeholder='Ask about this alert...';inp.focus();}
 }
 // View previous AI investigation from DB (cached report)
 async function viewInvestigation(i){
@@ -5462,6 +5482,7 @@ async function invEscalateCase(){
 let _hist=[];
 let _chatLoaded=false;
 let _chatLastDay='';
+let _alertContext=null; // {ruleId, description, agent, srcIp, severity, timestamp, mitre}
 
 // ── Chat file attachment ──────────────────────────────────────────
 let _chatAttach=null;
@@ -5491,6 +5512,11 @@ async function chatFileSelected(ev){
 function chatRemoveAttach(){
   _chatAttach=null;
   document.getElementById('chat-attach-chip').style.display='none';
+  document.getElementById('chat-in').placeholder='Ask SOCPilots AI...';
+}
+function chatClearAlertCtxChip(){
+  _alertContext=null;
+  document.getElementById('chat-alert-chip').style.display='none';
   document.getElementById('chat-in').placeholder='Ask SOCPilots AI...';
 }
 
@@ -5563,6 +5589,15 @@ async function sendChat(){
       :'';
     apiMsg=`[Attached file: ${att.filename} — ${att.chunk_count} chunk${att.chunk_count!==1?'s':''} extracted and indexed]\n${preview}\n\nUser query: ${msg}`;
     displayMsg=`📎 ${att.filename}\n\n${msg}`;
+  }
+
+  // Inject one-shot alert context if set via "Ask AI" button on alerts page
+  if(_alertContext){
+    const ctx=_alertContext;_alertContext=null;
+    chatClearAlertCtxChip();
+    const ctxPrefix=`[Alert Context — Rule: ${ctx.ruleId} | Severity: ${ctx.severity} | Agent: ${ctx.agent}${ctx.srcIp?' | Src IP: '+ctx.srcIp:''} | ${ctx.mitre.length?'MITRE: '+ctx.mitre.join(', ')+' | ':''}Description: ${ctx.description}]\n\n`;
+    apiMsg=ctxPrefix+apiMsg;
+    displayMsg=`📌 Alert ${ctx.ruleId} (${ctx.severity})\n\n${displayMsg}`;
   }
 
   addMsg('u',displayMsg,'',false,new Date());
@@ -5690,7 +5725,7 @@ async function clearChat(){
   const oldSid=_chatSessionId;
   _chatSessionId=`soc_${CU.username}_${Date.now()}`;
   _hist=[];_chatLoaded=false;_chatLastDay='';
-  chatRemoveAttach();
+  chatRemoveAttach();chatClearAlertCtxChip();
   D('/api/chat/sessions/'+oldSid).catch(()=>{});
   const w=document.getElementById('chat-msgs');
   w.innerHTML=`<div class="cmsg ai"><div class="cav ai">SP</div><div class="cbub">Session cleared. I have no memory of previous messages.<br><br>How can I help you?</div></div>`;
