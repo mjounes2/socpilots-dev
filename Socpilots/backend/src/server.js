@@ -3213,7 +3213,8 @@ app.post('/api/ueba/event', authMW, async (req, res) => {
 
 app.get('/api/ueba/anomalies', authMW, async (req, res) => {
   try {
-    const data = await ueba.getAllAnomalies();
+    const hours = Math.min(parseInt(req.query.hours || '24') || 24, 720);
+    const data = await ueba.getAllAnomalies(hours);
     res.json(data);
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -3360,9 +3361,10 @@ app.get('/api/ueba/leaderboard', authMW, async (req, res) => {
   try {
     const page      = Math.max(parseInt(req.query.page) || 1, 1);
     const page_size = Math.min(parseInt(req.query.page_size) || parseInt(req.query.limit) || 20, 200);
+    const hours     = Math.min(parseInt(req.query.hours || '24') || 24, 720);
     const skip      = (page - 1) * page_size;
-    const { users, total } = await ueba.getRiskLeaderboard(page_size, skip);
-    res.json({ users, total, page, page_size, has_more: page * page_size < total });
+    const { users, total } = await ueba.getRiskLeaderboard(page_size, skip, hours);
+    res.json({ users, total, page, page_size, hours, has_more: page * page_size < total });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 

@@ -1877,7 +1877,19 @@ sshd: Failed" style="min-height:80px"></textarea></div>
 
 <!-- UEBA -->
 <div class="page" id="page-ueba">
-  <div class="ph"><h1>UEBA</h1><p>User &amp; Entity Behavior Analytics — Neo4j behavioral graph, real-time deviation scoring</p></div>
+  <div class="ph" style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:10px">
+    <div>
+      <h1>UEBA</h1>
+      <p>User &amp; Entity Behavior Analytics — Neo4j behavioral graph, real-time deviation scoring</p>
+    </div>
+    <div style="display:flex;align-items:center;gap:6px;padding-top:4px">
+      <span style="font-size:10px;color:var(--txt3);font-family:var(--fm);letter-spacing:.5px">TIMEFRAME</span>
+      <button id="utf-24h" class="btn btn-sm utf-btn active-utf" onclick="setUebaTimeframe('24h')" style="font-size:10px;padding:4px 10px">24h</button>
+      <button id="utf-7d"  class="btn btn-sm utf-btn"            onclick="setUebaTimeframe('7d')"  style="font-size:10px;padding:4px 10px">7d</button>
+      <button id="utf-30d" class="btn btn-sm utf-btn"            onclick="setUebaTimeframe('30d')" style="font-size:10px;padding:4px 10px">30d</button>
+      <button class="btn btn-h btn-sm" onclick="loadUebaStats();loadUebaAnomalies()" style="font-size:10px;padding:4px 10px;margin-left:4px">⟳ Refresh</button>
+    </div>
+  </div>
 
   <!-- KPI Row -->
   <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:14px">
@@ -1892,7 +1904,7 @@ sshd: Failed" style="min-height:80px"></textarea></div>
   <!-- Risk Leaderboard + Entity Lookup -->
   <div class="g2" style="margin-bottom:14px">
     <div class="card">
-      <div class="card-hd"><div class="card-ttl">RISK LEADERBOARD</div><button class="btn btn-h btn-sm" onclick="loadUebaStats();loadUebaAnomalies()">⟳ Refresh</button></div>
+      <div class="card-hd"><div class="card-ttl">RISK LEADERBOARD</div><span id="ueba-tf-label" style="font-size:10px;font-family:var(--fm);color:var(--txt3)">last 24h</span></div>
       <div id="ueba-leaderboard" style="font-size:12px;color:#8ab0d0;font-family:var(--fm)"><div class="loading"><div class="spin"></div></div></div>
     </div>
     <div class="card">
@@ -2955,6 +2967,16 @@ let _invPage=1,_invPageSize=50;
 let _assetPage=1,_assetPageSize=50;
 let _agPage=1,_agPageSize=20;
 let _lbPage=1,_lbPageSize=20;
+let _uebaTimeframe='24h';
+function _uebaHours(){return {'24h':24,'7d':168,'30d':720}[_uebaTimeframe]||24;}
+function _uebaTfLabel(){return {'24h':'last 24h','7d':'last 7 days','30d':'last 30 days'}[_uebaTimeframe]||'last 24h';}
+function setUebaTimeframe(tf){
+  _uebaTimeframe=tf;
+  document.querySelectorAll('.utf-btn').forEach(b=>b.classList.remove('active-utf'));
+  const btn=document.getElementById('utf-'+tf);if(btn)btn.classList.add('active-utf');
+  const lbl=document.getElementById('ueba-tf-label');if(lbl)lbl.textContent=_uebaTfLabel();
+  loadUebaAnomalies();
+}
 let _rulesPage=1,_rulesPageSize=50,_rlSearchTimer=null;
 let _pbExecPage=1,_pbExecPageSize=10;
 let _haPage=1,_haPageSize=20,_haTimeframe='24h',_haChartSev=null,_haSearchTimer=null;
@@ -6760,22 +6782,26 @@ async function loadUebaStats(){
 
 async function loadUebaLeaderboard(page){
   if(page!==undefined) _lbPage=page;
-  const d=await G(`/api/ueba/leaderboard?page=${_lbPage}&page_size=${_lbPageSize}`);
+  const d=await G(`/api/ueba/leaderboard?page=${_lbPage}&page_size=${_lbPageSize}&hours=${_uebaHours()}`);
   renderLeaderboard(d?.users||[], d?.total||0);
 }
 function setLbPageSize(sel){_lbPageSize=parseInt(sel.value)||20;_lbPage=1;loadUebaLeaderboard();}
 
 async function loadUebaAnomalies(){
+  // Update leaderboard label
+  const lbl=document.getElementById('ueba-tf-label');if(lbl)lbl.textContent=_uebaTfLabel();
   // Load leaderboard
   loadUebaLeaderboard();
 
   // Load all anomalies + correlations in parallel
+  const hours=_uebaHours();
   const [d, corr]=await Promise.all([
-    G('/api/ueba/anomalies'),
-    G('/api/ueba/correlations'),
+    G(`/api/ueba/anomalies?hours=${hours}`),
+    G(`/api/ueba/correlations?hours=${hours}`),
   ]);
   if(!d)return;
 
+  const tfLabel=_uebaTfLabel();
   renderUebaSection('ueba-lateral',d.lateral_movement,r=>`
     <div style="padding:8px 0;border-bottom:1px solid var(--b1)">
       <div style="display:flex;align-items:center;gap:8px">
@@ -6786,7 +6812,7 @@ async function loadUebaAnomalies(){
       <div style="font-size:10px;color:var(--txt2);margin-top:3px">
         From: ${(r.src_hosts||[]).join(', ')} → To: ${(r.dst_hosts||[]).join(', ')}
       </div>
-    </div>`,'No lateral movement detected in last 24h');
+    </div>`,`No lateral movement detected in ${tfLabel}`);
 
   renderUebaSection('ueba-travel',d.impossible_travel,r=>`
     <div style="padding:8px 0;border-bottom:1px solid var(--b1)">
@@ -6798,7 +6824,7 @@ async function loadUebaAnomalies(){
       <div style="font-size:10px;color:var(--txt2);margin-top:3px">
         ${r.ip1} → ${r.ip2} within minutes
       </div>
-    </div>`,'No impossible travel detected');
+    </div>`,'No impossible travel detected (10-min window)');
 
   renderUebaSection('ueba-privesc',d.privilege_escalation,r=>`
     <div style="padding:8px 0;border-bottom:1px solid var(--b1)">
@@ -6809,7 +6835,7 @@ async function loadUebaAnomalies(){
         <span style="color:#8ab0d0">on ${r.host}</span>
       </div>
       <div style="font-size:10px;color:var(--txt2);margin-top:2px">${r.time?new Date(r.time).toLocaleString():''}</div>
-    </div>`,'No privilege escalation detected');
+    </div>`,`No privilege escalation detected in ${tfLabel}`);
 
   renderUebaSection('ueba-afterhours',d.after_hours_access,r=>`
     <div style="padding:8px 0;border-bottom:1px solid var(--b1)">
@@ -6819,20 +6845,20 @@ async function loadUebaAnomalies(){
         <span style="background:rgba(255,152,0,.12);color:#ff9800;padding:2px 6px;border-radius:8px;font-size:10px">${r.events}x</span>
       </div>
       <div style="font-size:10px;color:var(--txt2);margin-top:2px">Hours: ${(r.hours_seen||[]).map(h=>h+'h').join(', ')}</div>
-    </div>`,'No after-hours access detected');
+    </div>`,`No after-hours access detected in ${tfLabel}`);
 
   renderUebaSection('ueba-hf',d.high_frequency_logins,r=>`
     <div style="padding:6px 0;border-bottom:1px solid var(--b1)">
       <span style="color:var(--r);font-weight:600;cursor:pointer" onclick="uebaLookup('${r.user}')">${r.user}</span>
       <span style="color:#8ab0d0"> → ${r.host}</span>
       <span style="background:rgba(255,23,68,.12);color:var(--r);padding:2px 6px;border-radius:8px;font-size:10px;margin-left:6px">${r.count}x / 1h</span>
-    </div>`,'No high-frequency logins detected');
+    </div>`,'No high-frequency logins detected (1h burst window)');
 
   renderUebaSection('ueba-rare',d.rare_processes,r=>`
     <div style="padding:6px 0;border-bottom:1px solid var(--b1)">
       <span style="color:var(--c);font-family:var(--fm)">${r.process}</span>
       <span style="color:#8ab0d0"> seen ${r.seen_count}x on: ${(r.hosts||[]).join(', ')}</span>
-    </div>`,'No rare processes detected');
+    </div>`,'No rare processes detected (all-time rarity)');
 
   // Correlation panels
   const ms=corr?.multi_stage_attacks||[];
@@ -6848,7 +6874,7 @@ async function loadUebaAnomalies(){
       <div style="margin-top:4px;display:flex;flex-wrap:wrap;gap:4px">
         ${(r.flags||[]).map(f=>`<span style="background:rgba(255,23,68,.12);color:var(--r);padding:2px 6px;border-radius:3px;font-size:9px;font-family:var(--fm)">${f}</span>`).join('')}
       </div>
-    </div>`,'No multi-stage attack patterns detected in last 24h');
+    </div>`,`No multi-stage attack patterns detected in ${tfLabel}`);
 
   renderUebaSection('ueba-sharedcreds',sc,r=>`
     <div style="padding:8px 0;border-bottom:1px solid var(--b1)">
@@ -6860,7 +6886,7 @@ async function loadUebaAnomalies(){
         Users: ${(r.users||[]).map(u=>`<span style="color:var(--c);cursor:pointer" onclick="uebaLookup('${esc(u)}')">${u}</span>`).join(', ')}
         · Hosts: ${(r.hosts||[]).join(', ')}
       </div>
-    </div>`,'No shared credential abuse detected in last 24h');
+    </div>`,`No shared credential abuse detected in ${tfLabel}`);
 
   // Update badge counters
   const cnt=(arr,id)=>{const e=document.getElementById(id);if(e)e.textContent=(arr?.length||0)||'0';};
@@ -6894,7 +6920,7 @@ function renderLeaderboard(users, total){
       <td style="cursor:pointer;color:var(--c)" onclick="uebaLookup('${esc(u.user)}')">${esc(u.user)}</td>
       <td>${riskBadge(u.risk_score)}</td>
       <td style="color:#8ab0d0">${u.anomaly_count||0}</td>
-      <td style="color:#8ab0d0">${u.events_24h||0}</td>
+      <td style="color:#8ab0d0">${u.events_period||0}</td>
       <td style="font-size:10px;color:var(--txt2)">${(u.recent_hosts||[]).join(', ')||'—'}</td>
       <td style="white-space:nowrap">
         <button class="btn btn-sm" onclick="uebaExplainRisk('${esc(u.user)}','${uid}')" style="padding:4px 8px;background:rgba(156,39,176,.1);border:1px solid rgba(156,39,176,.4);color:#ce93d8;font-size:10px" title="AI risk narrative">🧠 Explain</button>
@@ -6907,7 +6933,7 @@ function renderLeaderboard(users, total){
       </td>
     </tr>`;
   }).join('');
-  el.innerHTML=`<div class="tbl"><table><thead><tr><th>#</th><th>USER</th><th>RISK</th><th>ANOMALIES</th><th>EVENTS 24H</th><th>RECENT HOSTS</th><th>ACTIONS</th></tr></thead><tbody>${rows}</tbody></table></div>${pgn}`;
+  el.innerHTML=`<div class="tbl"><table><thead><tr><th>#</th><th>USER</th><th>RISK</th><th>ANOMALIES</th><th>EVENTS (${_uebaTfLabel().replace('last ','')})</th><th>RECENT HOSTS</th><th>ACTIONS</th></tr></thead><tbody>${rows}</tbody></table></div>${pgn}`;
 }
 
 async function uebaExplainRisk(entity, rowId){
@@ -8279,6 +8305,8 @@ window.addEventListener('resize', () => {
 <style>
 .ueba-fbtn{background:rgba(255,255,255,.04);color:var(--txt2);border:1px solid var(--b1)}
 .ueba-fbtn:hover,.ueba-fbtn.active-filter{background:rgba(0,229,255,.15);color:var(--c);border-color:rgba(0,229,255,.3)}
+.utf-btn{background:rgba(255,255,255,.04);color:var(--txt2);border:1px solid var(--b1);transition:all .15s}
+.utf-btn:hover,.utf-btn.active-utf{background:rgba(0,229,255,.15);color:var(--c);border-color:rgba(0,229,255,.4);font-weight:600}
 </style>
 
 <!-- Live toast notification container (Socket.IO events) -->

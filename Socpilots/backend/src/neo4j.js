@@ -297,7 +297,7 @@ async function ingestEvent(ev) {
 }
 
 // ── Risk Leaderboard ─────────────────────────────────────────
-async function getRiskLeaderboard(limit = 20, skip = 0) {
+async function getRiskLeaderboard(limit = 20, skip = 0, hours = 24) {
   const d = getDriver();
   if (!d) return { users: [], total: 0 };
   const neo4j = require('neo4j-driver');
@@ -308,25 +308,25 @@ async function getRiskLeaderboard(limit = 20, skip = 0) {
         `MATCH (u:User)
          WHERE u.total_events > 0
          OPTIONAL MATCH (u)-[r:LOGGED_IN]->(h:Host)
-         WHERE r.time >= toString(datetime() - duration({hours: 24}))
-         WITH u, count(r) AS events_24h, collect(DISTINCT h.name)[..5] AS recent_hosts
+         WHERE r.time >= toString(datetime() - duration({hours: $hours}))
+         WITH u, count(r) AS events_period, collect(DISTINCT h.name)[..5] AS recent_hosts
          RETURN u.name AS user,
                 coalesce(u.risk_score, 0) AS risk_score,
                 coalesce(u.anomaly_count, 0) AS anomaly_count,
                 u.last_anomaly AS last_anomaly,
-                events_24h, recent_hosts
+                events_period, recent_hosts
          ORDER BY risk_score DESC, u.total_events DESC SKIP $skip LIMIT $limit`,
-        { limit: neo4j.int(limit), skip: neo4j.int(skip) }
+        { limit: neo4j.int(limit), skip: neo4j.int(skip), hours: neo4j.int(hours) }
       ),
       s2.run(`MATCH (u:User) WHERE u.total_events > 0 RETURN count(u) AS total`),
     ]);
     const users = dataRes.records.map(r => ({
-      user:          r.get('user'),
-      risk_score:    r.get('risk_score')?.toNumber?.() ?? r.get('risk_score') ?? 0,
-      anomaly_count: r.get('anomaly_count')?.toNumber?.() ?? 0,
-      last_anomaly:  r.get('last_anomaly'),
-      events_24h:    r.get('events_24h')?.toNumber?.() ?? 0,
-      recent_hosts:  r.get('recent_hosts') || [],
+      user:           r.get('user'),
+      risk_score:     r.get('risk_score')?.toNumber?.() ?? r.get('risk_score') ?? 0,
+      anomaly_count:  r.get('anomaly_count')?.toNumber?.() ?? 0,
+      last_anomaly:   r.get('last_anomaly'),
+      events_period:  r.get('events_period')?.toNumber?.() ?? 0,
+      recent_hosts:   r.get('recent_hosts') || [],
     }));
     const total = countRes.records[0]?.get('total')?.toNumber?.() ?? 0;
     return { users, total };
@@ -707,28 +707,28 @@ async function getGraphNodes(entity) {
 }
 
 // ── Get All Anomalies ─────────────────────────────────────────
-async function getAllAnomalies() {
+async function getAllAnomalies(hours = 24) {
   const [lateral, travel, privesc, afterhours, hf, rare, newconn, multistage, sharedcreds] = await Promise.all([
-    detectLateralMovement(),
-    detectImpossibleTravel(),
-    detectPrivilegeEscalation(),
-    detectAfterHoursAccess(),
-    detectHighFrequencyLogins(),
-    detectRareProcesses(),
-    detectNewConnections(),
-    detectMultiStageAttack(),
-    detectSharedCredentials(),
+    detectLateralMovement(hours),
+    detectImpossibleTravel(),           // always uses a fixed minute window (10 min)
+    detectPrivilegeEscalation(hours),
+    detectAfterHoursAccess(hours),
+    detectHighFrequencyLogins(),        // always 1h window — measures burst rate
+    detectRareProcesses(),              // all-time rarity, no time filter
+    detectNewConnections(hours),
+    detectMultiStageAttack(hours),
+    detectSharedCredentials(hours),
   ]);
   return {
-    lateral_movement:    lateral,
-    impossible_travel:   travel,
-    privilege_escalation: privesc,
-    after_hours_access:  afterhours,
+    lateral_movement:      lateral,
+    impossible_travel:     travel,
+    privilege_escalation:  privesc,
+    after_hours_access:    afterhours,
     high_frequency_logins: hf,
-    rare_processes:      rare,
-    new_connections:     newconn,
-    multi_stage_attacks: multistage,
-    shared_credentials:  sharedcreds,
+    rare_processes:        rare,
+    new_connections:       newconn,
+    multi_stage_attacks:   multistage,
+    shared_credentials:    sharedcreds,
   };
 }
 
