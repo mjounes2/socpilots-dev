@@ -1579,9 +1579,9 @@ sshd: Failed" style="min-height:80px"></textarea></div>
       </div>
       <div class="card"><div style="font-size:10px;font-family:var(--fm);color:#8ab0d0;line-height:2.3">
         <div>OPERATOR: <span style="color:var(--c)" id="ctx-un">—</span></div>
-        <div>ENGINE: <span style="color:var(--c)">LLM</span></div>
-        <div>MCP SIEM: <span style="color:var(--g)">CONNECTED</span></div>
-        <div>MCP SP-CM: <span style="color:var(--g)">CONNECTED</span></div>
+        <div>ENGINE: <span style="color:var(--c)">LangChain + Tools</span></div>
+        <div>TOOLS: <span style="color:var(--g)">5 live data tools</span></div>
+        <div>AUTOMATION: <span style="color:var(--g)">n8n connected</span></div>
       </div></div>
     </div>
   </div>
@@ -4654,6 +4654,7 @@ async function viewSavedInvestigation(id){
       <strong>Agent:</strong> ${esc(d.agent||'—')} | <strong>Src IP:</strong> ${esc(d.src_ip||'—')}
     </div>
     <div class="ai-txt" id="modal-inv-text">${parseAIMarkdown(d.report || '')}</div>
+    ${_feedbackBar(d.id)}
   `;
   document.getElementById('modal-investigation-body').setAttribute('data-report', d.report || '');
   openModal('modal-investigation');
@@ -5538,11 +5539,21 @@ async function loadChatHistory(){
 }
 
 function chatKey(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendChat();}}
+
+// Tool labels shown in the thinking bubble during streaming
+const _CHAT_TOOL_LABELS = {
+  search_alerts:        '🔍 Searching alerts',
+  enrich_ip:            '🌐 Enriching IP reputation',
+  query_assets:         '🏢 Checking asset inventory',
+  query_ueba:           '👤 Analysing UEBA behaviour',
+  query_knowledge_base: '📚 Searching knowledge base',
+};
+
 async function sendChat(){
   const inp=document.getElementById('chat-in'),msg=inp.value.trim();if(!msg)return;
   inp.value='';
 
-  // Build API message — inject extracted file text if an attachment is pending
+  // Inject attached file context if pending
   let apiMsg=msg,displayMsg=msg;
   if(_chatAttach){
     const att=_chatAttach;chatRemoveAttach();
@@ -5553,46 +5564,81 @@ async function sendChat(){
     displayMsg=`📎 ${att.filename}\n\n${msg}`;
   }
 
-  addMsg('u',displayMsg,'',false,new Date());_hist.push({role:'user',content:displayMsg});
-  const btn=document.getElementById('chat-btn');btn.disabled=true;
-  // Show thinking indicator with elapsed timer
-  const _tyStart = Date.now();
-  const _tyTimer = setInterval(()=>{
-    const el=document.getElementById('_ty_txt');
-    if(el){const s=Math.floor((Date.now()-_tyStart)/1000);el.textContent=`Thinking... ${s}s`;}
-    else clearInterval(_tyTimer);
-  },1000);
-  addMsg('ai','<div style="display:flex;align-items:center;gap:8px"><div class="spin" style="width:14px;height:14px;flex-shrink:0"></div><span id="_ty_txt" style="font-size:11px;color:var(--txt3);font-family:var(--fm)">Thinking...</span></div>','_ty',true);
-  const d=await P('/api/ai/chat',{message:apiMsg,session_id:_chatSessionId,history:_hist.slice(-10)});
-  rmTy();btn.disabled=false;
-  let reply=d?.response||d?.output||d?.text||d?.message||'';
-  // Clean up leaked tool calls (e.g. "get_cases{} }```}```get_cases{}")
-  if(reply){
-    // Remove raw MCP tool call strings that sometimes leak through
-    reply=reply.replace(/^(get_|list_|search_|create_|update_)\w+\s*\{[^}]*\}[\s\S]*$/,'').trim();
-    // Remove code fences wrapping just tool calls
-    reply=reply.replace(/```\s*(get_|list_)\w+[\s\S]*?```/g,'').trim();
-    // If reply is now empty after cleaning, set to error message
-    if(!reply) reply='';
-  }
-  if(d?._timeout){
-    reply='⏱️ **SOCPilots AI is processing...**\n\nThe AI agent is taking longer than expected (>2 minutes).\n\n**This usually means:**\n- The MCP tools are fetching large datasets\n- n8n is running multiple tool iterations\n\n**Try:**\n- Ask a more specific question\n- Check n8n executions to see if it succeeded\n- Refresh and check if a response was generated';
-  } else if(d?.rateLimit||d?._status===429){
-    reply=`⏳ **Rate Limited**\n\n${d?.error||'Max 8 messages/minute.'}\n\nPlease wait 60 seconds.`;
-    setTimeout(()=>{const b=document.getElementById('chat-btn');if(b){b.disabled=false;b.textContent='Send';}},15000);
-  } else if(!reply){
-    const errMsg=d?.error||'';
-    if(errMsg.includes('429')||errMsg.includes('Rate limit')||errMsg.includes('rate_limited')){
-      reply='⚠️ **AI engine rate limit (429)**\n\nThe analysis engine is throttled. Wait 60 seconds and retry.';
-    } else if(errMsg.includes('timeout')){
-      reply='⚠️ **Timeout** — Try a simpler question or check n8n.';
+  addMsg('u',displayMsg,'',false,new Date());
+  _hist.push({role:'user',content:displayMsg});
+  const btn=document.getElementById('chat-btn');
+  btn.disabled=true;
+
+  // Create thinking bubble — will be updated as tool events arrive
+  const tyId='_ty_'+Date.now();
+  addMsg('ai',`<div style="display:flex;align-items:center;gap:8px"><div class="spin" style="width:14px;height:14px;flex-shrink:0"></div><span id="${tyId}" style="font-size:11px;color:var(--txt3);font-family:var(--fm)">Connecting to SOCPilots AI...</span></div>`,tyId,true);
+
+  let finalReply='';
+  try {
+    const tok=sessionStorage.getItem('soc_token')||'';
+    const response=await fetch('/api/ai/chat/stream',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok},
+      body:JSON.stringify({message:apiMsg,session_id:_chatSessionId,history:_hist.slice(-6)}),
+    });
+
+    if(!response.ok){
+      const err=await response.json().catch(()=>({}));
+      if(response.status===429){
+        finalReply=`⏳ **Rate Limited**\n\n${err.error||'Max 8 messages/minute.'}\n\nPlease wait 60 seconds.`;
+      } else {
+        finalReply=`⚠️ **SOCPilots AI error** — ${esc(err.error||'HTTP '+response.status)}`;
+      }
     } else {
-      reply='⚠️ **SOCPilots AI not responding**\n\nCheck n8n is running on vmi3254460:5678';
+      const reader=response.body.getReader();
+      const decoder=new TextDecoder();
+      let buf='';
+
+      while(true){
+        const {done,value}=await reader.read();
+        if(done) break;
+        buf+=decoder.decode(value,{stream:true});
+        const lines=buf.split('\n');
+        buf=lines.pop();
+
+        for(const line of lines){
+          if(!line.startsWith('data: ')) continue;
+          let ev;
+          try{ev=JSON.parse(line.slice(6));}catch{continue;}
+          const statusEl=document.getElementById(tyId);
+          if(ev.type==='tool_start'){
+            const lbl=_CHAT_TOOL_LABELS[ev.data?.tool]||('⚙️ '+ev.data?.tool);
+            if(statusEl) statusEl.textContent=lbl+'...';
+          } else if(ev.type==='tool_end'){
+            if(statusEl) statusEl.textContent='Analysing results...';
+          } else if(ev.type==='done'){
+            finalReply=ev.data||'';
+          } else if(ev.type==='error'){
+            finalReply='⚠️ **SOCPilots AI error**\n\n'+(ev.data||'Unknown error');
+          }
+        }
+      }
     }
+  } catch(e){
+    finalReply='⚠️ **Connection error** — '+esc(e.message||'Failed to reach SOCPilots AI');
   }
-  addMsg('ai',reply,'',false,new Date());
-  _hist.push({role:'assistant',content:reply});
+
+  // Remove thinking bubble
+  const tyEl=document.getElementById(tyId);if(tyEl)tyEl.remove();
+  btn.disabled=false;
+
+  if(!finalReply) finalReply='⚠️ **No response received** — Check LangChain Agent is running';
+
+  addMsg('ai',finalReply,'',false,new Date());
+  _hist.push({role:'assistant',content:finalReply});
   document.getElementById('ctx-msgs').textContent=`${_hist.length} msgs`;
+
+  // Persist to DB (non-blocking)
+  fetch('/api/ai/chat/persist',{
+    method:'POST',
+    headers:{'Content-Type':'application/json','Authorization':'Bearer '+(sessionStorage.getItem('soc_token')||'')},
+    body:JSON.stringify({session_id:_chatSessionId,user_msg:displayMsg,ai_msg:finalReply}),
+  }).catch(()=>{});
 }
 function addMsg(role,content,id='',isHTML=false,ts=null){
   const w=document.getElementById('chat-msgs');
@@ -5615,6 +5661,29 @@ function addMsg(role,content,id='',isHTML=false,ts=null){
 }
 function rmTy(){const t=document.getElementById('_ty');if(t)t.remove();clearInterval(window._tyTimer);}
 function quick(msg){document.getElementById('chat-in').value=msg;sendChat();}
+
+// ── Investigation Feedback ────────────────────────────────────
+async function submitFeedback(invId, rating, btnEl){
+  if(!invId) return;
+  const comment=rating===-1?prompt('Optional: what was wrong with this report?')||'':'';
+  try{
+    await P(`/api/investigations/${invId}/feedback`,{rating,comment});
+    // Update all feedback bars for this investigation
+    document.querySelectorAll(`.fb-bar[data-inv="${invId}"]`).forEach(bar=>{
+      bar.innerHTML=`<span style="color:var(--g);font-size:10px;font-family:var(--fm)">${rating===1?'👍 Marked helpful':'👎 Feedback recorded'}</span>`;
+    });
+    toast(rating===1?'Marked as helpful':'Feedback recorded','ok');
+  }catch(e){toast('Feedback error: '+e.message,'warn');}
+}
+
+function _feedbackBar(invId){
+  if(!invId) return '';
+  return `<div class="fb-bar" data-inv="${invId}" style="display:flex;align-items:center;gap:8px;margin-top:10px;padding-top:10px;border-top:1px solid var(--b1)">
+    <span style="font-size:10px;color:var(--txt3);font-family:var(--fm)">Was this report helpful?</span>
+    <button onclick="submitFeedback(${invId},1,this)" style="background:rgba(0,230,118,.1);border:1px solid rgba(0,230,118,.3);border-radius:4px;padding:3px 9px;cursor:pointer;color:var(--g);font-size:11px" title="Helpful">👍</button>
+    <button onclick="submitFeedback(${invId},-1,this)" style="background:rgba(255,23,68,.08);border:1px solid rgba(255,23,68,.2);border-radius:4px;padding:3px 9px;cursor:pointer;color:var(--r);font-size:11px" title="Not helpful">👎</button>
+  </div>`;
+}
 async function clearChat(){
   if(!confirm('Clear conversation history and start a new session?\n\nThe AI will have no memory of previous messages.'))return;
   const oldSid=_chatSessionId;

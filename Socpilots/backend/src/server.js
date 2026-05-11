@@ -1446,30 +1446,90 @@ function chatRateOk(username) {
   return e.count <= 8; // 8 messages per 60s per user
 }
 
-// ── SOCPilots AI CHAT ──
+// ── SOCPilots AI CHAT — routes through LangChain (tool-enabled) ──
+// n8n still receives every message for automation (fire-and-forget).
+// The analyst response comes from LangChain with live tool access.
 app.post('/api/ai/chat', authMW, async (req, res) => {
   const { message, history, session_id } = req.body;
   if (!message?.trim()) return res.status(400).json({ error: 'message required' });
-  // Rate limit per user to prevent Mistral 429
   if (!chatRateOk(req.user?.username)) {
-    return res.status(429).json({
-      error: 'Rate limit: max 8 messages per minute. Please wait.',
-      rateLimit: true,
-    });
+    return res.status(429).json({ error: 'Rate limit: max 8 messages per minute. Please wait.', rateLimit: true });
   }
   const sid = session_id || `soc_${req.user.username}`;
-  const r = await n8nAsk(message, sid, req.user, {
-    history: (history || []).slice(-6), // reduced from 10 to 6
-  });
-  if (!r.ok) {
-    const errMsg = r.error || 'SOCPilots AI unavailable';
-    return res.status(r.error?.includes('Rate limit') ? 429 : 502).json({ error: errMsg });
+  // Fire n8n in background for automation pipeline (non-blocking)
+  n8nAsk(message, sid, req.user, { history: (history || []).slice(-6) }).catch(() => {});
+  try {
+    const r = await axios.post(`${LANGCHAIN_URL}/chat`, {
+      message,
+      history:  (history || []).slice(-6),
+      username: req.user.username,
+      role:     req.user.role,
+    }, { timeout: 120_000 });
+    const response = r.data?.response || '';
+    db.saveChatMessage(sid, req.user.username, 'user', message, {}).catch(() => {});
+    if (response) db.saveChatMessage(sid, req.user.username, 'assistant', response, {}).catch(() => {});
+    res.json({ response, ok: true, tools_used: r.data?.tools_used || 0, duration_ms: r.data?.duration_ms });
+  } catch (e) {
+    console.error('[ai/chat]', e.message);
+    // Fallback: try n8n synchronously if LangChain is unavailable
+    const r2 = await n8nAsk(message, sid, req.user, { history: (history || []).slice(-6) }).catch(() => ({ ok: false }));
+    if (r2.ok) {
+      const aiText = r2.text || '';
+      db.saveChatMessage(sid, req.user.username, 'user', message, {}).catch(() => {});
+      if (aiText) db.saveChatMessage(sid, req.user.username, 'assistant', aiText, {}).catch(() => {});
+      return res.json(r2.raw || { response: aiText });
+    }
+    res.status(502).json({ error: 'SOCPilots AI unavailable' });
   }
-  // Persist chat messages to DB (non-blocking)
-  const aiText = r.text || '';
-  db.saveChatMessage(sid, req.user.username, 'user', message, {}).catch(() => {});
-  if (aiText) db.saveChatMessage(sid, req.user.username, 'assistant', aiText, {}).catch(() => {});
-  res.json(r.raw || { response: aiText });
+});
+
+// ── SOCPilots AI CHAT — SSE streaming endpoint ──
+// Proxies the LangChain /chat/stream SSE, emitting tool progress events
+// in real-time so the analyst sees which tools are being called.
+app.post('/api/ai/chat/stream', authMW, async (req, res) => {
+  const { message, history, session_id } = req.body;
+  if (!message?.trim()) return res.status(400).json({ error: 'message required' });
+  if (!chatRateOk(req.user?.username)) {
+    return res.status(429).json({ error: 'Rate limit: max 8 messages per minute.', rateLimit: true });
+  }
+  const sid = session_id || `soc_${req.user.username}`;
+  // Fire n8n background automation hook (non-blocking)
+  n8nAsk(message, sid, req.user, { history: (history || []).slice(-6) }).catch(() => {});
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');  // disable nginx response buffering
+  res.flushHeaders();
+
+  try {
+    const lcRes = await axios({
+      method: 'post',
+      url: `${LANGCHAIN_URL}/chat/stream`,
+      data: { message, history: (history || []).slice(-6), username: req.user.username, role: req.user.role },
+      responseType: 'stream',
+      timeout: 120_000,
+    });
+    lcRes.data.pipe(res);
+    lcRes.data.on('end', () => res.end());
+    lcRes.data.on('error', () => {
+      res.write(`data: ${JSON.stringify({ type: 'error', data: 'Stream error' })}\n\n`);
+      res.end();
+    });
+  } catch (e) {
+    console.error('[ai/chat/stream]', e.message);
+    res.write(`data: ${JSON.stringify({ type: 'error', data: 'SOCPilots AI unavailable' })}\n\n`);
+    res.end();
+  }
+});
+
+// ── SOCPilots AI CHAT — message persistence (called by frontend after streaming) ──
+app.post('/api/ai/chat/persist', authMW, (req, res) => {
+  const { session_id, user_msg, ai_msg } = req.body;
+  const sid = session_id || `soc_${req.user.username}`;
+  if (user_msg) db.saveChatMessage(sid, req.user.username, 'user', user_msg, {}).catch(() => {});
+  if (ai_msg)  db.saveChatMessage(sid, req.user.username, 'assistant', ai_msg, {}).catch(() => {});
+  res.json({ ok: true });
 });
 
 // ── AI INVESTIGATION — Dedicated workflow + DB persistence ──
@@ -4280,6 +4340,30 @@ app.post('/api/log-sources/analyze', authMW, async (req, res) => {
 app.get('/api/log-sources/analysis', authMW, (req, res) => {
   if (!_logSourcesAutoAnalysis) return res.json({ available: false });
   res.json({ available: true, ..._logSourcesAutoAnalysis });
+});
+
+// ── INVESTIGATION FEEDBACK ──
+app.post('/api/investigations/:id/feedback', authMW, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const { rating, comment } = req.body;
+    if (rating !== 1 && rating !== -1) return res.status(400).json({ error: 'rating must be 1 or -1' });
+    const result = await db.saveInvestigationFeedback(id, req.user.username, rating, comment);
+    res.json({ ok: true, feedback: result });
+  } catch (e) {
+    console.error('[investigation/feedback]', e.message);
+    res.status(502).json({ error: e.message });
+  }
+});
+
+app.get('/api/investigations/:id/feedback', authMW, async (req, res) => {
+  try {
+    const summary = await db.getInvestigationFeedbackSummary(parseInt(req.params.id));
+    res.json(summary);
+  } catch (e) {
+    console.error('[investigation/feedback/get]', e.message);
+    res.status(502).json({ error: e.message });
+  }
 });
 
 // ─── STATIC (must be last — after all /api routes) ──────────────

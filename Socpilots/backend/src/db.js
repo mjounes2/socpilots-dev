@@ -373,6 +373,18 @@ async function initSchema() {
     `ALTER TABLE investigations ADD COLUMN IF NOT EXISTS composite_risk INT`,
     `ALTER TABLE investigations ADD COLUMN IF NOT EXISTS group_id INT REFERENCES alert_groups(id)`,
 
+    // ── Investigation Feedback ─────────────────────────────────
+    `CREATE TABLE IF NOT EXISTS investigation_feedback (
+      id                SERIAL PRIMARY KEY,
+      investigation_id  INTEGER REFERENCES investigations(id) ON DELETE CASCADE,
+      username          TEXT NOT NULL,
+      rating            SMALLINT NOT NULL CHECK (rating IN (-1, 1)),
+      comment           TEXT,
+      created_at        TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(investigation_id, username)
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_inv_feedback_inv ON investigation_feedback(investigation_id)`,
+
     // ── Seed Default Playbooks (5 built-in) ────────────────────
     `INSERT INTO playbooks(name,description,mitre_techniques,min_rule_level,fp_confidence_max,actions,require_consensus,enabled)
      VALUES
@@ -1083,6 +1095,31 @@ async function recentNotificationExists(type, metadataFilter, hours) {
   return r.rows.length > 0;
 }
 
+async function saveInvestigationFeedback(investigationId, username, rating, comment) {
+  const r = await pool.query(
+    `INSERT INTO investigation_feedback(investigation_id, username, rating, comment)
+     VALUES($1,$2,$3,$4)
+     ON CONFLICT (investigation_id, username) DO UPDATE
+     SET rating=$3, comment=$4, created_at=NOW()
+     RETURNING *`,
+    [investigationId, username, rating, comment || null]
+  );
+  return r.rows[0];
+}
+
+async function getInvestigationFeedbackSummary(investigationId) {
+  const r = await pool.query(
+    `SELECT
+       COALESCE(AVG(rating::float), 0) AS avg_rating,
+       COUNT(*)                         AS count,
+       COUNT(CASE WHEN rating = 1  THEN 1 END) AS thumbs_up,
+       COUNT(CASE WHEN rating = -1 THEN 1 END) AS thumbs_down
+     FROM investigation_feedback WHERE investigation_id = $1`,
+    [investigationId]
+  );
+  return r.rows[0];
+}
+
 async function listNotifications(username, limit = 50, offset = 0, unreadOnly = false) {
   const unreadClause = unreadOnly ? 'AND read=false' : '';
   const r = await pool.query(
@@ -1359,6 +1396,9 @@ module.exports = {
   createNotification,
   recentNotificationExists,
   listNotifications,
+  // Investigation Feedback
+  saveInvestigationFeedback,
+  getInvestigationFeedbackSummary,
   markNotificationRead,
   markAllNotificationsRead,
   countUnreadNotifications,

@@ -15,18 +15,23 @@ Endpoints:
   GET  /health
 """
 
+import asyncio
 import os, json, re, time, logging
 import httpx
 import redis as redis_lib
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from langchain.agents import AgentExecutor, create_react_agent
+from langchain.agents import AgentExecutor, create_react_agent, create_tool_calling_agent
 from langchain.tools import tool
 from langchain_openai import ChatOpenAI
 from langchain_mistralai import ChatMistralAI
 from langchain.prompts import PromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.messages import HumanMessage, AIMessage
+from langchain.callbacks.base import AsyncCallbackHandler
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
@@ -559,7 +564,7 @@ async def investigate(req: InvestigateRequest):
             agent=agent, tools=TOOLS,
             verbose=True, max_iterations=12,
             max_execution_time=120,
-            early_stopping_method="generate",
+            early_stopping_method="force",
             handle_parsing_errors=True,
             return_intermediate_steps=True,
         )
@@ -800,6 +805,182 @@ Return ONLY valid JSON:
     except Exception as e:
         log.error(f"Hunt queries error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ═══════════════════════════════════════════════════════════════
+#  SOCPILOTS AI CHAT — Conversational mode with live tool access
+#
+#  Keeps n8n in the loop (server.js fires n8n background hook).
+#  This endpoint provides the actual AI response with tool access.
+#  Tools: search_alerts, enrich_ip, query_assets, query_ueba,
+#         query_knowledge_base (5 tools — Shodan/TheHive excluded
+#         for conversational speed)
+# ═══════════════════════════════════════════════════════════════
+
+class ChatRequest(BaseModel):
+    message: str
+    history: list[dict] = []   # [{"role": "user|assistant", "content": "..."}]
+    username: str = "analyst"
+    role: str = "l2"
+    model: str = "auto"
+
+@tool
+def query_agents(filter_str: str = "all") -> str:
+    """
+    List Wazuh agents and their status (active/inactive/disconnected).
+    Input: 'all' for all agents, or a status filter like 'active', 'inactive', 'disconnected'.
+    Returns: agent name, ID, IP, status, last seen, alert count.
+    Use this for any question about agent count, status, or activity.
+    """
+    try:
+        headers = {}
+        if INTERNAL_TOKEN:
+            headers["Authorization"] = f"Bearer {INTERNAL_TOKEN}"
+        r = _sync_client.get(f"{WEBAPP_URL}/api/agents", headers=headers)
+        if r.status_code != 200:
+            return f"Agent lookup failed: {r.status_code}"
+        data = r.json()
+        agents = data.get("agents", [])
+        if not agents:
+            return "No agents found"
+        flt = filter_str.strip().lower()
+        if flt and flt != "all":
+            agents = [a for a in agents if a.get("status", "").lower() == flt]
+        lines = [f"Total agents: {data.get('total', len(agents))}"]
+        for a in agents[:20]:
+            lines.append(
+                f"  {a['name']} (ID:{a['id']}, IP:{a['ip']}) — "
+                f"status:{a['status']} lastSeen:{a.get('lastSeen','?')} "
+                f"alerts:{a.get('alertCount',0)}"
+            )
+        return "\n".join(lines)
+    except Exception as e:
+        return f"Agent query error: {e}"
+
+
+CHAT_TOOLS = [search_alerts, enrich_ip, query_assets, query_ueba, query_knowledge_base, query_agents]
+
+# ChatPromptTemplate required by create_tool_calling_agent (native function calling).
+# Works with GPT-4o-mini and Mistral — far more reliable than string-based ReAct.
+CHAT_PROMPT = ChatPromptTemplate.from_messages([
+    ("system",
+     "You are SOCPilots AI, an expert SOC analyst assistant with real-time access to your organisation's security data.\n\n"
+     "Use tools when asked about current SIEM data (agents, alerts, IPs, assets). "
+     "Answer general security knowledge questions directly without tools.\n"
+     "Be concise and conversational. Cite specific data from tool results."),
+    MessagesPlaceholder("chat_history", optional=True),
+    ("human", "{input}"),
+    MessagesPlaceholder("agent_scratchpad"),
+])
+
+
+def _format_history(history: list[dict]) -> list:
+    """Convert history dicts to LangChain message objects for tool-calling agent."""
+    messages = []
+    for msg in history[-6:]:
+        content = str(msg.get("content", ""))[:500]
+        if msg.get("role") == "user":
+            messages.append(HumanMessage(content=content))
+        else:
+            messages.append(AIMessage(content=content))
+    return messages
+
+
+class SSECallbackHandler(AsyncCallbackHandler):
+    """Puts tool-lifecycle events into an asyncio.Queue for SSE streaming."""
+    def __init__(self, queue: asyncio.Queue):
+        self.queue = queue
+
+    async def on_tool_start(self, serialized: dict, input_str: str, **kwargs):
+        await self.queue.put(("tool_start", {
+            "tool": serialized.get("name", "tool"),
+            "input": str(input_str)[:200],
+        }))
+
+    async def on_tool_end(self, output: str, **kwargs):
+        await self.queue.put(("tool_end", None))
+
+
+@app.post("/chat")
+async def chat(req: ChatRequest):
+    """Conversational SOCPilots AI with live tool access. Non-streaming."""
+    start = time.time()
+    try:
+        llm = get_llm(req.model)
+    except ValueError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    try:
+        agent = create_tool_calling_agent(llm, CHAT_TOOLS, CHAT_PROMPT)
+        executor = AgentExecutor(
+            agent=agent, tools=CHAT_TOOLS,
+            verbose=False, max_iterations=8,
+            max_execution_time=60,
+            handle_parsing_errors=True,
+            return_intermediate_steps=True,
+        )
+        result = await executor.ainvoke({
+            "input": req.message,
+            "chat_history": _format_history(req.history),
+        })
+        return {
+            "response":   result.get("output", ""),
+            "tools_used": len(result.get("intermediate_steps", [])),
+            "duration_ms": int((time.time() - start) * 1000),
+            "ok": True,
+        }
+    except Exception as e:
+        log.error(f"Chat error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/chat/stream")
+async def chat_stream(req: ChatRequest):
+    """Conversational SOCPilots AI — SSE stream of tool events + final answer."""
+    async def generate():
+        queue: asyncio.Queue = asyncio.Queue()
+        handler = SSECallbackHandler(queue)
+
+        async def run_agent():
+            try:
+                llm = get_llm(req.model)
+                agent = create_tool_calling_agent(llm, CHAT_TOOLS, CHAT_PROMPT)
+                executor = AgentExecutor(
+                    agent=agent, tools=CHAT_TOOLS,
+                    verbose=False, max_iterations=8,
+                    max_execution_time=60,
+                    handle_parsing_errors=True,
+                    callbacks=[handler],
+                )
+                result = await executor.ainvoke({
+                    "input": req.message,
+                    "chat_history": _format_history(req.history),
+                })
+                await queue.put(("done", result.get("output", "")))
+            except Exception as e:
+                await queue.put(("error", str(e)[:300]))
+
+        task = asyncio.create_task(run_agent())
+
+        while True:
+            try:
+                event_type, data = await asyncio.wait_for(queue.get(), timeout=90.0)
+                yield f"data: {json.dumps({'type': event_type, 'data': data})}\n\n"
+                if event_type in ("done", "error"):
+                    break
+            except asyncio.TimeoutError:
+                yield f"data: {json.dumps({'type': 'error', 'data': 'Response timed out after 90s'})}\n\n"
+                break
+
+        try:
+            await asyncio.wait_for(task, timeout=5.0)
+        except (asyncio.TimeoutError, Exception):
+            task.cancel()
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 # ═══════════════════════════════════════════════════════════════
