@@ -915,11 +915,49 @@ def _get_mistral():
 
 
 def _parse_json_response(text: str) -> any:
-    """Strip markdown fences and parse JSON."""
+    """Strip markdown fences and parse JSON with bracket-matching fallback."""
     text = text.strip()
+    # Strip markdown code fences
     if text.startswith("```"):
         parts = text.split("```")
-        text = parts[1].lstrip("json").strip() if len(parts) > 1 else text
+        text = parts[1].lstrip("json\n").strip() if len(parts) > 1 else text
+
+    # Try direct parse first
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # Bracket-matching extraction — finds first balanced JSON array or object
+    for start_char, end_char in [('[', ']'), ('{', '}')]:
+        start = text.find(start_char)
+        if start == -1:
+            continue
+        depth, in_str, escape = 0, False, False
+        for i in range(start, len(text)):
+            c = text[i]
+            if escape:
+                escape = False
+                continue
+            if c == '\\' and in_str:
+                escape = True
+                continue
+            if c == '"':
+                in_str = not in_str
+                continue
+            if in_str:
+                continue
+            if c == start_char:
+                depth += 1
+            elif c == end_char:
+                depth -= 1
+                if depth == 0:
+                    try:
+                        return json.loads(text[start:i + 1])
+                    except json.JSONDecodeError:
+                        break  # try next start_char
+
+    # Greedy regex last resort
     match = re.search(r'[\[{][\s\S]*[\]}]', text)
     if match:
         return json.loads(match.group())
@@ -1152,12 +1190,14 @@ Currently covered techniques (evidence): {covered_json}
 
 Priority gaps (no detection coverage): {pgaps_json}
 
-For each gap technique, explain:
-1. Why it likely goes undetected given these log sources
-2. What attack behavior would appear in available telemetry
-3. One specific detection opportunity (Wazuh rule concept or log source to add)
+For each gap technique, provide concise (max 120 chars each):
+1. why_missing: why it goes undetected with these log sources
+2. attack_behavior: what attacker behavior is observable in available telemetry
+3. detection_opportunity: one specific Wazuh rule or log source addition
 
-Return ONLY a JSON array (no markdown):
+IMPORTANT: Keep all string values under 120 characters. No newlines inside strings.
+
+Return ONLY a valid JSON array, no markdown, no extra text:
 [{{"id":"T1059","name":"Command and Scripting Interpreter","tactics":["execution"],"why_missing":"...","attack_behavior":"...","detection_opportunity":"..."}}]"""
         )
         gap_analysis = _parse_json_response(resp.content)
