@@ -1232,15 +1232,22 @@ Return ONLY a JSON array (no markdown):
         log.warning(f"[mitre-analyze] Recommendations step failed: {e}")
 
     # ── Tactic breakdown — server-side aggregation ───────────────
+    # Normalize to lowercase_with_underscores so "Defense Evasion" and
+    # "defense_evasion" merge into the same bucket.
+    def _norm_tactic(t: str) -> str:
+        return t.strip().lower().replace(" ", "_").replace("-", "_")
+
     tactic_counts: dict = {}
     for tech in covered:
         for tactic in tech.get("tactics", []):
-            tactic_counts.setdefault(tactic, {"covered": 0, "gaps": 0})
-            tactic_counts[tactic]["covered"] += 1
+            key = _norm_tactic(tactic)
+            tactic_counts.setdefault(key, {"covered": 0, "gaps": 0})
+            tactic_counts[key]["covered"] += 1
     for tech in gaps:
         for tactic in tech.get("tactics", []):
-            tactic_counts.setdefault(tactic, {"covered": 0, "gaps": 0})
-            tactic_counts[tactic]["gaps"] += 1
+            key = _norm_tactic(tactic)
+            tactic_counts.setdefault(key, {"covered": 0, "gaps": 0})
+            tactic_counts[key]["gaps"] += 1
 
     tactic_breakdown = []
     for tactic, counts in tactic_counts.items():
