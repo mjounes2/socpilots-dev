@@ -32,6 +32,7 @@ from langchain.prompts import PromptTemplate
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain.callbacks.base import AsyncCallbackHandler
+from langchain_core.runnables.config import RunnableConfig
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
@@ -949,12 +950,17 @@ async def chat_stream(req: ChatRequest):
                     verbose=False, max_iterations=8,
                     max_execution_time=60,
                     handle_parsing_errors=True,
-                    callbacks=[handler],
                 )
+                # Pass callbacks via RunnableConfig so they propagate through
+                # the full LCEL chain (including tool invocations). Passing
+                # callbacks only on AgentExecutor's constructor does NOT fire
+                # on_tool_start/on_tool_end with create_tool_calling_agent in
+                # LangChain 0.2.x.
+                cfg = RunnableConfig(callbacks=[handler])
                 result = await executor.ainvoke({
                     "input": req.message,
                     "chat_history": _format_history(req.history),
-                })
+                }, config=cfg)
                 await queue.put(("done", result.get("output", "")))
             except Exception as e:
                 await queue.put(("error", str(e)[:300]))

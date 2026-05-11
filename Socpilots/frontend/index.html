@@ -5547,6 +5547,7 @@ const _CHAT_TOOL_LABELS = {
   query_assets:         '🏢 Checking asset inventory',
   query_ueba:           '👤 Analysing UEBA behaviour',
   query_knowledge_base: '📚 Searching knowledge base',
+  query_agents:         '🖥️ Querying Wazuh agents',
 };
 
 async function sendChat(){
@@ -5569,9 +5570,9 @@ async function sendChat(){
   const btn=document.getElementById('chat-btn');
   btn.disabled=true;
 
-  // Create thinking bubble — will be updated as tool events arrive
+  // Create thinking bubble — outer div id=tyId, inner status span id=tyId+'_s'
   const tyId='_ty_'+Date.now();
-  addMsg('ai',`<div style="display:flex;align-items:center;gap:8px"><div class="spin" style="width:14px;height:14px;flex-shrink:0"></div><span id="${tyId}" style="font-size:11px;color:var(--txt3);font-family:var(--fm)">Connecting to SOCPilots AI...</span></div>`,tyId,true);
+  addMsg('ai',`<div style="display:flex;align-items:center;gap:8px"><div class="spin" style="width:14px;height:14px;flex-shrink:0"></div><span id="${tyId}_s" style="font-size:11px;color:var(--txt3);font-family:var(--fm)">Connecting to SOCPilots AI...</span></div>`,tyId,true);
 
   let finalReply='';
   try {
@@ -5605,7 +5606,7 @@ async function sendChat(){
           if(!line.startsWith('data: ')) continue;
           let ev;
           try{ev=JSON.parse(line.slice(6));}catch{continue;}
-          const statusEl=document.getElementById(tyId);
+          const statusEl=document.getElementById(tyId+'_s');
           if(ev.type==='tool_start'){
             const lbl=_CHAT_TOOL_LABELS[ev.data?.tool]||('⚙️ '+ev.data?.tool);
             if(statusEl) statusEl.textContent=lbl+'...';
