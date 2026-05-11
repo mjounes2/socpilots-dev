@@ -175,6 +175,10 @@ tr:last-child td{border-bottom:none}
 .cbub{padding:12px 14px;border-radius:4px;font-size:12px;line-height:1.7;font-family:var(--fm);word-break:break-word;overflow-wrap:anywhere}
 .cmsg.ai .cbub{background:var(--bg3);border:1px solid var(--b1);width:100%;max-width:100%;overflow-x:auto}
 .cmsg.u .cbub{background:var(--cdim);border:1px solid rgba(0,229,255,.2)}
+.cmsg-ts{display:block;font-size:9px;color:var(--txt3);font-family:var(--fm);margin-top:5px;opacity:.7}
+.cmsg.u .cmsg-ts{text-align:right}
+.cmsg-day-sep{text-align:center;font-size:9px;font-family:var(--fm);color:var(--txt3);margin:4px 0;display:flex;align-items:center;gap:8px;letter-spacing:.5px}
+.cmsg-day-sep::before,.cmsg-day-sep::after{content:'';flex:1;border-top:1px solid var(--b1)}
 .chat-row{display:flex;gap:6px;padding:9px 12px;border-top:1px solid var(--b1);background:var(--bg1)}
 .chat-in{flex:1;background:rgba(0,0,0,.4);border:1px solid var(--b2);border-radius:4px;padding:8px 11px;color:var(--txt);font-family:var(--fm);font-size:12px;outline:none;resize:none;height:38px;transition:border-color .15s}
 .chat-in:focus{border-color:var(--c)}
@@ -486,6 +490,34 @@ body::before{
 
 /* — Spinner glow — */
 .spin{box-shadow:0 0 8px rgba(0,229,255,.18)}
+
+/* — MITRE ATT&CK Matrix — */
+.mitre-matrix-wrap{overflow-x:auto;padding-bottom:8px}
+.mitre-matrix{display:flex;gap:4px;min-width:max-content;align-items:flex-start}
+.mitre-col{width:118px;flex-shrink:0}
+.mitre-col-hd{background:rgba(0,229,255,.1);border:1px solid rgba(0,229,255,.25);border-radius:6px 6px 0 0;padding:7px 5px;text-align:center;font-size:9px;font-weight:700;color:var(--c);letter-spacing:.5px;cursor:default;text-transform:uppercase;line-height:1.3;min-height:48px;display:flex;align-items:center;justify-content:center}
+.mitre-col-hd small{display:block;font-size:7.5px;font-weight:400;color:var(--txt2);margin-top:2px;letter-spacing:0}
+.mitre-cell{background:var(--b2);border:1px solid rgba(255,255,255,.05);margin-top:3px;border-radius:4px;padding:5px 6px;font-size:8.5px;cursor:pointer;transition:all .15s;line-height:1.3;position:relative}
+.mitre-cell:hover{transform:translateY(-1px);z-index:5;box-shadow:0 4px 14px rgba(0,0,0,.5)}
+.mitre-cell .mc-id{font-family:var(--fm);font-weight:700;font-size:8px;color:var(--txt2)}
+.mitre-cell .mc-nm{color:var(--txt1);margin-top:1px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.mitre-cell .mc-cnt{font-family:var(--fm);font-size:8px;font-weight:700;margin-top:3px}
+.mitre-cell.mc-high{background:rgba(0,200,83,.15);border-color:rgba(0,200,83,.4)}
+.mitre-cell.mc-high .mc-cnt{color:#00c853}
+.mitre-cell.mc-medium{background:rgba(255,193,7,.12);border-color:rgba(255,193,7,.3)}
+.mitre-cell.mc-medium .mc-cnt{color:#ffc107}
+.mitre-cell.mc-low{background:rgba(255,109,0,.1);border-color:rgba(255,109,0,.25)}
+.mitre-cell.mc-low .mc-cnt{color:#ff6d00}
+.mitre-cell.mc-none{background:rgba(255,255,255,.03);border-color:rgba(255,255,255,.04)}
+.mitre-cell.mc-none .mc-cnt{color:var(--txt3)}
+.mitre-cell.mc-hidden{display:none}
+.mitre-legend{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.ml-dot{width:10px;height:10px;border-radius:2px;display:inline-block;margin-right:4px;vertical-align:middle}
+.ml-high{background:rgba(0,200,83,.6)}
+.ml-med{background:rgba(255,193,7,.6)}
+.ml-low{background:rgba(255,109,0,.5)}
+.ml-none{background:rgba(255,255,255,.1)}
+.mitre-stats-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:12px}
 </style>
 </head>
 <body>
@@ -516,6 +548,7 @@ if(localStorage.getItem("soc_dim")==="1")document.body.classList.add("dim");
     <div class="sb-sec">Detection</div>
     <div class="sbi" onclick="go('alerts')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><span class="sbi-lbl">Alerts</span><span class="sbi-n" id="n-alerts">—</span></div>
     <div class="sbi" onclick="go('rules')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><span class="sbi-lbl">Detection Rules</span></div>
+    <div class="sbi" onclick="go('mitre')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="4" height="4" rx="1"/><rect x="10" y="3" width="4" height="4" rx="1"/><rect x="17" y="3" width="4" height="4" rx="1"/><rect x="3" y="10" width="4" height="4" rx="1"/><rect x="10" y="10" width="4" height="4" rx="1"/><rect x="17" y="10" width="4" height="4" rx="1"/><rect x="3" y="17" width="4" height="4" rx="1"/><rect x="10" y="17" width="4" height="4" rx="1"/><rect x="17" y="17" width="4" height="4" rx="1"/></svg><span class="sbi-lbl">ATT&CK Coverage</span></div>
 
     <div class="sb-sec">Investigation</div>
     <div class="sbi" onclick="go('cases')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v16"/></svg><span class="sbi-lbl">Cases</span><span class="sbi-n" id="n-cases">—</span></div>
@@ -751,29 +784,160 @@ if(localStorage.getItem("soc_dim")==="1")document.body.classList.add("dim");
 
 <!-- RULES -->
 <div class="page" id="page-rules">
-  <div class="ph"><h1>DETECTION RULES</h1><p>Active rules from SIEM alert data</p></div>
-  <div class="card"><div class="card-hd"><div class="card-ttl">Active Rules</div><div class="row"><input class="fi" style="width:220px" placeholder="Search rules..." id="rl-q" oninput="filterRules()"><button class="btn btn-p btn-sm" onclick="loadRules()">↻ Refresh</button></div></div><div id="rl-body"><div class="loading"><div class="spin"></div></div></div></div>
+  <div class="ph"><h1>DETECTION RULES</h1><p>Active rules detected in SIEM telemetry — all-time firing history</p></div>
+  <!-- Stats row -->
+  <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:12px">
+    <div class="kpi cl"><div class="kpi-lbl">Total Rules</div><div class="kpi-val" id="rl-s-total">—</div><div class="kpi-sub">unique rule IDs</div></div>
+    <div class="kpi cr"><div class="kpi-lbl">Critical</div><div class="kpi-val" id="rl-s-crit">—</div><div class="kpi-sub">level ≥ 12</div></div>
+    <div class="kpi co"><div class="kpi-lbl">High</div><div class="kpi-val" id="rl-s-high">—</div><div class="kpi-sub">level 8–11</div></div>
+    <div class="kpi cg"><div class="kpi-lbl">Active 24h</div><div class="kpi-val" id="rl-s-active">—</div><div class="kpi-sub">fired recently</div></div>
+    <div class="kpi cp"><div class="kpi-lbl">MITRE Mapped</div><div class="kpi-val" id="rl-s-mitre">—</div><div class="kpi-sub">with technique IDs</div></div>
+  </div>
+  <!-- Filter panel -->
+  <div class="card" style="padding:12px;margin-bottom:12px">
+    <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+      <input class="fi" style="width:200px" placeholder="Search ID, description, group…" id="rl-q" oninput="rlSearchDebounce()">
+      <select class="fi" id="rl-f-sev" onchange="applyRulesFilters()" style="width:130px">
+        <option value="">All Severities</option>
+        <option value="critical">Critical</option>
+        <option value="high">High</option>
+        <option value="medium">Medium</option>
+        <option value="low">Low</option>
+      </select>
+      <select class="fi" id="rl-f-act" onchange="applyRulesFilters()" style="width:140px">
+        <option value="">All Activity</option>
+        <option value="24h">Active ≤24h</option>
+        <option value="7d">Active ≤7d</option>
+        <option value="dormant">Dormant &gt;7d</option>
+      </select>
+      <select class="fi" id="rl-f-mitre" onchange="applyRulesFilters()" style="width:130px">
+        <option value="">All MITRE</option>
+      </select>
+      <select class="fi" id="rl-f-decoder" onchange="applyRulesFilters()" style="width:140px">
+        <option value="">All Log Sources</option>
+      </select>
+      <select class="fi" id="rl-f-group" onchange="applyRulesFilters()" style="width:140px">
+        <option value="">All Categories</option>
+      </select>
+      <select class="fi" id="rl-sort" onchange="applyRulesFilters()" style="width:160px">
+        <option value="count_desc">Most Triggered</option>
+        <option value="count_asc">Least Triggered</option>
+        <option value="severity_desc">Severity: High→Low</option>
+        <option value="severity_asc">Severity: Low→High</option>
+        <option value="alpha_asc">Alphabetical</option>
+        <option value="last_seen_desc">Recently Active</option>
+      </select>
+      <button class="btn btn-p btn-sm" onclick="loadRules()" style="margin-left:auto">↻ Refresh</button>
+    </div>
+  </div>
+  <!-- Rules table -->
+  <div class="card" style="padding:0">
+    <div class="card-hd"><div class="card-ttl">Rules Library</div><div style="font-family:var(--fm);font-size:10px;color:var(--txt3)" id="rl-total-lbl"></div></div>
+    <div id="rl-body"><div class="loading"><div class="spin"></div></div></div>
+  </div>
 </div>
 
 <!-- CASES -->
 <div class="page" id="page-cases">
-  <div class="ph"><h1>SP-CM CASES</h1><p>SOCPilots Case Management</p></div>
-  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-    <select class="fs" style="width:160px" id="case-status" onchange="loadCases()"><option value="">All Status</option><option value="New">New</option><option value="InProgress">In Progress</option><option value="TruePositive">True Positive</option><option value="FalsePositive">False Positive</option><option value="Duplicate">Duplicate</option><option value="Resolved">Resolved</option></select>
-    <button class="btn btn-p" onclick="openModal('modal-case')">+ New Case</button>
+  <div class="ph"><h1>SP-CM CASES</h1><p>SOCPilots Case Management — paginated case browser with real-time statistics</p></div>
+  <!-- Stats row 1 -->
+  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:10px">
+    <div class="kpi cl"><div class="kpi-lbl">Total Cases</div><div class="kpi-val" id="cs-total">—</div><div class="kpi-sub">all time</div></div>
+    <div class="kpi cy"><div class="kpi-lbl">New</div><div class="kpi-val" id="cs-new">—</div><div class="kpi-sub">awaiting triage</div></div>
+    <div class="kpi co"><div class="kpi-lbl">In Progress</div><div class="kpi-val" id="cs-ip">—</div><div class="kpi-sub">under investigation</div></div>
+    <div class="kpi" style="--kc:var(--txt3)"><div class="kpi-lbl">Closed</div><div class="kpi-val" id="cs-closed">—</div><div class="kpi-sub">all resolutions</div></div>
   </div>
-  <div class="kanban">
-    <div class="kb-col"><div class="kb-hd" style="border-top:2px solid var(--r)">NEW<span class="kb-n" id="cnt-new">0</span></div><div id="kb-new"></div></div>
-    <div class="kb-col"><div class="kb-hd" style="border-top:2px solid var(--y)">IN PROGRESS<span class="kb-n" id="cnt-ip">0</span></div><div id="kb-ip"></div></div>
-    <div class="kb-col"><div class="kb-hd" style="border-top:2px solid var(--g)">RESOLVED<span class="kb-n" id="cnt-res">0</span></div><div id="kb-res"></div></div>
-    <div class="kb-col"><div class="kb-hd" style="border-top:2px solid var(--p)">CLOSED<span class="kb-n" id="cnt-cl">0</span></div><div id="kb-cl"></div></div>
+  <!-- Stats row 2 -->
+  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:12px">
+    <div class="kpi cg"><div class="kpi-lbl">True Positives</div><div class="kpi-val" id="cs-tp">—</div><div class="kpi-sub">confirmed threats</div></div>
+    <div class="kpi" style="--kc:var(--txt3)"><div class="kpi-lbl">False Positives</div><div class="kpi-val" id="cs-fp">—</div><div class="kpi-sub">dismissed cases</div></div>
+    <div class="kpi cr"><div class="kpi-lbl">Critical Severity</div><div class="kpi-val" id="cs-crit">—</div><div class="kpi-sub">level 4 cases</div></div>
+    <div class="kpi co"><div class="kpi-lbl">High Severity</div><div class="kpi-val" id="cs-high">—</div><div class="kpi-sub">level 3 cases</div></div>
+  </div>
+  <!-- Chart + filters -->
+  <div style="display:grid;grid-template-columns:240px 1fr;gap:10px;margin-bottom:12px">
+    <div class="card" style="padding:12px">
+      <div style="font-family:var(--fw);font-size:10px;letter-spacing:1px;color:var(--txt3);margin-bottom:8px">CASES BY SEVERITY</div>
+      <canvas id="cs-sev-chart" style="max-height:130px"></canvas>
+    </div>
+    <div class="card" style="padding:12px">
+      <div style="font-family:var(--fw);font-size:10px;letter-spacing:1px;color:var(--txt3);margin-bottom:10px">TIMEFRAME &amp; FILTERS</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">
+        <button class="btn btn-sm" id="cs-tf-1h" onclick="setCaseTimeframe('1h')">Last 1h</button>
+        <button class="btn btn-sm" id="cs-tf-24h" onclick="setCaseTimeframe('24h')">Last 24h</button>
+        <button class="btn btn-sm" id="cs-tf-7d" onclick="setCaseTimeframe('7d')">Last 7d</button>
+        <button class="btn btn-sm" id="cs-tf-all" onclick="setCaseTimeframe('all')">All Time</button>
+        <button class="btn btn-sm" id="cs-tf-custom" onclick="setCaseTimeframe('custom')">Custom ▾</button>
+      </div>
+      <div id="cs-custom-dates" style="display:none;gap:6px;margin-bottom:8px;flex-wrap:wrap">
+        <input type="datetime-local" class="fi" id="cs-from" style="width:175px;font-size:11px;padding:4px 7px" onchange="_cPage=1;loadCases()">
+        <input type="datetime-local" class="fi" id="cs-to" style="width:175px;font-size:11px;padding:4px 7px" onchange="_cPage=1;loadCases()">
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px">
+        <select class="fs" style="width:160px" id="cs-status" onchange="_cPage=1;loadCases()"><option value="">All Status</option><option value="New">New</option><option value="InProgress">In Progress</option><option value="TruePositive">True Positive</option><option value="FalsePositive">False Positive</option><option value="Duplicate">Duplicate</option><option value="Resolved">Resolved</option></select>
+        <select class="fs" style="width:120px" id="cs-sev-filter" onchange="_cPage=1;loadCases()"><option value="">All Severity</option><option value="4">Critical</option><option value="3">High</option><option value="2">Medium</option><option value="1">Low</option></select>
+        <input class="fi" style="width:150px" placeholder="Search title..." id="cs-q" oninput="clearTimeout(_cSearchTimer);_cSearchTimer=setTimeout(()=>{_cPage=1;loadCases()},400)">
+        <button class="btn btn-p btn-sm" onclick="_cPage=1;loadCases()">↻ Refresh</button>
+        <button class="btn btn-p" onclick="openModal('modal-case')" style="margin-left:auto">+ New Case</button>
+      </div>
+    </div>
+  </div>
+  <!-- Table -->
+  <div class="card" style="padding:0">
+    <div class="card-hd"><div class="card-ttl">Case Inbox</div><div style="font-family:var(--fm);font-size:10px;color:var(--txt3)" id="cs-total-lbl"></div></div>
+    <div id="cs-body"><div class="loading"><div class="spin"></div></div></div>
   </div>
 </div>
 
 <!-- HIVE ALERTS -->
 <div class="page" id="page-hive-alerts">
-  <div class="ph"><h1>SP-CM ALERTS</h1><p>SOCPilots Case Management alert inbox</p></div>
-  <div class="card"><div class="card-hd"><div class="card-ttl">Alert Inbox</div><div class="row"><select class="fs" style="width:130px" id="ha-status" onchange="loadHiveAlerts()"><option value="">All</option><option value="New">New</option><option value="InProgress">In Progress</option></select><button class="btn btn-p btn-sm" onclick="loadHiveAlerts()">↻ Refresh</button></div></div><div id="ha-body"><div class="loading"><div class="spin"></div></div></div></div>
+  <div class="ph"><h1>SP-CM ALERTS</h1><p>SOCPilots Case Management — paginated alert inbox with real-time statistics</p></div>
+  <!-- Stats row 1: alert status counts -->
+  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:10px">
+    <div class="kpi cl"><div class="kpi-lbl">Total Alerts</div><div class="kpi-val" id="has-total">—</div><div class="kpi-sub">all time</div></div>
+    <div class="kpi cy"><div class="kpi-lbl">New Alerts</div><div class="kpi-val" id="has-new">—</div><div class="kpi-sub">awaiting triage</div></div>
+    <div class="kpi co"><div class="kpi-lbl">In Progress</div><div class="kpi-val" id="has-ip">—</div><div class="kpi-sub">under investigation</div></div>
+    <div class="kpi cg"><div class="kpi-lbl">Closed</div><div class="kpi-val" id="has-closed">—</div><div class="kpi-sub">imported to case</div></div>
+  </div>
+  <!-- Stats row 2: case outcomes + severity counts -->
+  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:12px">
+    <div class="kpi cg"><div class="kpi-lbl">True Positives</div><div class="kpi-val" id="has-tp">—</div><div class="kpi-sub">confirmed cases</div></div>
+    <div class="kpi" style="--kc:var(--txt3)"><div class="kpi-lbl">False Positives</div><div class="kpi-val" id="has-fp">—</div><div class="kpi-sub">dismissed cases</div></div>
+    <div class="kpi cr"><div class="kpi-lbl">Critical Severity</div><div class="kpi-val" id="has-crit">—</div><div class="kpi-sub">level 4 alerts</div></div>
+    <div class="kpi co"><div class="kpi-lbl">High Severity</div><div class="kpi-val" id="has-high">—</div><div class="kpi-sub">level 3 alerts</div></div>
+  </div>
+  <!-- Chart + filters row -->
+  <div style="display:grid;grid-template-columns:240px 1fr;gap:10px;margin-bottom:12px">
+    <div class="card" style="padding:12px">
+      <div style="font-family:var(--fw);font-size:10px;letter-spacing:1px;color:var(--txt3);margin-bottom:8px">ALERTS BY SEVERITY</div>
+      <canvas id="ha-sev-chart" style="max-height:130px"></canvas>
+    </div>
+    <div class="card" style="padding:12px">
+      <div style="font-family:var(--fw);font-size:10px;letter-spacing:1px;color:var(--txt3);margin-bottom:10px">TIMEFRAME &amp; FILTERS</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">
+        <button class="btn btn-sm" id="ha-tf-1h" onclick="setHaTimeframe('1h')">Last 1h</button>
+        <button class="btn btn-sm" id="ha-tf-24h" onclick="setHaTimeframe('24h')">Last 24h</button>
+        <button class="btn btn-sm" id="ha-tf-7d" onclick="setHaTimeframe('7d')">Last 7d</button>
+        <button class="btn btn-sm" id="ha-tf-all" onclick="setHaTimeframe('all')">All Time</button>
+        <button class="btn btn-sm" id="ha-tf-custom" onclick="setHaTimeframe('custom')">Custom ▾</button>
+      </div>
+      <div id="ha-custom-dates" style="display:none;gap:6px;margin-bottom:8px;flex-wrap:wrap">
+        <input type="datetime-local" class="fi" id="ha-from" style="width:175px;font-size:11px;padding:4px 7px" onchange="_haPage=1;loadHiveAlerts()">
+        <input type="datetime-local" class="fi" id="ha-to" style="width:175px;font-size:11px;padding:4px 7px" onchange="_haPage=1;loadHiveAlerts()">
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px">
+        <select class="fs" style="width:130px" id="ha-status" onchange="_haPage=1;loadHiveAlerts()"><option value="">All Status</option><option value="New">New</option><option value="InProgress">In Progress</option><option value="Imported">Imported</option></select>
+        <select class="fs" style="width:120px" id="ha-sev-filter" onchange="_haPage=1;loadHiveAlerts()"><option value="">All Severity</option><option value="4">Critical</option><option value="3">High</option><option value="2">Medium</option><option value="1">Low</option></select>
+        <input class="fi" style="width:150px" placeholder="Search title..." id="ha-q" oninput="clearTimeout(_haSearchTimer);_haSearchTimer=setTimeout(()=>{_haPage=1;loadHiveAlerts()},400)">
+        <button class="btn btn-p btn-sm" onclick="_haPage=1;loadHiveAlerts()">↻ Refresh</button>
+      </div>
+    </div>
+  </div>
+  <!-- Alert table -->
+  <div class="card">
+    <div class="card-hd"><div class="card-ttl">Alert Inbox</div><div style="font-family:var(--fm);font-size:10px;color:var(--txt3)" id="ha-total-lbl"></div></div>
+    <div id="ha-body"><div class="loading"><div class="spin"></div></div></div>
+  </div>
 </div>
 
 <!-- HUNT -->
@@ -1328,6 +1492,7 @@ sshd: Failed" style="min-height:80px"></textarea></div>
       <div style="padding:9px 13px;border-bottom:1px solid var(--b1);font-size:10px;font-family:var(--fm);display:flex;align-items:center;gap:7px">
         <div class="led g"></div>SOCPilots AI → LLM → MCP (SIEM + SP-CM)
         <span style="margin-left:auto;color:#8ab0d0" id="ctx-msgs">1 msg</span>
+        <button onclick="clearChat()" title="Clear conversation history" style="background:none;border:1px solid var(--b2);border-radius:4px;padding:3px 8px;cursor:pointer;color:var(--txt3);font-size:9px;font-family:var(--fm);letter-spacing:.5px;transition:all .15s" onmouseover="this.style.borderColor='var(--r)';this.style.color='var(--r)'" onmouseout="this.style.borderColor='var(--b2)';this.style.color='var(--txt3)'">✕ CLEAR</button>
       </div>
       <div class="chat-msgs" id="chat-msgs">
         <div class="cmsg ai"><div class="cav ai">SP</div><div class="cbub">Hello <strong id="chat-uname" style="color:var(--c)">—</strong>!<br><br>I'm SOCPilots AI — connected to your SIEM and SP-CM via MCP tools.<br><br>Ask about alerts, agents, cases, threats, or request automated response actions.</div></div>
@@ -2152,6 +2317,71 @@ sshd: Failed" style="min-height:80px"></textarea></div>
   </div>
 </div>
 
+<!-- MITRE ATT&CK COVERAGE PAGE -->
+<div class="page" id="page-mitre">
+  <div class="ph"><h1>ATT&CK COVERAGE</h1><p>MITRE ATT&CK Enterprise matrix — detection coverage heatmap based on SIEM telemetry</p></div>
+
+  <!-- Stats -->
+  <div class="mitre-stats-grid">
+    <div class="kpi cl"><div class="kpi-lbl">Techniques in Matrix</div><div class="kpi-val" id="mc-s-total">—</div><div class="kpi-sub">enterprise techniques</div></div>
+    <div class="kpi cg"><div class="kpi-lbl">Covered</div><div class="kpi-val" id="mc-s-covered">—</div><div class="kpi-sub">with detections</div></div>
+    <div class="kpi cp"><div class="kpi-lbl">Coverage %</div><div class="kpi-val" id="mc-s-pct">—</div><div class="kpi-sub">of matrix</div></div>
+    <div class="kpi co"><div class="kpi-lbl">High Coverage</div><div class="kpi-val" id="mc-s-high">—</div><div class="kpi-sub">≥10 alerts</div></div>
+    <div class="kpi cr"><div class="kpi-lbl">Gaps</div><div class="kpi-val" id="mc-s-gaps">—</div><div class="kpi-sub">no coverage</div></div>
+  </div>
+
+  <!-- Filters -->
+  <div class="card" style="padding:12px;margin-bottom:12px">
+    <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+      <select class="fi" id="mc-tf" onchange="loadMitre()" style="width:130px">
+        <option value="24h">Last 24h</option>
+        <option value="7d" selected>Last 7 days</option>
+        <option value="30d">Last 30 days</option>
+        <option value="90d">Last 90 days</option>
+      </select>
+      <select class="fi" id="mc-cov" onchange="applyMitreFilters()" style="width:150px">
+        <option value="">All Coverage</option>
+        <option value="high">High (≥10 alerts)</option>
+        <option value="medium">Medium (1–9 alerts)</option>
+        <option value="low">Low (no recent alerts)</option>
+        <option value="none">No Coverage</option>
+      </select>
+      <select class="fi" id="mc-tactic" onchange="applyMitreFilters()" style="width:170px">
+        <option value="">All Tactics</option>
+      </select>
+      <div style="display:flex;gap:6px;align-items:center;margin-left:auto">
+        <div class="mitre-legend">
+          <span style="font-size:10px;color:var(--txt2)"><span class="ml-dot ml-high"></span>High</span>
+          <span style="font-size:10px;color:var(--txt2)"><span class="ml-dot ml-med"></span>Medium</span>
+          <span style="font-size:10px;color:var(--txt2)"><span class="ml-dot ml-low"></span>Low</span>
+          <span style="font-size:10px;color:var(--txt2)"><span class="ml-dot ml-none"></span>None</span>
+        </div>
+        <button class="btn btn-sm" onclick="mitreExportNav()" style="font-size:10px">↓ Navigator JSON</button>
+        <button class="btn btn-p btn-sm" onclick="loadMitre()" style="font-size:10px">↻ Refresh</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Matrix -->
+  <div class="card" style="padding:12px">
+    <div id="mc-matrix-wrap">
+      <div class="loading"><div class="spin"></div></div>
+    </div>
+  </div>
+</div>
+
+<!-- MITRE Technique Detail Modal -->
+<div class="modal-ov" id="modal-mitre-tech">
+  <div class="modal" style="width:680px;max-height:80vh;overflow:hidden;display:flex;flex-direction:column">
+    <div class="modal-hd">
+      <div class="modal-ttl" id="mm-title">Technique Detail</div>
+      <button class="modal-x" onclick="closeModal('modal-mitre-tech')">✕</button>
+    </div>
+    <div class="modal-body" id="mm-body" style="overflow-y:auto;flex:1"></div>
+    <div class="modal-ft"><button class="btn btn-h" onclick="closeModal('modal-mitre-tech')">Close</button></div>
+  </div>
+</div>
+
 </main>
 
 <!-- CREATE CASE MODAL -->
@@ -2193,6 +2423,7 @@ document.getElementById('tb-un').textContent    = CU.username;
 document.getElementById('tb-av').textContent    = CU.username[0].toUpperCase();
 document.getElementById('chat-uname').textContent = CU.username;
 document.getElementById('ctx-un').textContent   = CU.username;
+let _chatSessionId = `soc_${CU.username}`;
 const TOK = sessionStorage.getItem('soc_token');
 function logout(){ sessionStorage.clear(); location.replace('/login'); }
 
@@ -2224,7 +2455,7 @@ async function api(method,url,body=null){
     console.warn('[API]',e.message);return null;
   }
 }
-window.G=u=>api('GET',u); window.P=(u,b,m)=>api(m||'POST',u,b);
+window.G=u=>api('GET',u); window.P=(u,b,m)=>api(m||'POST',u,b); window.D=u=>api('DELETE',u);
 
 // ─── HELPERS ─────────────────────────────────────────────────
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
@@ -2563,13 +2794,15 @@ let _invPage=1,_invPageSize=50;
 let _assetPage=1,_assetPageSize=50;
 let _agPage=1,_agPageSize=20;
 let _lbPage=1,_lbPageSize=20;
-let _rulesPage=1,_rulesPageSize=50;
+let _rulesPage=1,_rulesPageSize=50,_rlSearchTimer=null;
 let _pbExecPage=1,_pbExecPageSize=10;
+let _haPage=1,_haPageSize=20,_haTimeframe='24h',_haChartSev=null,_haSearchTimer=null;
+let _cPage=1,_cPageSize=20,_cTimeframe='all',_cChartSev=null,_cSearchTimer=null;
 
 // ─── NAV ─────────────────────────────────────────────────────
 let CUR='dashboard';
-const LOAD_MAP={dashboard:loadDashboard,agents:loadAgents,alerts:loadAlerts,rules:loadRules,'create-rules':loadCustomRules,investigation:()=>{loadInvAlerts();loadAutoTriageSettings();loadInvHistory();},
-  cases:loadCases,'hive-alerts':loadHiveAlerts,threatmap:loadThreatMap,
+const LOAD_MAP={dashboard:loadDashboard,agents:loadAgents,alerts:loadAlerts,rules:loadRules,mitre:loadMitre,'create-rules':loadCustomRules,investigation:()=>{loadInvAlerts();loadAutoTriageSettings();loadInvHistory();},
+  cases:()=>{setCaseTimeframe(_cTimeframe);},'hive-alerts':()=>{setHaTimeframe(_haTimeframe);},threatmap:loadThreatMap,
   ioc:()=>{loadIOCQuick();loadOtxFeed();},reports:loadReportMetrics,
   assets:()=>{loadSubnets();loadAssets();loadScanStatus();},
   ueba:()=>{loadUebaStats();loadUebaAnomalies();},
@@ -2901,7 +3134,7 @@ async function loadDashboard(){
       if(Math.abs(newW - _dashMap.W) > 20) _dashMap=drawWorldMap('world-canvas');
     }
   }
-  loadTopAgents(); loadTopIPs(); loadTopRules(); loadMitre(); loadRecentCritical();
+  loadTopAgents(); loadTopIPs(); loadTopRules(); loadMitreDash(); loadRecentCritical();
 }
 
 function renderTimelineChart(tl){
@@ -2991,7 +3224,7 @@ async function loadTopRules(){
   el.innerHTML=`<div style="display:flex;flex-direction:column;gap:6px">${data.slice(0,7).map((r,i)=>`<div style="display:flex;align-items:center;gap:7px"><span style="font-size:9px;color:var(--txt4);font-family:var(--fm);min-width:12px">${i+1}</span><span class="badge ${sbadge(r.severity)}" style="font-size:8px;flex-shrink:0">${r.level}</span><span style="flex:1;font-size:10px;font-family:var(--fm);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.desc)}</span><span style="font-size:9px;color:#8ab0d0;font-family:var(--fm)">${r.count}</span></div>`).join('')}</div>`;
 }
 
-async function loadMitre(){
+async function loadMitreDash(){
   const data=await G('/api/stats/mitre'); const el=document.getElementById('d-mitre');
   if(!data?.tactics?.length){el.innerHTML=empty('No MITRE data');return;}
   el.innerHTML=`<div style="margin-bottom:8px"><div style="font-size:9px;color:#8ab0d0;font-family:var(--fm);margin-bottom:5px;letter-spacing:1px">TACTICS</div><div style="display:flex;flex-wrap:wrap;gap:4px">${data.tactics.slice(0,8).map(t=>`<span class="badge medium" style="font-size:8px">${esc(t.name)} <span style="color:#8ab0d0">${t.count}</span></span>`).join('')}</div></div><div><div style="font-size:9px;color:#8ab0d0;font-family:var(--fm);margin-bottom:5px;letter-spacing:1px">TECHNIQUES</div><div style="display:flex;flex-wrap:wrap;gap:4px">${data.techniques.slice(0,12).map(t=>`<span class="badge low" style="font-size:8px">${esc(t.id)} <span style="color:#8ab0d0">${t.count}</span></span>`).join('')}</div></div>`;
@@ -3268,19 +3501,517 @@ function escalateToCase(){if(!_selAlert)return;closeModal('modal-alert');documen
 
 // ─── RULES ───────────────────────────────────────────────────
 let _rules=[];
-async function loadRules(){document.getElementById('rl-body').innerHTML=spin('Loading from SIEM...');const d=await G('/api/rules');if(!d||d.error){document.getElementById('rl-body').innerHTML=errBnr(d?.error||'SIEM unavailable');return;}_rules=d.rules||[];_rulesPage=1;filterRules();}
-function filterRules(){const q=(document.getElementById('rl-q')?.value||'').toLowerCase();_rulesPage=1;renderRules(_rules.filter(r=>`${r.id} ${r.description} ${r.groups}`.toLowerCase().includes(q)));}
+async function loadRules(){
+  document.getElementById('rl-body').innerHTML=spin('Loading from SIEM...');
+  const d=await G('/api/rules');
+  if(!d||d.error){document.getElementById('rl-body').innerHTML=errBnr(d?.error||'SIEM unavailable');return;}
+  _rules=d.rules||[];
+  _rulesPage=1;
+  // Update stats cards
+  const now=Date.now();
+  const crit=_rules.filter(r=>r.severity==='critical').length;
+  const high=_rules.filter(r=>r.severity==='high').length;
+  const active24=_rules.filter(r=>r.last_seen&&now-r.last_seen<86400000).length;
+  const mitreMapped=_rules.filter(r=>(r.mitre||[]).length>0).length;
+  document.getElementById('rl-s-total').textContent=_rules.length.toLocaleString();
+  document.getElementById('rl-s-crit').textContent=crit.toLocaleString();
+  document.getElementById('rl-s-high').textContent=high.toLocaleString();
+  document.getElementById('rl-s-active').textContent=active24.toLocaleString();
+  document.getElementById('rl-s-mitre').textContent=mitreMapped.toLocaleString();
+  // Populate filter dropdowns from data
+  const mitreSet=new Set(),decoderSet=new Set(),groupSet=new Set();
+  _rules.forEach(r=>{
+    (r.mitre||[]).forEach(m=>mitreSet.add(m));
+    if(r.decoder)decoderSet.add(r.decoder);
+    (r.groups||[]).forEach(g=>groupSet.add(g));
+  });
+  const fillSel=(id,vals)=>{
+    const sel=document.getElementById(id);if(!sel)return;
+    const cur=sel.value;
+    while(sel.options.length>1)sel.remove(1);
+    [...vals].sort().forEach(v=>{const o=document.createElement('option');o.value=v;o.textContent=v;sel.appendChild(o);});
+    if(cur)sel.value=cur;
+  };
+  fillSel('rl-f-mitre',mitreSet);
+  fillSel('rl-f-decoder',decoderSet);
+  fillSel('rl-f-group',groupSet);
+  applyRulesFilters();
+}
+function rlSearchDebounce(){clearTimeout(_rlSearchTimer);_rlSearchTimer=setTimeout(()=>{_rulesPage=1;applyRulesFilters();},250);}
+function applyRulesFilters(){
+  const q=(document.getElementById('rl-q')?.value||'').toLowerCase().trim();
+  const fSev=document.getElementById('rl-f-sev')?.value||'';
+  const fAct=document.getElementById('rl-f-act')?.value||'';
+  const fMitre=document.getElementById('rl-f-mitre')?.value||'';
+  const fDecoder=document.getElementById('rl-f-decoder')?.value||'';
+  const fGroup=document.getElementById('rl-f-group')?.value||'';
+  const sortBy=document.getElementById('rl-sort')?.value||'count_desc';
+  const now=Date.now();
+  let filtered=_rules.filter(r=>{
+    if(q&&!`${r.id} ${r.description} ${(r.groups||[]).join(' ')} ${(r.mitre||[]).join(' ')} ${r.decoder||''}`.toLowerCase().includes(q))return false;
+    if(fSev&&r.severity!==fSev)return false;
+    if(fMitre&&!(r.mitre||[]).includes(fMitre))return false;
+    if(fDecoder&&r.decoder!==fDecoder)return false;
+    if(fGroup&&!(r.groups||[]).includes(fGroup))return false;
+    if(fAct){
+      const ls=r.last_seen||0;
+      if(fAct==='24h'&&now-ls>=86400000)return false;
+      if(fAct==='7d'&&now-ls>=604800000)return false;
+      if(fAct==='dormant'&&now-ls<604800000)return false;
+    }
+    return true;
+  });
+  if(sortBy==='count_asc')filtered.sort((a,b)=>a.count-b.count);
+  else if(sortBy==='severity_desc')filtered.sort((a,b)=>b.level-a.level);
+  else if(sortBy==='severity_asc')filtered.sort((a,b)=>a.level-b.level);
+  else if(sortBy==='alpha_asc')filtered.sort((a,b)=>a.description.localeCompare(b.description));
+  else if(sortBy==='last_seen_desc')filtered.sort((a,b)=>(b.last_seen||0)-(a.last_seen||0));
+  else filtered.sort((a,b)=>b.count-a.count);
+  _rulesPage=1;
+  renderRules(filtered);
+}
 function renderRules(filtered){
-  const el=document.getElementById('rl-body');if(!filtered.length){el.innerHTML=empty('No rules');return;}
+  const el=document.getElementById('rl-body');
+  if(!filtered.length){el.innerHTML=empty('No rules match filters');return;}
   window._filteredRules=filtered;
-  const start=(_rulesPage-1)*_rulesPageSize, page=filtered.slice(start,start+_rulesPageSize);
+  const lbl=document.getElementById('rl-total-lbl');
+  if(lbl)lbl.textContent=`${filtered.length} of ${_rules.length} rules`;
+  const start=(_rulesPage-1)*_rulesPageSize,page=filtered.slice(start,start+_rulesPageSize);
   const pgn=buildPaginator(_rulesPage,_rulesPageSize,filtered.length,
-    `rulesGoPage(${_rulesPage-1})`,`rulesGoPage(${_rulesPage+1})`,
-    'rulesSetPageSize(this)');
-  el.innerHTML=`<div class="tbl"><table><thead><tr><th>ID</th><th>Level</th><th>Description</th><th>Groups</th><th>MITRE</th><th>Fires</th></tr></thead><tbody>${page.map(r=>`<tr><td style="color:var(--c)">${esc(r.id)}</td><td><span class="badge ${sbadge(r.severity)}">${r.level}</span></td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.description)}</td><td style="color:var(--txt2)">${esc((r.groups||'').slice(0,40))}</td><td>${r.mitre?`<span class="badge low" style="font-size:8px">${esc(r.mitre)}</span>`:''}</td><td style="color:var(--c)">${r.count}</td></tr>`).join('')}</tbody></table></div>${pgn}`;
+    `rulesGoPage(${_rulesPage-1})`,`rulesGoPage(${_rulesPage+1})`,'rulesSetPageSize(this)');
+  const now=Date.now();
+  const actBadge=ls=>{
+    if(!ls)return '<span style="color:var(--txt3);font-size:9px">—</span>';
+    const d=now-ls;
+    if(d<86400000)return '<span class="badge ok" style="font-size:8px">24h</span>';
+    if(d<604800000)return '<span class="badge med" style="font-size:8px">7d</span>';
+    return '<span style="font-size:9px;color:var(--txt3)">DORMANT</span>';
+  };
+  el.innerHTML=`<div class="tbl"><table><thead><tr><th>ID</th><th>Level</th><th>Description</th><th>Categories</th><th>MITRE</th><th>Log Source</th><th>Activity</th><th>Fires</th></tr></thead><tbody>${
+    page.map(r=>`<tr>
+      <td style="color:var(--c);font-family:var(--fm)">${esc(r.id)}</td>
+      <td><span class="badge ${sbadge(r.severity)}">${r.level}</span></td>
+      <td style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(r.description)}">${esc(r.description)}</td>
+      <td style="max-width:160px">${(r.groups||[]).slice(0,3).map(g=>`<span style="font-size:8px;color:var(--txt2);background:var(--b2);padding:1px 5px;border-radius:3px;margin-right:2px;display:inline-block;margin-bottom:1px">${esc(g)}</span>`).join('')}</td>
+      <td>${(r.mitre||[]).slice(0,2).map(m=>`<span class="badge low" style="font-size:8px">${esc(m)}</span>`).join(' ')}</td>
+      <td style="font-size:10px;color:var(--txt2)">${esc(r.decoder||'—')}</td>
+      <td>${actBadge(r.last_seen)}</td>
+      <td style="color:var(--c);font-family:var(--fm)">${r.count.toLocaleString()}</td>
+    </tr>`).join('')
+  }</tbody></table></div>${pgn}`;
 }
 function rulesGoPage(p){_rulesPage=p;renderRules(window._filteredRules||[]);}
 function rulesSetPageSize(sel){_rulesPageSize=parseInt(sel.value)||50;_rulesPage=1;renderRules(window._filteredRules||[]);}
+
+// ─── MITRE ATT&CK COVERAGE ───────────────────────────────────
+const MITRE_TACTICS=[
+  {id:'TA0043',n:'Reconnaissance'},
+  {id:'TA0042',n:'Resource Development'},
+  {id:'TA0001',n:'Initial Access'},
+  {id:'TA0002',n:'Execution'},
+  {id:'TA0003',n:'Persistence'},
+  {id:'TA0004',n:'Privilege Escalation'},
+  {id:'TA0005',n:'Defense Evasion'},
+  {id:'TA0006',n:'Credential Access'},
+  {id:'TA0007',n:'Discovery'},
+  {id:'TA0008',n:'Lateral Movement'},
+  {id:'TA0009',n:'Collection'},
+  {id:'TA0010',n:'Exfiltration'},
+  {id:'TA0011',n:'Command & Control'},
+  {id:'TA0040',n:'Impact'},
+];
+// [id, name, [tactic_ids...]]
+const MITRE_TECHS=[
+  // Reconnaissance
+  ['T1595','Active Scanning',['TA0043']],
+  ['T1592','Gather Victim Host Info',['TA0043']],
+  ['T1589','Gather Victim Identity Info',['TA0043']],
+  ['T1590','Gather Victim Network Info',['TA0043']],
+  ['T1591','Gather Victim Org Info',['TA0043']],
+  ['T1598','Phishing for Info',['TA0043']],
+  ['T1597','Search Closed Sources',['TA0043']],
+  ['T1596','Search Open Tech Databases',['TA0043']],
+  ['T1593','Search Open Websites',['TA0043']],
+  ['T1594','Search Victim Website',['TA0043']],
+  // Resource Development
+  ['T1583','Acquire Infrastructure',['TA0042']],
+  ['T1584','Compromise Infrastructure',['TA0042']],
+  ['T1586','Compromise Accounts',['TA0042']],
+  ['T1587','Develop Capabilities',['TA0042']],
+  ['T1588','Obtain Capabilities',['TA0042']],
+  ['T1585','Establish Accounts',['TA0042']],
+  ['T1608','Stage Capabilities',['TA0042']],
+  // Initial Access
+  ['T1189','Drive-by Compromise',['TA0001']],
+  ['T1190','Exploit Public-Facing App',['TA0001']],
+  ['T1133','External Remote Services',['TA0001','TA0003']],
+  ['T1200','Hardware Additions',['TA0001']],
+  ['T1566','Phishing',['TA0001']],
+  ['T1091','Replication via Removable Media',['TA0001','TA0008']],
+  ['T1195','Supply Chain Compromise',['TA0001']],
+  ['T1199','Trusted Relationship',['TA0001']],
+  ['T1078','Valid Accounts',['TA0001','TA0003','TA0004','TA0005']],
+  ['T1659','Content Injection',['TA0001']],
+  // Execution
+  ['T1059','Command and Scripting Interpreter',['TA0002']],
+  ['T1203','Exploitation for Client Execution',['TA0002']],
+  ['T1559','Inter-Process Communication',['TA0002']],
+  ['T1106','Native API',['TA0002']],
+  ['T1053','Scheduled Task/Job',['TA0002','TA0003','TA0004']],
+  ['T1129','Shared Modules',['TA0002']],
+  ['T1569','System Services',['TA0002','TA0003']],
+  ['T1204','User Execution',['TA0002']],
+  ['T1047','Windows Management Instrumentation',['TA0002']],
+  ['T1072','Software Deployment Tools',['TA0002','TA0008']],
+  // Persistence
+  ['T1098','Account Manipulation',['TA0003','TA0004']],
+  ['T1197','BITS Jobs',['TA0003','TA0005']],
+  ['T1547','Boot or Logon Autostart',['TA0003','TA0004']],
+  ['T1176','Browser Extensions',['TA0003']],
+  ['T1554','Compromise Host Software Binary',['TA0003']],
+  ['T1136','Create Account',['TA0003']],
+  ['T1543','Create or Modify System Process',['TA0003','TA0004']],
+  ['T1546','Event Triggered Execution',['TA0003','TA0004']],
+  ['T1574','Hijack Execution Flow',['TA0003','TA0004','TA0005']],
+  ['T1137','Office Application Startup',['TA0003']],
+  ['T1542','Pre-OS Boot',['TA0003','TA0005']],
+  ['T1505','Server Software Component',['TA0003']],
+  // Privilege Escalation
+  ['T1548','Abuse Elevation Control Mechanism',['TA0004','TA0005']],
+  ['T1134','Access Token Manipulation',['TA0004','TA0005']],
+  ['T1484','Domain or Tenant Policy Modification',['TA0004','TA0005']],
+  ['T1068','Exploitation for Privilege Escalation',['TA0004']],
+  ['T1055','Process Injection',['TA0004','TA0005']],
+  ['T1611','Escape to Host',['TA0004']],
+  // Defense Evasion
+  ['T1140','Deobfuscate/Decode Files',['TA0005']],
+  ['T1006','Direct Volume Access',['TA0005']],
+  ['T1480','Execution Guardrails',['TA0005']],
+  ['T1211','Exploitation for Defense Evasion',['TA0005']],
+  ['T1222','File and Directory Permissions Mod',['TA0005']],
+  ['T1564','Hide Artifacts',['TA0005']],
+  ['T1562','Impair Defenses',['TA0005']],
+  ['T1070','Indicator Removal',['TA0005']],
+  ['T1202','Indirect Command Execution',['TA0005']],
+  ['T1036','Masquerading',['TA0005']],
+  ['T1112','Modify Registry',['TA0005']],
+  ['T1027','Obfuscated Files or Information',['TA0005']],
+  ['T1647','Plist File Modification',['TA0005']],
+  ['T1620','Reflective Code Loading',['TA0005']],
+  ['T1553','Subvert Trust Controls',['TA0005']],
+  ['T1218','System Binary Proxy Execution',['TA0005']],
+  ['T1216','System Script Proxy Execution',['TA0005']],
+  ['T1127','Trusted Developer Utilities Proxy',['TA0005']],
+  ['T1535','Unused/Unsupported Cloud Regions',['TA0005']],
+  ['T1497','Virtualization/Sandbox Evasion',['TA0005']],
+  ['T1600','Weaken Encryption',['TA0005']],
+  // Credential Access
+  ['T1557','Adversary-in-the-Middle',['TA0006','TA0009']],
+  ['T1110','Brute Force',['TA0006']],
+  ['T1555','Credentials from Password Stores',['TA0006']],
+  ['T1212','Exploitation for Credential Access',['TA0006']],
+  ['T1187','Forced Authentication',['TA0006']],
+  ['T1606','Forge Web Credentials',['TA0006']],
+  ['T1056','Input Capture',['TA0006','TA0009']],
+  ['T1040','Network Sniffing',['TA0006','TA0007']],
+  ['T1003','OS Credential Dumping',['TA0006']],
+  ['T1528','Steal Application Access Token',['TA0006']],
+  ['T1558','Steal or Forge Kerberos Tickets',['TA0006']],
+  ['T1539','Steal Web Session Cookie',['TA0006']],
+  ['T1552','Unsecured Credentials',['TA0006']],
+  // Discovery
+  ['T1087','Account Discovery',['TA0007']],
+  ['T1010','Application Window Discovery',['TA0007']],
+  ['T1217','Browser Information Discovery',['TA0007']],
+  ['T1580','Cloud Infrastructure Discovery',['TA0007']],
+  ['T1538','Cloud Service Dashboard',['TA0007']],
+  ['T1526','Cloud Service Discovery',['TA0007']],
+  ['T1613','Container and Resource Discovery',['TA0007']],
+  ['T1622','Debugger Evasion',['TA0007']],
+  ['T1482','Domain Trust Discovery',['TA0007']],
+  ['T1083','File and Directory Discovery',['TA0007']],
+  ['T1615','Group Policy Discovery',['TA0007']],
+  ['T1046','Network Service Discovery',['TA0007']],
+  ['T1135','Network Share Discovery',['TA0007']],
+  ['T1201','Password Policy Discovery',['TA0007']],
+  ['T1120','Peripheral Device Discovery',['TA0007']],
+  ['T1069','Permission Groups Discovery',['TA0007']],
+  ['T1057','Process Discovery',['TA0007']],
+  ['T1012','Query Registry',['TA0007']],
+  ['T1018','Remote System Discovery',['TA0007']],
+  ['T1518','Software Discovery',['TA0007']],
+  ['T1082','System Information Discovery',['TA0007']],
+  ['T1016','System Network Configuration Discovery',['TA0007']],
+  ['T1049','System Network Connections Discovery',['TA0007']],
+  ['T1033','System Owner/User Discovery',['TA0007']],
+  ['T1007','System Service Discovery',['TA0007']],
+  ['T1124','System Time Discovery',['TA0007']],
+  // Lateral Movement
+  ['T1210','Exploitation of Remote Services',['TA0008']],
+  ['T1534','Internal Spearphishing',['TA0008']],
+  ['T1570','Lateral Tool Transfer',['TA0008']],
+  ['T1563','Remote Service Session Hijacking',['TA0008']],
+  ['T1021','Remote Services',['TA0008']],
+  ['T1080','Taint Shared Content',['TA0008']],
+  ['T1550','Use Alternate Authentication Material',['TA0005','TA0008']],
+  // Collection
+  ['T1560','Archive Collected Data',['TA0009']],
+  ['T1123','Audio Capture',['TA0009']],
+  ['T1119','Automated Collection',['TA0009']],
+  ['T1185','Browser Session Hijacking',['TA0009']],
+  ['T1115','Clipboard Data',['TA0009']],
+  ['T1530','Data from Cloud Storage',['TA0009']],
+  ['T1213','Data from Information Repositories',['TA0009']],
+  ['T1005','Data from Local System',['TA0009']],
+  ['T1039','Data from Network Shared Drive',['TA0009']],
+  ['T1025','Data from Removable Media',['TA0009']],
+  ['T1074','Data Staged',['TA0009']],
+  ['T1114','Email Collection',['TA0009']],
+  ['T1602','Data from Configuration Repository',['TA0009']],
+  ['T1113','Screen Capture',['TA0009']],
+  ['T1125','Video Capture',['TA0009']],
+  // Exfiltration
+  ['T1020','Automated Exfiltration',['TA0010']],
+  ['T1030','Data Transfer Size Limits',['TA0010']],
+  ['T1048','Exfiltration Over Alt Protocol',['TA0010']],
+  ['T1041','Exfiltration Over C2 Channel',['TA0010']],
+  ['T1011','Exfiltration Over Other Network',['TA0010']],
+  ['T1052','Exfiltration Over Physical Medium',['TA0010']],
+  ['T1567','Exfiltration Over Web Service',['TA0010']],
+  ['T1537','Transfer Data to Cloud Account',['TA0010']],
+  ['T1029','Scheduled Transfer',['TA0010']],
+  // Command and Control
+  ['T1071','Application Layer Protocol',['TA0011']],
+  ['T1092','Communication via Removable Media',['TA0011']],
+  ['T1132','Data Encoding',['TA0011']],
+  ['T1001','Data Obfuscation',['TA0011']],
+  ['T1568','Dynamic Resolution',['TA0011']],
+  ['T1573','Encrypted Channel',['TA0011']],
+  ['T1008','Fallback Channels',['TA0011']],
+  ['T1105','Ingress Tool Transfer',['TA0011']],
+  ['T1104','Multi-Stage Channels',['TA0011']],
+  ['T1095','Non-Application Layer Protocol',['TA0011']],
+  ['T1571','Non-Standard Port',['TA0011']],
+  ['T1572','Protocol Tunneling',['TA0011']],
+  ['T1090','Proxy',['TA0011']],
+  ['T1219','Remote Access Software',['TA0011']],
+  ['T1205','Traffic Signaling',['TA0011','TA0003']],
+  ['T1102','Web Service',['TA0011']],
+  // Impact
+  ['T1531','Account Access Removal',['TA0040']],
+  ['T1485','Data Destruction',['TA0040']],
+  ['T1486','Data Encrypted for Impact',['TA0040']],
+  ['T1565','Data Manipulation',['TA0040']],
+  ['T1491','Defacement',['TA0040']],
+  ['T1561','Disk Wipe',['TA0040']],
+  ['T1499','Endpoint Denial of Service',['TA0040']],
+  ['T1495','Firmware Corruption',['TA0040']],
+  ['T1490','Inhibit System Recovery',['TA0040']],
+  ['T1498','Network Denial of Service',['TA0040']],
+  ['T1496','Resource Hijacking',['TA0040']],
+  ['T1489','Service Stop',['TA0040']],
+  ['T1529','System Shutdown/Reboot',['TA0040']],
+  ['T1657','Financial Theft',['TA0040']],
+];
+
+let _mitreCovData = null; // {techId: {count,max_level,rules[],agents[],tactics[],last_seen}}
+let _mitreTf = '7d';
+let _mitreLoaded = false;
+
+function mitreGetCovLevel(techId) {
+  const d = _mitreCovData?.[techId];
+  if (!d || d.count === 0) return 'none';
+  if (d.count >= 10) return 'high';
+  if (d.count >= 3)  return 'medium';
+  return 'low';
+}
+
+async function loadMitre() {
+  _mitreTf = document.getElementById('mc-tf')?.value || '7d';
+  document.getElementById('mc-matrix-wrap').innerHTML = '<div class="loading"><div class="spin"></div></div>';
+  const d = await G(`/api/mitre/coverage?timeframe=${_mitreTf}`);
+  if (!d || d.error) {
+    document.getElementById('mc-matrix-wrap').innerHTML = errBnr(d?.error || 'SIEM unavailable');
+    return;
+  }
+  _mitreCovData = d.coverage || {};
+  _mitreLoaded = true;
+  const totalTechs = MITRE_TECHS.length;
+  const covered = MITRE_TECHS.filter(t => _mitreCovData[t[0]]?.count > 0).length;
+  const highCov  = MITRE_TECHS.filter(t => mitreGetCovLevel(t[0]) === 'high').length;
+  const gaps     = totalTechs - covered;
+  const pct      = totalTechs ? Math.round(covered / totalTechs * 100) : 0;
+  const setV = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
+  setV('mc-s-total',   totalTechs);
+  setV('mc-s-covered', covered);
+  setV('mc-s-pct',     pct + '%');
+  setV('mc-s-high',    highCov);
+  setV('mc-s-gaps',    gaps);
+  // Populate tactic filter
+  const tsel = document.getElementById('mc-tactic');
+  if (tsel && tsel.options.length < 2) {
+    MITRE_TACTICS.forEach(t => { const o = document.createElement('option'); o.value = t.id; o.textContent = t.n; tsel.appendChild(o); });
+  }
+  renderMitreMatrix();
+}
+
+function applyMitreFilters() { if (_mitreLoaded) renderMitreMatrix(); }
+
+function renderMitreMatrix() {
+  const covFilter    = document.getElementById('mc-cov')?.value    || '';
+  const tacticFilter = document.getElementById('mc-tactic')?.value || '';
+  const tactics = tacticFilter ? MITRE_TACTICS.filter(t => t.id === tacticFilter) : MITRE_TACTICS;
+  // Build tactic→techniques map
+  const tacMap = {};
+  MITRE_TACTICS.forEach(t => { tacMap[t.id] = []; });
+  MITRE_TECHS.forEach(([id, name, tids]) => {
+    tids.forEach(tid => { if (tacMap[tid]) tacMap[tid].push([id, name]); });
+  });
+  let html = '<div class="mitre-matrix">';
+  tactics.forEach(tac => {
+    const techs = tacMap[tac.id] || [];
+    html += `<div class="mitre-col">
+      <div class="mitre-col-hd">${esc(tac.n)}<small>${tac.id}</small></div>`;
+    techs.forEach(([tid, tname]) => {
+      const lv = mitreGetCovLevel(tid);
+      const d  = _mitreCovData?.[tid];
+      const hidden = covFilter && lv !== covFilter ? ' mc-hidden' : '';
+      const cnt = d?.count ? d.count.toLocaleString() + ' alerts' : '';
+      html += `<div class="mitre-cell mc-${lv}${hidden}" onclick="mitreShowTech('${esc(tid)}','${esc(tname.replace(/'/g,"\\'"))}')">
+        <div class="mc-id">${esc(tid)}</div>
+        <div class="mc-nm">${esc(tname)}</div>
+        ${cnt ? `<div class="mc-cnt">${cnt}</div>` : ''}
+      </div>`;
+    });
+    html += '</div>';
+  });
+  html += '</div>';
+  document.getElementById('mc-matrix-wrap').innerHTML = `<div class="mitre-matrix-wrap">${html}</div>`;
+}
+
+async function mitreShowTech(techId, techName) {
+  document.getElementById('mm-title').textContent = `${techId} — ${techName}`;
+  document.getElementById('mm-body').innerHTML = '<div class="loading"><div class="spin"></div></div>';
+  openModal('modal-mitre-tech');
+  const d = await G(`/api/mitre/technique/${techId}?timeframe=${_mitreTf}`);
+  if (!d || d.error) {
+    document.getElementById('mm-body').innerHTML = errBnr(d?.error || 'No data');
+    return;
+  }
+  const lv = mitreGetCovLevel(techId);
+  const lvColors = {high:'#00c853',medium:'#ffc107',low:'#ff6d00',none:'var(--txt3)'};
+  const lvLabels = {high:'High Coverage',medium:'Medium Coverage',low:'Low Coverage',none:'No Coverage'};
+  const tactics = d.tactics.length ? d.tactics.join(', ') : '—';
+  const decoders = d.decoders.length ? d.decoders.join(', ') : '—';
+  // Timeline sparkline
+  let sparkHtml = '';
+  if (d.timeline.length > 0) {
+    const max = Math.max(...d.timeline.map(x => x.count), 1);
+    sparkHtml = `<div style="display:flex;align-items:flex-end;gap:2px;height:32px;margin-top:6px">
+      ${d.timeline.map(x => {
+        const h = Math.max(2, Math.round(x.count / max * 32));
+        return `<div title="${x.date}: ${x.count}" style="flex:1;min-width:4px;height:${h}px;background:var(--c);border-radius:1px 1px 0 0;opacity:.7"></div>`;
+      }).join('')}
+    </div>`;
+  }
+  // Recent alerts table
+  let alertsHtml = '';
+  if (d.recent_alerts.length > 0) {
+    alertsHtml = `<div class="tbl" style="margin-top:10px"><table><thead><tr><th>Time</th><th>Agent</th><th>Rule</th><th>Level</th></tr></thead><tbody>
+      ${d.recent_alerts.slice(0, 10).map(a => `<tr>
+        <td style="font-size:9px;color:var(--txt2);font-family:var(--fm)">${(a.timestamp||'').slice(0,19).replace('T',' ')}</td>
+        <td style="font-size:10px">${esc(a.agent||'—')}</td>
+        <td style="font-size:9px;color:var(--txt2);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(a.description||'')}">${esc(a.description||a.rule||'—')}</td>
+        <td><span class="badge ${sbadge(sevFromLevel(a.level||0))}">${a.level||0}</span></td>
+      </tr>`).join('')}
+    </tbody></table></div>`;
+  }
+  // Rules table
+  let rulesHtml = '';
+  if (d.rules.length > 0) {
+    rulesHtml = `<div class="tbl" style="margin-top:10px"><table><thead><tr><th>Rule ID</th><th>Description</th><th>Level</th><th>Fires</th></tr></thead><tbody>
+      ${d.rules.slice(0,15).map(r => `<tr>
+        <td style="font-family:var(--fm);font-size:9px;color:var(--c)">${esc(r.id)}</td>
+        <td style="font-size:9px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(r.description)}">${esc(r.description)}</td>
+        <td><span class="badge ${sbadge(sevFromLevel(r.level))}">${r.level}</span></td>
+        <td style="font-family:var(--fm);font-size:9px">${r.count.toLocaleString()}</td>
+      </tr>`).join('')}
+    </tbody></table></div>`;
+  }
+  // Agents
+  const agentsHtml = d.agents.length ? d.agents.slice(0,10).map(a =>
+    `<span style="font-size:10px;background:var(--b2);padding:2px 8px;border-radius:10px;margin:2px;display:inline-block">${esc(a.name)} <span style="color:var(--c);font-family:var(--fm)">${a.count}</span></span>`
+  ).join('') : '<span style="color:var(--txt3);font-size:10px">No agents</span>';
+  document.getElementById('mm-body').innerHTML = `
+    <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px">
+      <div class="kpi" style="flex:1;min-width:110px"><div class="kpi-lbl">Total Alerts</div><div class="kpi-val" style="color:var(--c)">${d.total.toLocaleString()}</div><div class="kpi-sub">${_mitreTf} window</div></div>
+      <div class="kpi" style="flex:1;min-width:110px"><div class="kpi-lbl">Coverage</div><div class="kpi-val" style="color:${lvColors[lv]}">${lvLabels[lv]}</div><div class="kpi-sub">${techId}</div></div>
+      <div class="kpi" style="flex:1;min-width:110px"><div class="kpi-lbl">Unique Rules</div><div class="kpi-val">${d.rules.length}</div><div class="kpi-sub">matching</div></div>
+      <div class="kpi" style="flex:1;min-width:110px"><div class="kpi-lbl">Agents Affected</div><div class="kpi-val">${d.agents.length}</div><div class="kpi-sub">endpoints</div></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;font-size:10px">
+      <div><span style="color:var(--txt3)">Tactics: </span><span style="color:var(--txt1)">${esc(tactics)}</span></div>
+      <div><span style="color:var(--txt3)">Log Sources: </span><span style="color:var(--txt1)">${esc(decoders)}</span></div>
+    </div>
+    ${sparkHtml ? `<div style="font-size:10px;color:var(--txt3);margin-bottom:4px">Activity (${_mitreTf})</div>${sparkHtml}` : ''}
+    ${d.agents.length ? `<div style="margin-top:12px"><div style="font-size:10px;color:var(--txt3);margin-bottom:6px">Affected Agents</div>${agentsHtml}</div>` : ''}
+    ${d.rules.length ? `<div style="margin-top:12px"><div style="font-size:10px;color:var(--txt3);margin-bottom:4px">Detection Rules (${d.rules.length})</div>${rulesHtml}</div>` : ''}
+    ${d.recent_alerts.length ? `<div style="margin-top:12px"><div style="font-size:10px;color:var(--txt3);margin-bottom:4px">Recent Alerts</div>${alertsHtml}</div>` : ''}
+    ${!d.total ? `<div style="text-align:center;padding:20px;color:var(--txt3);font-size:12px">No detections for this technique in the last ${_mitreTf}.<br><span style="font-size:10px">No Wazuh rules map to ${techId} — consider adding coverage.</span></div>` : ''}
+  `;
+}
+
+function mitreExportNav() {
+  if (!_mitreCovData) { alert('Load coverage data first.'); return; }
+  const lvColors = {high:'#00c853',medium:'#ffc107',low:'#ff6d00',none:'#555555'};
+  const techniques = MITRE_TECHS.map(([id,,]) => {
+    const lv = mitreGetCovLevel(id);
+    const d  = _mitreCovData[id];
+    return {
+      techniqueID: id,
+      color: lvColors[lv],
+      score: d?.count || 0,
+      metadata: [
+        { name: 'coverage', value: lv },
+        { name: 'alerts', value: String(d?.count || 0) },
+        { name: 'agents', value: (d?.agents || []).join(', ') },
+      ],
+      enabled: true,
+      comment: lv === 'none' ? 'No detection coverage' : `${d?.count || 0} alerts in last ${_mitreTf}`,
+    };
+  });
+  const nav = {
+    name: `SOCPilots Coverage — ${_mitreTf}`,
+    versions: { attack: '16', navigator: '4.9', layer: '4.5' },
+    domain: 'enterprise-attack',
+    description: `Generated by SOCPilots ATT&CK Coverage module. Timeframe: ${_mitreTf}. Date: ${new Date().toISOString().slice(0,10)}.`,
+    filters: { platforms: ['Windows','Linux','macOS','Network','Cloud'] },
+    sorting: 0,
+    layout: { layout: 'side', aggregateFunction: 'average', showID: true, showName: true, showAggregateScores: false, countUnscored: false },
+    hideDisabled: false,
+    techniques,
+    gradient: { colors: ['#555555','#ff6d00','#ffc107','#00c853'], minValue: 0, maxValue: 20 },
+    legendItems: [
+      { label: 'High Coverage (≥10)', color: '#00c853' },
+      { label: 'Medium Coverage (3–9)', color: '#ffc107' },
+      { label: 'Low Coverage (1–2)', color: '#ff6d00' },
+      { label: 'No Coverage', color: '#555555' },
+    ],
+    metadata: [],
+    links: [],
+    showTacticRowBackground: true,
+    tacticRowBackground: '#151e2d',
+    selectTechniquesAcrossTactics: true,
+    selectSubtechniquesWithParent: false,
+    selectVisibleTechniques: false,
+  };
+  const blob = new Blob([JSON.stringify(nav, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `socpilots-attck-coverage-${_mitreTf}-${new Date().toISOString().slice(0,10)}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
 
 // ─── INVESTIGATION TABS / AUTO-TRIAGE / HISTORY ─────────────
 function switchInvTab(tab){
@@ -3469,33 +4200,121 @@ function invDownloadPdfFromModal() {
 }
 
 // ─── CASES ───────────────────────────────────────────────────
-async function loadCases(){
-  ['kb-new','kb-ip','kb-res','kb-cl'].forEach(id=>document.getElementById(id).innerHTML=spin());
-  const status=document.getElementById('case-status')?.value||'';
-  const d=await G(`/api/cases${status?`?status=${status}`:''}`);
-  if(!d||d.error){document.getElementById('kb-new').innerHTML=errBnr(d?.error||'SP-CM unavailable');['kb-ip','kb-res','kb-cl'].forEach(id=>{document.getElementById(id).innerHTML='';});return;}
+// ─── SP-CM CASES ──────────────────────────────────────────────
+function setCaseTimeframe(tf){
+  _cTimeframe=tf;
+  ['1h','24h','7d','all','custom'].forEach(t=>{
+    const btn=document.getElementById(`cs-tf-${t}`);
+    if(!btn)return;
+    if(t===tf){btn.style.background='var(--cdim)';btn.style.borderColor='var(--c)';btn.style.color='var(--c)';}
+    else{btn.style.background='';btn.style.borderColor='';btn.style.color='';}
+  });
+  const cd=document.getElementById('cs-custom-dates');
+  if(cd)cd.style.display=tf==='custom'?'flex':'none';
+  _cPage=1;loadCases();
+}
+async function loadCaseStats(){
+  const d=await G('/api/cases/stats');
+  if(!d||d.error)return;
+  const setv=(id,v)=>{const el=document.getElementById(id);if(el)el.textContent=(v||0).toLocaleString();};
+  setv('cs-total',d.total);setv('cs-new',d.new);setv('cs-ip',d.in_progress);setv('cs-closed',d.closed);
+  setv('cs-tp',d.true_positive);setv('cs-fp',d.false_positive);setv('cs-crit',d.critical);setv('cs-high',d.high);
+  const nb=document.getElementById('n-cases');if(nb)nb.textContent=d.new||'';
+  const cv=document.getElementById('cs-sev-chart');if(!cv)return;
+  const data=[d.critical||0,d.high||0,d.medium||0,d.low||0];
+  if(_cChartSev){_cChartSev.data.datasets[0].data=data;_cChartSev.update('none');return;}
+  _cChartSev=new Chart(cv,{type:'doughnut',data:{labels:['Critical','High','Medium','Low'],datasets:[{data,backgroundColor:['#ff1744','#ff6d00','#ffd600','#4fc3f7'],borderColor:'#091524',borderWidth:2,hoverOffset:4}]},options:{responsive:true,maintainAspectRatio:true,plugins:{legend:{position:'right',labels:{color:'#8ab0d0',boxWidth:10,font:{size:9,family:"'Share Tech Mono',monospace"}}}}}});
+}
+async function loadCases(page){
+  if(page!==undefined)_cPage=page;
+  document.getElementById('cs-body').innerHTML=spin('Loading from SP-CM...');
+  loadCaseStats();
+  const status=document.getElementById('cs-status')?.value||'';
+  const sev=document.getElementById('cs-sev-filter')?.value||'';
+  const q=(document.getElementById('cs-q')?.value||'').trim();
+  const p=new URLSearchParams({page:_cPage,page_size:_cPageSize});
+  if(status)p.set('status',status);
+  if(sev)p.set('severity',sev);
+  if(q)p.set('q',q);
+  if(_cTimeframe==='custom'){
+    const from=document.getElementById('cs-from')?.value;
+    const to=document.getElementById('cs-to')?.value;
+    if(from)p.set('time_from',new Date(from).toISOString());
+    if(to)p.set('time_to',new Date(to).toISOString());
+  } else if(_cTimeframe!=='all'){
+    const ms={'1h':3600000,'24h':86400000,'7d':604800000}[_cTimeframe];
+    if(ms)p.set('time_from',new Date(Date.now()-ms).toISOString());
+  }
+  const d=await G(`/api/cases?${p}`);
+  if(!d||d.error){document.getElementById('cs-body').innerHTML=errBnr(d?.error||'SP-CM unavailable');return;}
   const cases=d.cases||[];
-  const byS={New:[],InProgress:[],Resolved:[],Closed:[]};
-  cases.forEach(c=>{if(c.isClosed)byS.Closed.push(c);else if(c.isInProgress)byS.InProgress.push(c);else byS.New.push(c);});
-  renderKB('kb-new',byS.New,'cnt-new');renderKB('kb-ip',byS.InProgress,'cnt-ip');renderKB('kb-res',byS.Resolved,'cnt-res');renderKB('kb-cl',byS.Closed,'cnt-cl');
-  document.getElementById('n-cases').textContent=byS.New.length;
+  const total=d.total||cases.length;
+  const lbl=document.getElementById('cs-total-lbl');
+  if(lbl)lbl.textContent=`${total.toLocaleString()} case${total!==1?'s':''}`;
+  if(!cases.length){document.getElementById('cs-body').innerHTML=empty('No cases match');return;}
+  const rows=cases.map(c=>`<tr><td style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--txt2)">${esc(c.title||'Untitled')}</td><td style="color:#8ab0d0;font-family:var(--fm)">#${c.number||'—'}</td><td><span class="badge ${sbadge(c.status)}">${esc(c.statusLabel||c.status)}</span></td><td><span class="badge ${sbadge(c.severity)}">${c.severity}</span></td><td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px">${c.assignee?esc(c.assignee.split('@')[0]):'—'}</td><td>${(c.tags||[]).slice(0,2).map(t=>`<span class="badge low" style="font-size:7px;margin-right:2px">${esc(t)}</span>`).join('')}</td><td style="color:#8ab0d0;white-space:nowrap">${fmtDate(c.created)}</td></tr>`).join('');
+  const pgn=buildPaginator(_cPage,_cPageSize,total,`loadCases(${_cPage-1})`,`loadCases(${_cPage+1})`,'setCasePageSize(this)');
+  document.getElementById('cs-body').innerHTML=`<div class="tbl"><table><thead><tr><th>Title</th><th>Case #</th><th>Status</th><th>Severity</th><th>Assignee</th><th>Tags</th><th>Created</th></tr></thead><tbody>${rows}</tbody></table></div>${pgn}`;
 }
-function renderKB(colId,cases,cntId){
-  document.getElementById(cntId).textContent=cases.length;
-  document.getElementById(colId).innerHTML=!cases.length?'<div style="padding:10px;text-align:center;font-size:10px;color:#8ab0d0;font-family:var(--fm)">No cases</div>':
-    cases.map(c=>`<div class="kb-card"><div class="kb-ttl">${esc(c.title||'Untitled')}</div><div class="kb-meta"><span class="badge ${sbadge(c.severity)}">${c.severity}</span>${c.statusLabel&&c.statusLabel!=='New'&&c.statusLabel!=='In Progress'?`<span class="badge ${sbadge(c.status)}" style="font-size:7px">${esc(c.statusLabel)}</span>`:''}<span style="font-size:8px;color:#8ab0d0">#${c.number||''}</span><span style="font-size:8px;color:#8ab0d0;margin-left:auto">${fmtDate(c.created)}</span></div>${c.assignee?`<div style="font-size:9px;color:#8ab0d0;margin-top:4px;font-family:var(--fm)">👤 ${esc((c.assignee||'').split('@')[0])}</div>`:''}</div>`).join('');
-}
+function setCasePageSize(sel){_cPageSize=parseInt(sel.value)||20;_cPage=1;loadCases();}
 async function createCase(){const title=document.getElementById('cc-title').value;if(!title){toast('Title required','warn');return;}closeModal('modal-case');toast('Creating SP-CM case...','info');const d=await P('/api/cases/create',{title,description:document.getElementById('cc-desc').value,severity:document.getElementById('cc-sev').value,tags:document.getElementById('cc-tags').value.split(',').map(t=>t.trim()).filter(Boolean)});if(d?.success){toast('Case created in SP-CM!','ok');loadCases();}else toast(d?.error||'Failed','err');}
 
 // ─── SP-CM ALERTS ─────────────────────────────────────────────
-async function loadHiveAlerts(){
-  document.getElementById('ha-body').innerHTML=spin('Loading from SP-CM...');
-  const status=document.getElementById('ha-status')?.value||'';
-  const d=await G(`/api/hive-alerts${status?`?status=${status}`:''}`);
-  if(!d||d.error){document.getElementById('ha-body').innerHTML=errBnr(d?.error||'SP-CM unavailable');return;}
-  const alerts=d.alerts||[];if(!alerts.length){document.getElementById('ha-body').innerHTML=empty('No alerts');return;}
-  document.getElementById('ha-body').innerHTML=`<div class="tbl"><table><thead><tr><th>Title</th><th>Source</th><th>Severity</th><th>Status</th><th>Tags</th><th>Created</th></tr></thead><tbody>${alerts.map(a=>`<tr><td style="max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(a.title)}</td><td>${esc(a.source||'—')}</td><td><span class="badge ${sbadge(a.severity)}">${a.severity}</span></td><td><span class="badge ${sbadge(a.status)}">${a.status}</span></td><td>${(a.tags||[]).slice(0,3).map(t=>`<span class="badge low" style="font-size:7px;margin-right:2px">${esc(t)}</span>`).join('')}</td><td style="color:#8ab0d0">${fmtDate(a.created)}</td></tr>`).join('')}</tbody></table></div>`;
+function setHaTimeframe(tf){
+  _haTimeframe=tf;
+  ['1h','24h','7d','all','custom'].forEach(t=>{
+    const btn=document.getElementById(`ha-tf-${t}`);
+    if(!btn)return;
+    if(t===tf){btn.style.background='var(--cdim)';btn.style.borderColor='var(--c)';btn.style.color='var(--c)';}
+    else{btn.style.background='';btn.style.borderColor='';btn.style.color='';}
+  });
+  const cd=document.getElementById('ha-custom-dates');
+  if(cd)cd.style.display=tf==='custom'?'flex':'none';
+  _haPage=1;loadHiveAlerts();
 }
+async function loadHiveAlertStats(){
+  const d=await G('/api/hive-alerts/stats');
+  if(!d||d.error)return;
+  const set=(id,v)=>{const el=document.getElementById(id);if(el)el.textContent=(v||0).toLocaleString();};
+  set('has-total',d.total);set('has-new',d.new);set('has-ip',d.in_progress);set('has-closed',d.closed);
+  set('has-tp',d.true_positive);set('has-fp',d.false_positive);set('has-crit',d.critical);set('has-high',d.high);
+  const cv=document.getElementById('ha-sev-chart');if(!cv)return;
+  const data=[d.critical||0,d.high||0,d.medium||0,d.low||0];
+  if(_haChartSev){_haChartSev.data.datasets[0].data=data;_haChartSev.update('none');return;}
+  _haChartSev=new Chart(cv,{type:'doughnut',data:{labels:['Critical','High','Medium','Low'],datasets:[{data,backgroundColor:['#ff1744','#ff6d00','#ffd600','#4fc3f7'],borderColor:'#091524',borderWidth:2,hoverOffset:4}]},options:{responsive:true,maintainAspectRatio:true,plugins:{legend:{position:'right',labels:{color:'#8ab0d0',boxWidth:10,font:{size:9,family:"'Share Tech Mono',monospace"}}}}}});
+}
+async function loadHiveAlerts(page){
+  if(page!==undefined)_haPage=page;
+  document.getElementById('ha-body').innerHTML=spin('Loading from SP-CM...');
+  loadHiveAlertStats();
+  const status=document.getElementById('ha-status')?.value||'';
+  const sev=document.getElementById('ha-sev-filter')?.value||'';
+  const q=(document.getElementById('ha-q')?.value||'').trim();
+  const p=new URLSearchParams({page:_haPage,page_size:_haPageSize});
+  if(status)p.set('status',status);
+  if(sev)p.set('severity',sev);
+  if(q)p.set('q',q);
+  if(_haTimeframe==='custom'){
+    const from=document.getElementById('ha-from')?.value;
+    const to=document.getElementById('ha-to')?.value;
+    if(from)p.set('time_from',new Date(from).toISOString());
+    if(to)p.set('time_to',new Date(to).toISOString());
+  } else if(_haTimeframe!=='all'){
+    const ms={'1h':3600000,'24h':86400000,'7d':604800000}[_haTimeframe];
+    if(ms)p.set('time_from',new Date(Date.now()-ms).toISOString());
+  }
+  const d=await G(`/api/hive-alerts?${p}`);
+  if(!d||d.error){document.getElementById('ha-body').innerHTML=errBnr(d?.error||'SP-CM unavailable');return;}
+  const alerts=d.alerts||[];
+  const total=d.total||alerts.length;
+  const lbl=document.getElementById('ha-total-lbl');
+  if(lbl)lbl.textContent=`${total.toLocaleString()} alert${total!==1?'s':''}`;
+  if(!alerts.length){document.getElementById('ha-body').innerHTML=empty('No alerts match');return;}
+  const rows=alerts.map(a=>`<tr><td style="max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--txt2)">${esc(a.title)}</td><td>${esc(a.source||'—')}</td><td style="max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(a.sourceRef||'—')}</td><td><span class="badge ${sbadge(a.severity)}">${a.severity}</span></td><td><span class="badge ${sbadge(a.status)}">${a.status}</span></td><td>${(a.tags||[]).slice(0,3).map(t=>`<span class="badge low" style="font-size:7px;margin-right:2px">${esc(t)}</span>`).join('')}</td><td style="color:#8ab0d0;white-space:nowrap">${fmtDate(a.created)}</td></tr>`).join('');
+  const pgn=buildPaginator(_haPage,_haPageSize,total,`loadHiveAlerts(${_haPage-1})`,`loadHiveAlerts(${_haPage+1})`,'setHaPageSize(this)');
+  document.getElementById('ha-body').innerHTML=`<div class="tbl"><table><thead><tr><th>Title</th><th>Source</th><th>Ref</th><th>Severity</th><th>Status</th><th>Tags</th><th>Created</th></tr></thead><tbody>${rows}</tbody></table></div>${pgn}`;
+}
+function setHaPageSize(sel){_haPageSize=parseInt(sel.value)||20;_haPage=1;loadHiveAlerts();}
 
 // ─── HUNT ─────────────────────────────────────────────────────
 async function doHunt(){
@@ -4136,6 +4955,7 @@ async function invEscalateCase(){
 // ─── AI COPILOT ───────────────────────────────────────────────
 let _hist=[];
 let _chatLoaded=false;
+let _chatLastDay='';
 
 // ── Chat file attachment ──────────────────────────────────────────
 let _chatAttach=null;
@@ -4201,13 +5021,12 @@ async function loadChatHistory(){
   if(_chatLoaded)return;
   _chatLoaded=true;
   try{
-    const sid=`soc_${CU.username}`;
-    const data=await G(`/api/chat/sessions/${sid}?limit=40`).catch(()=>null);
+    const data=await G(`/api/chat/sessions/${_chatSessionId}?limit=40`).catch(()=>null);
     const msgs=data?.messages||[];
     if(!msgs.length)return;
     msgs.forEach(m=>{
       _hist.push({role:m.role==='assistant'?'assistant':'user',content:m.content});
-      addMsg(m.role==='assistant'?'ai':'u',m.content);
+      addMsg(m.role==='assistant'?'ai':'u',m.content,'',false,m.created_at);
     });
     document.getElementById('ctx-msgs').textContent=`${_hist.length} msgs`;
   }catch(e){}
@@ -4229,7 +5048,7 @@ async function sendChat(){
     displayMsg=`📎 ${att.filename}\n\n${msg}`;
   }
 
-  addMsg('u',displayMsg);_hist.push({role:'user',content:displayMsg});
+  addMsg('u',displayMsg,'',false,new Date());_hist.push({role:'user',content:displayMsg});
   const btn=document.getElementById('chat-btn');btn.disabled=true;
   // Show thinking indicator with elapsed timer
   const _tyStart = Date.now();
@@ -4239,7 +5058,7 @@ async function sendChat(){
     else clearInterval(_tyTimer);
   },1000);
   addMsg('ai','<div style="display:flex;align-items:center;gap:8px"><div class="spin" style="width:14px;height:14px;flex-shrink:0"></div><span id="_ty_txt" style="font-size:11px;color:var(--txt3);font-family:var(--fm)">Thinking...</span></div>','_ty',true);
-  const d=await P('/api/ai/chat',{message:apiMsg,session_id:`soc_${CU.username}`,history:_hist.slice(-10)});
+  const d=await P('/api/ai/chat',{message:apiMsg,session_id:_chatSessionId,history:_hist.slice(-10)});
   rmTy();btn.disabled=false;
   let reply=d?.response||d?.output||d?.text||d?.message||'';
   // Clean up leaked tool calls (e.g. "get_cases{} }```}```get_cases{}")
@@ -4266,21 +5085,43 @@ async function sendChat(){
       reply='⚠️ **SOCPilots AI not responding**\n\nCheck n8n is running on vmi3254460:5678';
     }
   }
-  addMsg('ai',reply,'',false);
+  addMsg('ai',reply,'',false,new Date());
   _hist.push({role:'assistant',content:reply});
   document.getElementById('ctx-msgs').textContent=`${_hist.length} msgs`;
 }
-function addMsg(role,content,id='',isHTML=false){
-  const w=document.getElementById('chat-msgs'),div=document.createElement('div');
+function addMsg(role,content,id='',isHTML=false,ts=null){
+  const w=document.getElementById('chat-msgs');
+  if(!isHTML&&ts){
+    const d=new Date(ts),day=d.toDateString();
+    if(day!==_chatLastDay){
+      _chatLastDay=day;
+      const sep=document.createElement('div');
+      sep.className='cmsg-day-sep';
+      sep.textContent=d.toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'});
+      w.appendChild(sep);
+    }
+  }
+  const div=document.createElement('div');
   div.className=`cmsg ${role}`;if(id)div.id=id;
-  // isHTML=true → content is already HTML (spinner, error) → use as-is
-  // isHTML=false → content is raw AI markdown → always parse
-  const rendered = isHTML ? content : (role==='ai' ? parseAIMarkdown(content) : esc(content));
-  div.innerHTML=`<div class="cav ${role}">${role==='ai'?'SP':CU.username[0].toUpperCase()}</div><div class="cbub" style="max-width:100%">${rendered}</div>`;
+  const rendered=isHTML?content:(role==='ai'?parseAIMarkdown(content):esc(content));
+  const timeStr=(!isHTML&&ts)?`<time class="cmsg-ts">${new Date(ts).toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})}</time>`:'';
+  div.innerHTML=`<div class="cav ${role}">${role==='ai'?'SP':CU.username[0].toUpperCase()}</div><div class="cbub" style="max-width:100%">${rendered}${timeStr}</div>`;
   w.appendChild(div);w.scrollTop=w.scrollHeight;
 }
 function rmTy(){const t=document.getElementById('_ty');if(t)t.remove();clearInterval(window._tyTimer);}
 function quick(msg){document.getElementById('chat-in').value=msg;sendChat();}
+async function clearChat(){
+  if(!confirm('Clear conversation history and start a new session?\n\nThe AI will have no memory of previous messages.'))return;
+  const oldSid=_chatSessionId;
+  _chatSessionId=`soc_${CU.username}_${Date.now()}`;
+  _hist=[];_chatLoaded=false;_chatLastDay='';
+  chatRemoveAttach();
+  D('/api/chat/sessions/'+oldSid).catch(()=>{});
+  const w=document.getElementById('chat-msgs');
+  w.innerHTML=`<div class="cmsg ai"><div class="cav ai">SP</div><div class="cbub">Session cleared. I have no memory of previous messages.<br><br>How can I help you?</div></div>`;
+  document.getElementById('ctx-msgs').textContent='1 msg';
+  toast('Chat cleared — new session started','ok');
+}
 
 // ═══════════════════════════════════════════════════════════════
 // CREATE RULES — Build and deploy Wazuh detection rules via AI
@@ -4734,8 +5575,8 @@ async function loadCustomRules(){
       <td style="color:var(--c)">${esc(r.id)}</td>
       <td><span class="badge ${sbadge(r.severity)}">${r.level}</span></td>
       <td style="max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.description||'—')}</td>
-      <td style="color:#8ab0d0;font-size:10px">${esc((r.groups||'').slice(0,35))}</td>
-      <td>${r.mitre?`<span class="badge low" style="font-size:8px">${esc(r.mitre)}</span>`:''}</td>
+      <td style="color:#8ab0d0;font-size:10px">${esc((Array.isArray(r.groups)?r.groups.join(', '):r.groups||'').slice(0,35))}</td>
+      <td>${(Array.isArray(r.mitre)?r.mitre:[r.mitre]).filter(Boolean).slice(0,2).map(m=>`<span class="badge low" style="font-size:8px">${esc(m)}</span>`).join(' ')}</td>
       <td style="color:var(--c)">${r.count||0}</td>
     </tr>`).join('')
   }</tbody></table></div>`;

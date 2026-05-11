@@ -678,18 +678,24 @@ app.get('/api/agents', authMW, async (req, res) => {
 });
 
 // ── RULES ── unique rules from OpenSearch ──
+let _rulesCache = null, _rulesCacheTime = 0;
 app.get('/api/rules', authMW, async (req, res) => {
   try {
+    const now = Date.now();
+    if (_rulesCache && now - _rulesCacheTime < 60000) return res.json(_rulesCache);
     const r = await osSearch({
       size: 0,
       aggs: {
         rules: {
-          terms: { field: 'rule.id', size: 1000, order: { max_level: 'desc' } },
+          terms: { field: 'rule.id', size: 2000, order: { _count: 'desc' } },
           aggs: {
-            desc:      { terms: { field: 'rule.description', size: 1 } },
-            max_level: { max: { field: 'rule.level' } },
-            groups:    { terms: { field: 'rule.groups', size: 5 } },
-            mitre:     { terms: { field: 'rule.mitre.id', size: 3 } },
+            desc:       { terms: { field: 'rule.description', size: 1 } },
+            max_level:  { max: { field: 'rule.level' } },
+            groups:     { terms: { field: 'rule.groups', size: 10 } },
+            mitre:      { terms: { field: 'rule.mitre.id', size: 5 } },
+            decoder:    { terms: { field: 'rule.decoder.name', size: 1 } },
+            first_seen: { min: { field: '@timestamp' } },
+            last_seen:  { max: { field: '@timestamp' } },
           },
         },
       },
@@ -700,12 +706,18 @@ app.get('/api/rules', authMW, async (req, res) => {
       level:       Math.round(b.max_level?.value || 0),
       description: b.desc?.buckets?.[0]?.key || 'N/A',
       severity:    sevFromLevel(b.max_level?.value),
-      groups:      b.groups?.buckets?.map(g => g.key).join(', ') || '',
-      mitre:       b.mitre?.buckets?.[0]?.key || '',
+      groups:      b.groups?.buckets?.map(g => g.key) || [],
+      mitre:       b.mitre?.buckets?.map(m => m.key) || [],
+      decoder:     b.decoder?.buckets?.[0]?.key || '',
+      first_seen:  b.first_seen?.value || null,
+      last_seen:   b.last_seen?.value || null,
       count:       b.doc_count,
     }));
 
-    res.json({ rules, total: rules.length });
+    const result = { rules, total: rules.length };
+    _rulesCache = result;
+    _rulesCacheTime = now;
+    res.json(result);
   } catch (e) {
     console.error('[rules]', e.message);
     res.status(502).json({ error: e.message });
@@ -842,61 +854,250 @@ app.get('/api/stats/mitre', authMW, async (req, res) => {
   } catch (e) { res.status(502).json({ error: e.message }); }
 });
 
+// ── MITRE ATT&CK COVERAGE ──
+let _mitreCovCache = null, _mitreCovCacheTime = 0, _mitreCovCacheTf = '';
+
+app.get('/api/mitre/coverage', authMW, async (req, res) => {
+  try {
+    const tf = (['24h','7d','30d','90d'].includes(req.query.timeframe) ? req.query.timeframe : '7d');
+    const now = Date.now();
+    if (_mitreCovCache && tf === _mitreCovCacheTf && now - _mitreCovCacheTime < 30000) return res.json(_mitreCovCache);
+    const r = await osSearch({
+      size: 0,
+      query: { bool: { must: [
+        { range: { '@timestamp': { gte: `now-${tf}` } } },
+        { exists: { field: 'rule.mitre.id' } },
+      ]}},
+      aggs: {
+        techniques: {
+          terms: { field: 'rule.mitre.id', size: 500 },
+          aggs: {
+            rules:     { terms: { field: 'rule.id',           size: 20 } },
+            agents:    { terms: { field: 'agent.name',        size: 20 } },
+            tactics:   { terms: { field: 'rule.mitre.tactic', size:  5 } },
+            max_level: { max:   { field: 'rule.level' } },
+            last_seen: { max:   { field: '@timestamp' } },
+          },
+        },
+      },
+    });
+    const coverage = {};
+    for (const b of (r.aggregations?.techniques?.buckets || [])) {
+      coverage[b.key] = {
+        count:     b.doc_count,
+        max_level: Math.round(b.max_level?.value || 0),
+        rules:     b.rules?.buckets?.map(x => x.key) || [],
+        agents:    b.agents?.buckets?.map(x => x.key) || [],
+        tactics:   b.tactics?.buckets?.map(x => x.key) || [],
+        last_seen: b.last_seen?.value || null,
+      };
+    }
+    const result = { coverage, timeframe: tf };
+    _mitreCovCache = result; _mitreCovCacheTime = now; _mitreCovCacheTf = tf;
+    res.json(result);
+  } catch (e) { console.error('[mitre/coverage]', e.message); res.status(502).json({ error: e.message }); }
+});
+
+app.get('/api/mitre/technique/:id', authMW, async (req, res) => {
+  try {
+    const techId = req.params.id.toUpperCase().replace(/[^A-Z0-9.]/g, '');
+    const tf = (['24h','7d','30d','90d'].includes(req.query.timeframe) ? req.query.timeframe : '7d');
+    const r = await osSearch({
+      size: 20,
+      query: { bool: { must: [
+        { range: { '@timestamp': { gte: `now-${tf}` } } },
+        { term: { 'rule.mitre.id': techId } },
+      ]}},
+      sort: [{ '@timestamp': { order: 'desc' } }],
+      aggs: {
+        rules:    { terms: { field: 'rule.id', size: 20 }, aggs: {
+          desc:  { terms: { field: 'rule.description', size: 1 } },
+          level: { max:   { field: 'rule.level' } },
+        }},
+        agents:   { terms: { field: 'agent.name',        size: 20 } },
+        decoders: { terms: { field: 'rule.decoder.name', size: 10 } },
+        tactics:  { terms: { field: 'rule.mitre.tactic', size:  5 } },
+        timeline: { date_histogram: { field: '@timestamp', calendar_interval: 'day' } },
+      },
+    });
+    res.json({
+      technique:     techId,
+      timeframe:     tf,
+      total:         r.hits?.total?.value || 0,
+      recent_alerts: (r.hits?.hits || []).map(h => ({
+        id:          h._id,
+        timestamp:   h._source['@timestamp'],
+        agent:       h._source.agent?.name || 'unknown',
+        rule:        h._source.rule?.id,
+        description: h._source.rule?.description,
+        level:       h._source.rule?.level,
+      })),
+      rules:    (r.aggregations?.rules?.buckets    || []).map(b => ({ id: b.key, description: b.desc?.buckets?.[0]?.key || 'N/A', count: b.doc_count, level: Math.round(b.level?.value || 0) })),
+      agents:   (r.aggregations?.agents?.buckets   || []).map(b => ({ name: b.key, count: b.doc_count })),
+      decoders: (r.aggregations?.decoders?.buckets || []).map(b => b.key),
+      tactics:  (r.aggregations?.tactics?.buckets  || []).map(b => b.key),
+      timeline: (r.aggregations?.timeline?.buckets || []).map(b => ({ date: b.key_as_string?.slice(0,10), count: b.doc_count })),
+    });
+  } catch (e) { console.error('[mitre/technique]', e.message); res.status(502).json({ error: e.message }); }
+});
+
 // ── THEHIVE CASES ──
+const CASE_CLOSED_STATUSES = new Set([
+  'TruePositive','FalsePositive','Duplicate','Other','Indeterminate','Resolved',
+  'True Positive','False Positive',
+]);
+const CASE_STATUS_LABELS = {
+  'New':'New','InProgress':'In Progress','Resolved':'Resolved',
+  'TruePositive':'True Positive','FalsePositive':'False Positive',
+  'Duplicate':'Duplicate','Other':'Other','Indeterminate':'Indeterminate',
+};
+
+function mapCase(c) {
+  const rawStatus  = c.status || 'New';
+  return {
+    id:          c._id,
+    number:      c.number,
+    title:       c.title,
+    status:      rawStatus,
+    statusLabel: CASE_STATUS_LABELS[rawStatus] || rawStatus,
+    isClosed:    CASE_CLOSED_STATUSES.has(rawStatus),
+    isInProgress: rawStatus === 'InProgress' || rawStatus === 'In Progress',
+    severity:    c.severityLabel || hiveSevLabel(c.severity),
+    severityNum: c.severity,
+    assignee:    c.assignee,
+    tags:        c.tags || [],
+    tlp:         c.tlpLabel || 'AMBER',
+    created:     c._createdAt,
+    startDate:   c.startDate,
+    description: c.description,
+    mitre:       (c.tags || []).filter(t => t.startsWith('rule=')).map(t => t.replace('rule=', '')),
+  };
+}
+
+// ── CASE STATS (30s in-memory cache) ──
+let _hiveCaseStatsCache = null, _hiveCaseStatsCacheTime = 0;
+app.get('/api/cases/stats', authMW, async (req, res) => {
+  try {
+    const now = Date.now();
+    if (_hiveCaseStatsCache && now - _hiveCaseStatsCacheTime < 30000) return res.json(_hiveCaseStatsCache);
+    const cnt = async (...filters) => {
+      try {
+        const d = await hiveQuery([{ _name: 'listCase' }, ...filters, { _name: 'count' }]);
+        if (typeof d === 'number') return d;
+        if (Array.isArray(d)) return d.length;
+        return 0;
+      } catch { return 0; }
+    };
+    const [total, newC, inProg, tp, fp, dup, resolved, other, crit, high, med, low] = await Promise.all([
+      cnt(),
+      cnt({ _name: 'filter', _field: 'status', _value: 'New' }),
+      cnt({ _name: 'filter', _field: 'status', _value: 'InProgress' }),
+      cnt({ _name: 'filter', _field: 'status', _value: 'TruePositive' }),
+      cnt({ _name: 'filter', _field: 'status', _value: 'FalsePositive' }),
+      cnt({ _name: 'filter', _field: 'status', _value: 'Duplicate' }),
+      cnt({ _name: 'filter', _field: 'status', _value: 'Resolved' }),
+      cnt({ _name: 'filter', _field: 'status', _value: 'Other' }),
+      cnt({ _name: 'filter', _field: 'severity', _value: 4 }),
+      cnt({ _name: 'filter', _field: 'severity', _value: 3 }),
+      cnt({ _name: 'filter', _field: 'severity', _value: 2 }),
+      cnt({ _name: 'filter', _field: 'severity', _value: 1 }),
+    ]);
+    _hiveCaseStatsCache = {
+      total, new: newC, in_progress: inProg,
+      true_positive: tp, false_positive: fp,
+      closed: tp + fp + dup + resolved + other,
+      critical: crit, high, medium: med, low,
+    };
+    _hiveCaseStatsCacheTime = now;
+    res.json(_hiveCaseStatsCache);
+  } catch (e) {
+    console.error('[cases-stats]', e.message);
+    res.status(502).json({ error: e.message });
+  }
+});
+
 app.get('/api/cases', authMW, async (req, res) => {
   try {
-    const status = req.query.status; // New|InProgress|Resolved
-    let query = [{ _name: 'listCase' }];
-    if (status) query.push({ _name: 'filter', _field: 'status', _value: status });
-    query.push({ _name: 'sort', _fields: [{ _createdAt: 'desc' }] });
-    const data = await hiveQuery(query);
-    // SP-CM status field values (all in c.status):
-    //   Open statuses:   New, InProgress
-    //   Closed statuses: TruePositive, FalsePositive, Duplicate, Other, Indeterminate, Resolved
-    const CLOSED_STATUSES = new Set([
-      'TruePositive','FalsePositive','Duplicate','Other','Indeterminate','Resolved',
-      'True Positive','False Positive', // handle spaces too
-    ]);
-    const STATUS_LABELS = {
-      'New':           'New',
-      'InProgress':    'In Progress',
-      'Resolved':      'Resolved',
-      'TruePositive':  'True Positive',
-      'FalsePositive': 'False Positive',
-      'Duplicate':     'Duplicate',
-      'Other':         'Other',
-      'Indeterminate': 'Indeterminate',
-    };
-    const cases = (Array.isArray(data) ? data : []).map(c => {
-      const rawStatus   = c.status || 'New';
-      const stage       = c.stage  || '';
-      const isClosed    = CLOSED_STATUSES.has(rawStatus);
-      const isInProgress = rawStatus === 'InProgress' || rawStatus === 'In Progress';
-      const statusLabel = STATUS_LABELS[rawStatus] || rawStatus;
+    const status    = req.query.status || '';
+    const severity  = req.query.severity ? parseInt(req.query.severity) : 0;
+    const q         = (req.query.q || '').trim();
+    const time_from = req.query.time_from;
+    const time_to   = req.query.time_to;
+    const page      = Math.max(1, parseInt(req.query.page) || 1);
+    const page_size = Math.min(100, Math.max(1, parseInt(req.query.page_size) || 20));
 
-      return {
-        id:           c._id,
-        number:       c.number,
-        title:        c.title,
-        status:       rawStatus,       // exact SP-CM value
-        statusLabel,                   // human readable
-        stage,
-        isClosed,
-        isInProgress,
-        severity:     c.severityLabel || hiveSevLabel(c.severity),
-        severityNum:  c.severity,
-        assignee:     c.assignee,
-        tags:         c.tags || [],
-        tlp:          c.tlpLabel || 'AMBER',
-        created:      c._createdAt,
-        startDate:    c.startDate,
-        description:  c.description,
-        mitre:        (c.tags || []).filter(t => t.startsWith('rule=')).map(t => t.replace('rule=', '')),
-      };
-    });
-    res.json({ cases, total: cases.length });
+    const baseQ = [{ _name: 'listCase' }];
+    if (status)    baseQ.push({ _name: 'filter', _field: 'status',     _value: status });
+    if (severity)  baseQ.push({ _name: 'filter', _field: 'severity',   _value: severity });
+    if (q)         baseQ.push({ _name: 'filter', _like:  { _field: 'title', _value: `*${q}*` } });
+    if (time_from) baseQ.push({ _name: 'filter', _gte:   { _field: '_createdAt', _value: new Date(time_from).getTime() } });
+    if (time_to)   baseQ.push({ _name: 'filter', _lte:   { _field: '_createdAt', _value: new Date(time_to).getTime() } });
+
+    const sortedQ = [...baseQ, { _name: 'sort', _fields: [{ _createdAt: 'desc' }] }];
+    const from = (page - 1) * page_size;
+
+    const [rawItems, countResult] = await Promise.all([
+      hiveQuery([...sortedQ, { _name: 'page', from, to: from + page_size }]),
+      hiveQuery([...baseQ, { _name: 'count' }]).catch(() => null),
+    ]);
+
+    const items = Array.isArray(rawItems) ? rawItems : [];
+    let total;
+    if (typeof countResult === 'number') {
+      total = countResult;
+    } else if (Array.isArray(countResult)) {
+      total = countResult.length;
+    } else {
+      total = from + items.length + (items.length === page_size ? 1 : 0);
+    }
+
+    const cases = items.map(mapCase);
+    res.json({ cases, total, page, page_size, has_more: from + cases.length < total });
   } catch (e) {
     console.error('[cases]', e.message);
+    res.status(502).json({ error: e.message });
+  }
+});
+
+// ── THEHIVE ALERT STATS (30s in-memory cache) ──
+let _hiveStatsCache = null, _hiveStatsCacheTime = 0;
+app.get('/api/hive-alerts/stats', authMW, async (req, res) => {
+  try {
+    const now = Date.now();
+    if (_hiveStatsCache && now - _hiveStatsCacheTime < 30000) return res.json(_hiveStatsCache);
+    const cntA = async (...filters) => {
+      try {
+        const d = await hiveQuery([{ _name: 'listAlert' }, ...filters, { _name: 'count' }]);
+        if (typeof d === 'number') return d;
+        if (Array.isArray(d)) return d.length;
+        return 0;
+      } catch { return 0; }
+    };
+    const cntC = async (status) => {
+      try {
+        const d = await hiveQuery([{ _name: 'listCase' }, { _name: 'filter', _field: 'status', _value: status }, { _name: 'count' }]);
+        if (typeof d === 'number') return d;
+        if (Array.isArray(d)) return d.length;
+        return 0;
+      } catch { return 0; }
+    };
+    const [total, newC, inProg, closed, crit, high, med, low, truePos, falsePos] = await Promise.all([
+      cntA(),
+      cntA({ _name: 'filter', _field: 'status', _value: 'New' }),
+      cntA({ _name: 'filter', _field: 'status', _value: 'InProgress' }),
+      cntA({ _name: 'filter', _field: 'status', _value: 'Imported' }),
+      cntA({ _name: 'filter', _field: 'severity', _value: 4 }),
+      cntA({ _name: 'filter', _field: 'severity', _value: 3 }),
+      cntA({ _name: 'filter', _field: 'severity', _value: 2 }),
+      cntA({ _name: 'filter', _field: 'severity', _value: 1 }),
+      cntC('TruePositive'),
+      cntC('FalsePositive'),
+    ]);
+    _hiveStatsCache = { total, new: newC, in_progress: inProg, closed, critical: crit, high, medium: med, low, true_positive: truePos, false_positive: falsePos };
+    _hiveStatsCacheTime = now;
+    res.json(_hiveStatsCache);
+  } catch (e) {
+    console.error('[hive-alerts-stats]', e.message);
     res.status(502).json({ error: e.message });
   }
 });
@@ -904,12 +1105,40 @@ app.get('/api/cases', authMW, async (req, res) => {
 // ── THEHIVE ALERTS ──
 app.get('/api/hive-alerts', authMW, async (req, res) => {
   try {
-    const status = req.query.status;
-    let query = [{ _name: 'listAlert' }];
-    if (status) query.push({ _name: 'filter', _field: 'status', _value: status });
-    query.push({ _name: 'sort', _fields: [{ _createdAt: 'desc' }] });
-    const data = await hiveQuery(query);
-    const alerts = (Array.isArray(data) ? data : []).map(a => ({
+    const status    = req.query.status || '';
+    const severity  = req.query.severity ? parseInt(req.query.severity) : 0;
+    const q         = (req.query.q || '').trim();
+    const time_from = req.query.time_from;
+    const time_to   = req.query.time_to;
+    const page      = Math.max(1, parseInt(req.query.page) || 1);
+    const page_size = Math.min(100, Math.max(1, parseInt(req.query.page_size) || 20));
+
+    const baseQ = [{ _name: 'listAlert' }];
+    if (status)    baseQ.push({ _name: 'filter', _field: 'status',     _value: status });
+    if (severity)  baseQ.push({ _name: 'filter', _field: 'severity',   _value: severity });
+    if (q)         baseQ.push({ _name: 'filter', _like: { _field: 'title', _value: `*${q}*` } });
+    if (time_from) baseQ.push({ _name: 'filter', _gte:  { _field: '_createdAt', _value: new Date(time_from).getTime() } });
+    if (time_to)   baseQ.push({ _name: 'filter', _lte:  { _field: '_createdAt', _value: new Date(time_to).getTime() } });
+
+    const sortedQ = [...baseQ, { _name: 'sort', _fields: [{ _createdAt: 'desc' }] }];
+    const from = (page - 1) * page_size;
+
+    const [rawItems, countResult] = await Promise.all([
+      hiveQuery([...sortedQ, { _name: 'page', from, to: from + page_size }]),
+      hiveQuery([...baseQ, { _name: 'count' }]).catch(() => null),
+    ]);
+
+    const items = Array.isArray(rawItems) ? rawItems : [];
+    let total;
+    if (typeof countResult === 'number') {
+      total = countResult;
+    } else if (Array.isArray(countResult)) {
+      total = countResult.length;
+    } else {
+      total = from + items.length + (items.length === page_size ? 1 : 0);
+    }
+
+    const alerts = items.map(a => ({
       id:          a._id,
       title:       a.title,
       status:      a.status,
@@ -920,7 +1149,7 @@ app.get('/api/hive-alerts', authMW, async (req, res) => {
       created:     a._createdAt,
       description: a.description,
     }));
-    res.json({ alerts, total: alerts.length });
+    res.json({ alerts, total, page, page_size, has_more: from + alerts.length < total });
   } catch (e) {
     console.error('[hive-alerts]', e.message);
     res.status(502).json({ error: e.message });
