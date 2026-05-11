@@ -3897,9 +3897,30 @@ async function _runLogSourcesAnalysis(sources) {
   return r.json();
 }
 
+// Cloud vendor groups that warrant a dedicated virtual source entry.
+// These are rule.groups values Wazuh assigns to cloud integration events.
+const CLOUD_GROUP_VENDORS = {
+  cloudflare:        { vendor: 'Cloudflare',            type: 'cloud_api' },
+  'cloudflare-waf':  { vendor: 'Cloudflare WAF',        type: 'waf'       },
+  cloudflare_waf:    { vendor: 'Cloudflare WAF',        type: 'waf'       },
+  'cloudflare-dns':  { vendor: 'Cloudflare DNS',        type: 'network'   },
+  cloudflare_dns:    { vendor: 'Cloudflare DNS',        type: 'network'   },
+  azure:             { vendor: 'Microsoft Azure',       type: 'cloud_api' },
+  azure_ad:          { vendor: 'Microsoft Azure AD',    type: 'cloud_api' },
+  'azure-ad':        { vendor: 'Microsoft Azure AD',    type: 'cloud_api' },
+  aws_cloudtrail:    { vendor: 'AWS CloudTrail',        type: 'cloud_api' },
+  gcp:               { vendor: 'Google Cloud Platform', type: 'cloud_api' },
+  office365:         { vendor: 'Microsoft 365',         type: 'cloud_api' },
+  'ms-graph':        { vendor: 'Microsoft 365',         type: 'cloud_api' },
+  'ms-defender':     { vendor: 'Microsoft Defender',    type: 'cloud_api' },
+  windows_defender:  { vendor: 'Microsoft Defender',    type: 'cloud_api' },
+  crowdstrike:       { vendor: 'CrowdStrike',           type: 'cloud_api' },
+  sentinelone:       { vendor: 'SentinelOne',           type: 'cloud_api' },
+};
+
 async function _fetchLogSources() {
 
-    const [r24h, r7d] = await Promise.all([
+    const [r24h, r7d, rCloud24h, rCloud7d] = await Promise.all([
       osSearch({
         size: 0,
         query: { range: { '@timestamp': { gte: 'now-24h' } } },
@@ -3930,6 +3951,31 @@ async function _fetchLogSources() {
               count_7d:     { value_count: { field: 'agent.id' } },
               first_seen_7d:{ min: { field: '@timestamp' } },
             },
+          },
+        },
+      }),
+      // Cloud group aggregation (24h) — detects vendors sharing a manager agent
+      osSearch({
+        size: 0,
+        query: { range: { '@timestamp': { gte: 'now-24h' } } },
+        aggs: {
+          by_cloud_group: {
+            terms: { field: 'rule.groups', size: 100 },
+            aggs: {
+              last_seen:     { max:   { field: '@timestamp' } },
+              severity_dist: { terms: { field: 'rule.level', size: 15 } },
+            },
+          },
+        },
+      }),
+      // Cloud group 7d counts
+      osSearch({
+        size: 0,
+        query: { range: { '@timestamp': { gte: 'now-7d' } } },
+        aggs: {
+          by_cloud_group: {
+            terms: { field: 'rule.groups', size: 100 },
+            aggs: { count_7d: { value_count: { field: '@timestamp' } } },
           },
         },
       }),
@@ -4010,6 +4056,59 @@ async function _fetchLogSources() {
         top_decoder: decoderKey,
         integration: integKey || null,
       });
+    }
+
+    // Build virtual cloud sources from rule.groups aggregation.
+    // Cloud integrations often share the Wazuh manager agent — grouping by agent.id
+    // alone only surfaces the dominant integration. This adds a dedicated entry for
+    // every cloud vendor found in rule.groups that isn't already in the sources list.
+    // Build lookup maps from the 24h cloud-group aggregation for EPS / severity / last_seen
+    const cloudMap24h = {};
+    for (const b of (rCloud24h.aggregations?.by_cloud_group?.buckets || [])) {
+      cloudMap24h[b.key] = {
+        count:      b.doc_count,
+        last_seen:  b.last_seen?.value || null,
+        sev_buckets: b.severity_dist?.buckets || [],
+      };
+    }
+
+    const alreadyDetectedVendors = new Set(sources.map(s => s.vendor));
+    // Use the 7d aggregation as the discovery window — cloud sources may be silent
+    // in the last 24h but still configured and active within the past week.
+    for (const b of (rCloud7d.aggregations?.by_cloud_group?.buckets || [])) {
+      const grpKey = b.key.toLowerCase();
+      const entry  = CLOUD_GROUP_VENDORS[grpKey];
+      if (!entry) continue;
+      if (alreadyDetectedVendors.has(entry.vendor)) continue;  // already shown via agent
+      const c24h     = cloudMap24h[b.key] || {};
+      const count24h = c24h.count || 0;
+      const count7d  = b.count_7d?.value || 0;
+      const sevDist  = {};
+      for (const sv of (c24h.sev_buckets || [])) {
+        const cat = sv.key >= 12 ? 'critical' : sv.key >= 8 ? 'high' : sv.key >= 5 ? 'medium' : 'low';
+        sevDist[cat] = (sevDist[cat] || 0) + sv.doc_count;
+      }
+      sources.push({
+        source_id:       `grp:${grpKey}`,
+        source_name:     entry.vendor,
+        source_ip:       'cloud',
+        type:            entry.type,
+        vendor:          entry.vendor,
+        protocol:        'api',
+        event_count_24h: count24h,
+        event_count_7d:  count7d,
+        eps:             parseFloat((count24h / 86400).toFixed(3)),
+        last_seen:       c24h.last_seen ? new Date(c24h.last_seen).toISOString() : null,
+        first_seen_7d:   null,
+        is_new:          false,
+        confidence:      0.95,
+        anomaly:         false,
+        severity_dist:   sevDist,
+        top_groups:      [grpKey],
+        top_decoder:     '',
+        integration:     grpKey,
+      });
+      alreadyDetectedVendors.add(entry.vendor);
     }
 
     // Anomaly: new source OR EPS >5x dataset average
