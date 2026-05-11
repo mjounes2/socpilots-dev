@@ -1930,6 +1930,7 @@ sshd: Failed" style="min-height:80px"></textarea></div>
       <div id="lb-exp-profile" style="display:none">
         <div id="lb-exp-profile-content" style="margin-top:8px;padding:10px 14px;background:rgba(156,39,176,.05);border-left:3px solid rgba(156,39,176,.5);font-size:12px;color:var(--txt2);line-height:1.6;border-radius:0 4px 4px 0"></div>
       </div>
+      <div id="ueba-baseline-result" style="display:none;margin-top:10px"></div>
       <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--b1)">
         <div style="font-size:10px;color:var(--txt3);font-family:var(--fm);letter-spacing:.8px;margin-bottom:7px">🎯 ATTACK PATH FINDER</div>
         <div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap">
@@ -6955,13 +6956,14 @@ function renderLeaderboard(users, total){
     const uid=`lb-exp-${_lbPage}-${i}`;
     return `<tr>
       <td style="color:#8ab0d0">${offset+i+1}</td>
-      <td style="cursor:pointer;color:var(--c)" onclick="uebaLookup('${esc(u.user)}')">${esc(u.user)}</td>
+      <td style="cursor:pointer;color:var(--c)" onclick="uebaLookup('${esc(u.user)}')">${esc(u.user)}${u.baseline_computed_at?` <span title="Behavioral baseline computed ${new Date(u.baseline_computed_at).toLocaleString()}" style="font-size:9px;color:var(--g);vertical-align:middle;cursor:default">📊</span>`:''}</td>
       <td>${riskBadge(u.risk_score)}</td>
       <td style="color:#8ab0d0">${u.anomaly_count||0}</td>
       <td style="color:#8ab0d0">${u.events_period||0}</td>
       <td style="font-size:10px;color:var(--txt2)">${(u.recent_hosts||[]).join(', ')||'—'}</td>
       <td style="white-space:nowrap">
         <button class="btn btn-sm" onclick="uebaExplainRisk('${esc(u.user)}','${uid}')" style="padding:4px 8px;background:rgba(156,39,176,.1);border:1px solid rgba(156,39,176,.4);color:#ce93d8;font-size:10px" title="AI risk narrative">🧠 Explain</button>
+        <button class="btn btn-sm" onclick="uebaLookup('${esc(u.user)}');setTimeout(()=>loadEntityBaseline('${esc(u.user)}'),400)" style="padding:4px 7px;font-size:10px;margin-left:3px;background:rgba(0,230,118,.08);border:1px solid rgba(0,230,118,.25);color:var(--g)" title="30-day behavioral baseline">📊</button>
         <button class="btn btn-sm btn-h" onclick="go('copilot');askAIAboutUeba('${esc(u.user)}',${u.risk_score})" style="padding:4px 7px;font-size:10px;margin-left:3px" title="Ask SOCPilots AI">💬</button>
       </td>
     </tr>
@@ -7013,6 +7015,98 @@ function askAIAboutUeba(entity, riskScore){
   if(chip&&lbl){lbl.textContent=`UEBA Entity: ${entity} — Risk ${riskScore}/100`;chip.style.display='flex';}
   const inp=document.getElementById('chat-in');
   if(inp){inp.placeholder=`Ask about ${entity}…`;inp.focus();}
+}
+
+// ── Behavioral Baseline ───────────────────────────────────────
+async function loadEntityBaseline(entity){
+  const el=document.getElementById('ueba-baseline-result');
+  if(!el)return;
+
+  // Toggle off if same entity already shown
+  if(el.dataset.entity===entity&&el.style.display!=='none'){
+    el.style.display='none';
+    el.dataset.entity='';
+    return;
+  }
+  el.dataset.entity=entity;
+  el.style.display='';
+  el.innerHTML=`<div style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:rgba(0,230,118,.06);border-left:3px solid rgba(0,230,118,.4);border-radius:0 4px 4px 0"><div class="spin" style="width:13px;height:13px;border-color:rgba(0,230,118,.2);border-top-color:var(--g)"></div><span style="font-size:11px;font-family:var(--fm);color:var(--g)">Computing 30-day baseline for ${esc(entity)}…</span></div>`;
+
+  const d=await G(`/api/ueba/baseline/${encodeURIComponent(entity)}`);
+  if(!d||d.error){
+    el.innerHTML=`<div style="padding:10px 12px;border-left:3px solid var(--r);border-radius:0 4px 4px 0;font-size:11px;color:var(--r);font-family:var(--fm)">${esc(d?.error||'Failed to compute baseline')}</div>`;
+    return;
+  }
+  if(!d.has_baseline){
+    el.innerHTML=`<div style="padding:10px 12px;border-left:3px solid var(--b2);border-radius:0 4px 4px 0;font-size:11px;color:var(--txt2)">No baseline data — entity not yet in UEBA graph.</div>`;
+    return;
+  }
+
+  const hours=d.typical_hours||[];
+  const hosts=d.typical_hosts||[];
+  const fp=d.fp_assessment||{};
+
+  // Build hour heatmap — 24 slots
+  const maxFreq=hours.length?Math.max(...hours.map(h=>h.freq)):1;
+  const heatmap=Array.from({length:24},(_,i)=>{
+    const entry=hours.find(h=>h.hour===i);
+    const pct=entry?Math.round((entry.freq/maxFreq)*100):0;
+    const col=pct>70?'var(--g)':pct>30?'#ff9800':pct>0?'rgba(0,229,255,.5)':'var(--b2)';
+    return `<div title="Hour ${i}:00 — ${entry?.freq||0} logins" style="display:inline-flex;flex-direction:column;align-items:center;gap:2px;cursor:default">
+      <div style="width:14px;height:${Math.max(4,Math.round(pct*0.28)+4)}px;background:${col};border-radius:2px 2px 0 0;transition:height .2s"></div>
+      <span style="font-size:8px;color:var(--txt3);font-family:var(--fm)">${i}</span>
+    </div>`;
+  }).join('');
+
+  // FP assessment section
+  let fpHtml='';
+  if(fp.assessable){
+    const score=fp.fp_score??0;
+    const scoreCol=score>=70?'var(--g)':score>=40?'#ff9800':'var(--r)';
+    const scoreLabel=score>=70?'HIGH (likely FP)':score>=40?'MEDIUM':'LOW (likely TP)';
+    fpHtml=`
+      <div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--b1)">
+        <div style="font-size:10px;font-family:var(--fm);color:var(--txt3);letter-spacing:.5px;margin-bottom:6px">FP LIKELIHOOD (last 24h anomalies)</div>
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+          <div style="font-size:22px;font-weight:700;font-family:var(--fm);color:${scoreCol}">${score}%</div>
+          <div>
+            <div style="font-size:11px;color:${scoreCol};font-weight:600">${scoreLabel}</div>
+            <div style="font-size:9px;color:var(--txt3)">${fp.events_assessed} anomalous event${fp.events_assessed!==1?'s':''} assessed</div>
+          </div>
+        </div>
+        ${(fp.factors||[]).slice(0,6).map(f=>`
+          <div style="display:flex;align-items:flex-start;gap:6px;margin-bottom:4px;font-size:10px">
+            <span style="color:${f.fp_likely?'var(--g)':'var(--r)'};font-size:12px;line-height:1">${f.fp_likely?'✓':'✗'}</span>
+            <div>
+              <span style="color:var(--txt3);font-family:var(--fm)">${f.type}</span>
+              <span style="color:var(--txt2);margin-left:4px">${esc(f.detail)}</span>
+            </div>
+          </div>`).join('')}
+      </div>`;
+  }else if(fp.reason){
+    fpHtml=`<div style="margin-top:8px;font-size:10px;color:var(--txt3);font-family:var(--fm)">${esc(fp.reason)}</div>`;
+  }
+
+  const cacheLabel=d.from_cache
+    ?`<span style="color:var(--txt3);font-size:9px">cached · computed ${new Date(d.baseline_computed_at).toLocaleString()}</span>`
+    :`<span style="color:var(--txt3);font-size:9px">fresh · ${d.events_analyzed||0} events analyzed</span>`;
+
+  el.innerHTML=`
+    <div style="padding:12px 14px;background:rgba(0,230,118,.05);border-left:3px solid rgba(0,230,118,.5);border-radius:0 4px 4px 0">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:6px">
+        <span style="font-size:10px;font-family:var(--fm);color:var(--g);letter-spacing:.5px">📊 30-DAY BEHAVIORAL BASELINE — ${esc(entity.toUpperCase())}</span>
+        ${cacheLabel}
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px 14px;margin-bottom:10px;font-size:10px">
+        <div><span style="color:var(--txt3)">Avg events/day</span><br><span style="color:var(--txt);font-family:var(--fm);font-weight:600">${d.baseline_avg_events||0}</span></div>
+        <div><span style="color:var(--txt3)">Typical hosts</span><br><span style="color:var(--txt);font-family:var(--fm);font-weight:600">${hosts.length}</span></div>
+        <div><span style="color:var(--txt3)">Active hours</span><br><span style="color:var(--txt);font-family:var(--fm);font-weight:600">${hours.length}/24</span></div>
+      </div>
+      <div style="font-size:9px;color:var(--txt3);font-family:var(--fm);margin-bottom:4px">HOURLY ACTIVITY PATTERN (UTC)</div>
+      <div style="display:flex;gap:1px;align-items:flex-end;height:48px;padding-bottom:14px">${heatmap}</div>
+      ${hosts.length?`<div style="margin-top:6px;font-size:10px"><span style="color:var(--txt3)">Known hosts: </span><span style="color:var(--txt2)">${hosts.slice(0,8).map(h=>esc(h)).join(', ')}${hosts.length>8?` +${hosts.length-8} more`:''}</span></div>`:''}
+      ${fpHtml}
+    </div>`;
 }
 
 // ── Attack-Path Mode ──────────────────────────────────────────
@@ -7184,6 +7278,7 @@ async function loadEntityGraph(){
         <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
           <button class="btn btn-sm" onclick="go('copilot');askAIAboutUeba('${esc(p.name)}',${p.risk_score||0})" style="font-size:10px;padding:4px 9px;background:rgba(0,229,255,.08);border-color:rgba(0,229,255,.3);color:var(--c)">💬 Ask AI</button>
           ${p.anomaly_count>0?`<button class="btn btn-sm" onclick="uebaExplainRisk('${esc(p.name)}','lb-exp-profile')" style="font-size:10px;padding:4px 9px;background:rgba(156,39,176,.08);border:1px solid rgba(156,39,176,.35);color:#ce93d8">🧠 Explain Risk</button>`:''}
+          ${p.entity_type==='user'?`<button class="btn btn-sm" onclick="loadEntityBaseline('${esc(p.name)}')" style="font-size:10px;padding:4px 9px;background:rgba(0,230,118,.08);border:1px solid rgba(0,230,118,.3);color:var(--g)" title="30-day behavioral baseline &amp; FP assessment">📊 Baseline</button>`:''}
         </div>
       </div>`;
     } else {

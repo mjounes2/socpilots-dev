@@ -317,6 +317,7 @@ async function getRiskLeaderboard(limit = 20, skip = 0, hours = 24, q = '', minS
                 coalesce(u.risk_score, 0) AS risk_score,
                 coalesce(u.anomaly_count, 0) AS anomaly_count,
                 u.last_anomaly AS last_anomaly,
+                u.baseline_computed_at AS baseline_computed_at,
                 events_period, recent_hosts
          ORDER BY risk_score DESC, u.total_events DESC SKIP $skip LIMIT $limit`,
         { limit: neo4j.int(limit), skip: neo4j.int(skip), hours: neo4j.int(hours), q, minScore: neo4j.int(minScore) }
@@ -327,12 +328,13 @@ async function getRiskLeaderboard(limit = 20, skip = 0, hours = 24, q = '', minS
       ),
     ]);
     const users = dataRes.records.map(r => ({
-      user:           r.get('user'),
-      risk_score:     r.get('risk_score')?.toNumber?.() ?? r.get('risk_score') ?? 0,
-      anomaly_count:  r.get('anomaly_count')?.toNumber?.() ?? 0,
-      last_anomaly:   r.get('last_anomaly'),
-      events_period:  r.get('events_period')?.toNumber?.() ?? 0,
-      recent_hosts:   r.get('recent_hosts') || [],
+      user:                  r.get('user'),
+      risk_score:            r.get('risk_score')?.toNumber?.() ?? r.get('risk_score') ?? 0,
+      anomaly_count:         r.get('anomaly_count')?.toNumber?.() ?? 0,
+      last_anomaly:          r.get('last_anomaly'),
+      baseline_computed_at:  r.get('baseline_computed_at') || null,
+      events_period:         r.get('events_period')?.toNumber?.() ?? 0,
+      recent_hosts:          r.get('recent_hosts') || [],
     }));
     const total = countRes.records[0]?.get('total')?.toNumber?.() ?? 0;
     return { users, total };
@@ -830,11 +832,187 @@ async function backfillRiskScores() {
     );
     const updated = recs[0]?.get('updated')?.toNumber?.() ?? 0;
     console.log(`[UEBA] Risk score backfill complete — ${updated} users updated`);
+
+    // Fire-and-forget: compute 30d behavioral baseline for top-100 risk users
+    setImmediate(async () => {
+      try {
+        const topUsers = await run(
+          `MATCH (u:User) WHERE u.risk_score IS NOT NULL
+           RETURN u.name AS name ORDER BY u.risk_score DESC LIMIT 100`
+        );
+        let baselined = 0;
+        for (const r of topUsers) {
+          const name = r.get('name');
+          if (name) { await computeEntityBaseline(name); baselined++; }
+        }
+        if (baselined) console.log(`[UEBA] Baseline computed for ${baselined} top-risk users`);
+      } catch (e) {
+        console.error('[UEBA] Baseline backfill error:', e.message);
+      }
+    });
+
     return { updated };
   } catch(e) {
     console.error('[UEBA] Backfill error:', e.message);
     return { updated: 0, error: e.message };
   }
+}
+
+// ── Per-Entity Behavioral Baseline (30-day rolling) ──────────────────
+// Populates typical_hosts (string list), baseline_hours_json (JSON string),
+// baseline_avg_events, and baseline_computed_at on the User node.
+// Re-uses existing typical_hours / typical_hosts properties for new storage.
+// 6-hour TTL guard prevents expensive re-computation on every call.
+async function computeEntityBaseline(entity) {
+  // Check TTL — return stored baseline if fresh
+  const stored = await runSingle(
+    `MATCH (u:User {name: $name})
+     RETURN u.baseline_computed_at AS computed_at,
+            u.typical_hosts        AS hosts,
+            u.baseline_hours_json  AS hours_json,
+            u.baseline_avg_events  AS avg_events`,
+    { name: entity }
+  );
+
+  if (stored) {
+    const computedAt = stored.get('computed_at');
+    if (computedAt && Date.now() - new Date(computedAt).getTime() < 6 * 3600 * 1000) {
+      let typicalHours = [];
+      try { typicalHours = JSON.parse(stored.get('hours_json') || '[]'); } catch {}
+      return {
+        entity,
+        typical_hours:        typicalHours,
+        typical_hosts:        stored.get('hosts') || [],
+        baseline_avg_events:  stored.get('avg_events')?.toNumber?.() ?? stored.get('avg_events') ?? 0,
+        baseline_computed_at: computedAt,
+        from_cache:           true,
+      };
+    }
+  }
+
+  // Entity not found in graph
+  if (!stored) return null;
+
+  // Query 30d of LOGGED_IN relationships
+  const recs = await run(
+    `MATCH (u:User {name: $name})-[r:LOGGED_IN]->(h:Host)
+     WHERE datetime(r.time) > datetime() - duration({days: 30})
+     RETURN datetime(r.time).hour AS hr, h.name AS host`,
+    { name: entity }
+  );
+
+  if (!recs.length) {
+    return { entity, typical_hours: [], typical_hosts: [], baseline_avg_events: 0,
+             baseline_computed_at: null, from_cache: false, events_analyzed: 0 };
+  }
+
+  const hourCounts = {};
+  const hostSet    = new Set();
+  for (const rec of recs) {
+    const hr   = rec.get('hr')?.toNumber?.()   ?? rec.get('hr')   ?? 0;
+    const host = rec.get('host');
+    hourCounts[hr] = (hourCounts[hr] || 0) + 1;
+    if (host) hostSet.add(host);
+  }
+
+  const typicalHours = Object.entries(hourCounts)
+    .map(([hour, freq]) => ({ hour: parseInt(hour), freq }))
+    .sort((a, b) => b.freq - a.freq);
+
+  const typicalHosts = [...hostSet];
+  const avgEvents    = Math.round(recs.length / 30);
+  const computedAt   = new Date().toISOString();
+
+  await run(
+    `MATCH (u:User {name: $name})
+     SET u.typical_hosts        = $hosts,
+         u.baseline_hours_json  = $hoursJson,
+         u.baseline_avg_events  = $avgEvents,
+         u.baseline_computed_at = $computedAt`,
+    { name: entity, hosts: typicalHosts, hoursJson: JSON.stringify(typicalHours), avgEvents, computedAt }
+  );
+
+  return {
+    entity,
+    typical_hours:        typicalHours,
+    typical_hosts:        typicalHosts,
+    baseline_avg_events:  avgEvents,
+    baseline_computed_at: computedAt,
+    from_cache:           false,
+    events_analyzed:      recs.length,
+  };
+}
+
+// Assesses false-positive likelihood for an entity's recent anomalies.
+// Only after_hours_access and new_host_access types are assessable —
+// other anomaly types are left unscored to avoid false confidence.
+async function assessEntityFP(entity) {
+  const baseline = await computeEntityBaseline(entity);
+  if (!baseline || (!baseline.typical_hours.length && !baseline.typical_hosts.length)) {
+    return { entity, assessable: false, reason: 'No baseline data' };
+  }
+
+  const recs = await run(
+    `MATCH (u:User {name: $name})-[r:LOGGED_IN]->(h:Host)
+     WHERE datetime(r.time) > datetime() - duration({hours: 24})
+       AND any(f IN r.flags WHERE f IN ['after_hours_access','unusual_hour','new_host_access'])
+     RETURN datetime(r.time).hour AS hr, h.name AS host, r.flags AS flags, r.time AS time
+     ORDER BY r.time DESC LIMIT 50`,
+    { name: entity }
+  );
+
+  if (!recs.length) {
+    return { entity, assessable: false, reason: 'No anomalous events in last 24h' };
+  }
+
+  const hourSet = new Set(baseline.typical_hours.map(e => e.hour));
+  const hostSet = new Set(baseline.typical_hosts);
+  const factors = [];
+  let withinCount = 0, totalCount = 0;
+
+  for (const rec of recs) {
+    const hr    = rec.get('hr')?.toNumber?.()   ?? rec.get('hr')   ?? 0;
+    const host  = rec.get('host');
+    const flags = rec.get('flags') || [];
+    const time  = rec.get('time');
+
+    if (flags.includes('after_hours_access') || flags.includes('unusual_hour')) {
+      totalCount++;
+      const inBaseline = hourSet.has(hr);
+      if (inBaseline) withinCount++;
+      factors.push({
+        type:      'after_hours_access',
+        fp_likely: inBaseline,
+        detail:    `Hour ${hr}h ${inBaseline ? 'is within' : 'is outside'} 30d baseline (${hourSet.size} typical hours tracked)`,
+        time,
+      });
+    }
+
+    if (flags.includes('new_host_access')) {
+      totalCount++;
+      const inBaseline = hostSet.has(host);
+      if (inBaseline) withinCount++;
+      factors.push({
+        type:      'new_host_access',
+        fp_likely: inBaseline,
+        detail:    `Host "${host}" ${inBaseline ? 'is a known host in' : 'is absent from'} 30d baseline (${hostSet.size} hosts tracked)`,
+        time,
+      });
+    }
+  }
+
+  if (!totalCount) {
+    return { entity, assessable: false, reason: 'No assessable anomaly types in recent events' };
+  }
+
+  return {
+    entity,
+    assessable:       true,
+    fp_score:         Math.round((withinCount / totalCount) * 100),
+    within_baseline:  withinCount === totalCount,
+    events_assessed:  totalCount,
+    factors:          factors.slice(0, 20),
+  };
 }
 
 async function ping() {
@@ -905,6 +1083,7 @@ module.exports = {
   detectLateralMovement,
   detectMultiStageAttack, detectSharedCredentials,
   getGraphNodes, getAttackPath,
+  computeEntityBaseline, assessEntityFP,
   ANOMALY_WEIGHTS,
 };
 

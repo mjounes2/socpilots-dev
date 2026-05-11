@@ -3333,23 +3333,27 @@ app.post('/api/ueba/analyze-anomaly', authMW, async (req, res) => {
     const { entity } = req.body;
     if (!entity) return res.status(400).json({ error: 'entity required' });
 
-    // Fetch full UEBA profile from Neo4j
-    const profile = await ueba.getUserProfile(entity).catch(() => null);
+    // Fetch UEBA profile and behavioral baseline in parallel
+    const [profile, fp] = await Promise.all([
+      ueba.getUserProfile(entity).catch(() => null),
+      ueba.assessEntityFP(entity).catch(() => null),
+    ]);
     if (!profile) return res.status(404).json({ error: `Entity "${entity}" not found in UEBA graph` });
 
     // Call LangChain agent for direct LLM explanation (Mistral, no agent loop)
     const llmResp = await axios.post(
       `${LANGCHAIN_URL}/ueba/explain`,
-      { entity, profile },
+      { entity, profile, fp_assessment: fp || null },
       { timeout: 30_000, headers: LANGCHAIN_TOKEN ? { Authorization: `Bearer ${LANGCHAIN_TOKEN}` } : {} }
     );
 
     res.json({
-      explanation:  llmResp.data.explanation,
+      explanation:   llmResp.data.explanation,
       entity,
-      risk_score:   profile.risk_score,
+      risk_score:    profile.risk_score,
       anomaly_count: profile.anomaly_count,
       profile,
+      fp_assessment: fp || null,
     });
   } catch(e) {
     console.error('[ueba/analyze-anomaly]', e.message);
@@ -3405,6 +3409,19 @@ app.get('/api/ueba/path', authMW, async (req, res) => {
     res.json({ found: true, ...path });
   } catch (e) {
     console.error('[ueba/path]', e.message);
+    res.status(502).json({ error: e.message });
+  }
+});
+
+app.get('/api/ueba/baseline/:entity', authMW, async (req, res) => {
+  try {
+    const entity = req.params.entity.trim().slice(0, 200);
+    const baseline = await ueba.computeEntityBaseline(entity);
+    if (!baseline) return res.json({ entity, has_baseline: false, message: 'Entity not found in UEBA graph' });
+    const fp = await ueba.assessEntityFP(entity);
+    res.json({ entity, has_baseline: true, ...baseline, fp_assessment: fp });
+  } catch (e) {
+    console.error('[ueba/baseline]', e.message);
     res.status(502).json({ error: e.message });
   }
 });
