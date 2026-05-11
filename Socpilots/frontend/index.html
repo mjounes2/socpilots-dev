@@ -252,7 +252,18 @@ tr.xrow.open .xcaret{transform:rotate(180deg);color:var(--c)}
 .sbar{height:100%;border-radius:3px;transition:width .8s}
 
 /* ─── MISC ────────────────────────── */
-.ai-txt{font-size:12px;font-family:var(--fm);line-height:1.9;color:var(--txt2);white-space:pre-wrap;word-break:break-word}
+.ai-txt{font-size:12px;font-family:var(--fm);line-height:1.9;color:var(--txt2);word-break:break-word}
+.glass-kv-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:8px;margin:10px 0}
+.glass-kv-card{padding:10px 12px;background:rgba(10,22,40,.55);backdrop-filter:blur(10px);border:1px solid rgba(0,229,255,.12);border-radius:8px;box-shadow:0 0 18px rgba(0,229,255,.04),inset 0 1px 0 rgba(255,255,255,.03)}
+.glass-kv-lbl{font-size:9px;letter-spacing:1px;color:var(--txt3);text-transform:uppercase;font-family:var(--fm);margin-bottom:4px}
+.glass-kv-val{font-size:12px;color:var(--txt);font-family:var(--fm);font-weight:600;word-break:break-word;line-height:1.4}
+.glass-tbl-wrap{overflow-x:auto;margin:10px 0;border-radius:8px;border:1px solid rgba(0,229,255,.1);background:rgba(10,22,40,.4);backdrop-filter:blur(8px)}
+.glass-tbl{width:100%;border-collapse:collapse;font-size:12px;font-family:var(--fm)}
+.glass-tbl thead tr{background:rgba(0,229,255,.06)}
+.glass-tbl th{padding:9px 14px;border-bottom:1px solid rgba(0,229,255,.2);color:var(--c);font-size:9px;letter-spacing:1px;text-transform:uppercase;font-weight:700;text-align:left;white-space:nowrap}
+.glass-tbl td{padding:8px 14px;border-bottom:1px solid rgba(26,47,74,.4);color:var(--txt2)}
+.glass-tbl tr:last-child td{border-bottom:none}
+.glass-tbl tbody tr:hover td{background:rgba(0,229,255,.03)}
 .sep{height:1px;background:var(--b1);margin:12px 0}
 .mono{font-family:var(--fm)}
 .ph{margin-bottom:14px}
@@ -2801,6 +2812,8 @@ function parseAIMarkdown(raw){
   const lines   = raw.split('\n');
   let   html    = '';
   let   inTable = false;
+  let   tableHeaders  = [];
+  let   tableDataRows = [];
   let   inList  = false;
   let   inOList = false;
   let   inCode  = false;
@@ -2808,7 +2821,39 @@ function parseAIMarkdown(raw){
   let   codeContent = '';
   let   blankCount  = 0;
 
-  const flushTable = ()=>{if(inTable){html+='</tbody></table></div>';inTable=false;}};
+  const flushTable = ()=>{
+    if(!inTable) return;
+    if(tableHeaders.length===2 && tableDataRows.length>0){
+      html+='<div class="glass-kv-grid">';
+      tableDataRows.forEach(cells=>{
+        const k=cells[0]||'', v=cells[1]||'';
+        html+=`<div class="glass-kv-card"><div class="glass-kv-lbl">${esc(k)}</div><div class="glass-kv-val">${styleInline(v)}</div></div>`;
+      });
+      html+='</div>';
+    } else if(tableHeaders.length>0){
+      html+='<div class="glass-tbl-wrap"><table class="glass-tbl"><thead><tr>';
+      tableHeaders.forEach(h=>{html+=`<th>${styleInline(h)}</th>`;});
+      html+='</tr></thead><tbody>';
+      tableDataRows.forEach(cells=>{
+        const rowBg=cells.some(c=>/critical/i.test(c))?'background:rgba(255,23,68,.04)':
+                    cells.some(c=>/high/i.test(c))?'background:rgba(255,109,0,.03)':'';
+        html+=`<tr${rowBg?` style="${rowBg}"`:''}>`;
+        cells.forEach((c,ci)=>{
+          const badge=sevBadgeStr(c);
+          let ch;
+          if(badge){ch=badge;}
+          else if(isNumeric(c)&&ci>0){ch=`<span style="color:var(--c);font-weight:700">${esc(c)}</span>`;}
+          else if(c.match(/^CVE-\d{4}-\d+$/i)){ch=`<span style="color:var(--y);font-weight:600">${esc(c)}</span>`;}
+          else if(c.match(/^\d+\.\d+$/)&&parseFloat(c)<=10){const sc=parseFloat(c)>=9?'var(--r)':parseFloat(c)>=7?'var(--o)':parseFloat(c)>=4?'var(--y)':'var(--c)';ch=`<span style="color:${sc};font-weight:700">${esc(c)}</span>`;}
+          else{ch=styleInline(c);}
+          html+=`<td>${ch}</td>`;
+        });
+        html+='</tr>';
+      });
+      html+='</tbody></table></div>';
+    }
+    inTable=false; tableHeaders=[]; tableDataRows=[];
+  };
   const flushList  = ()=>{if(inList) {html+='</ul>';inList=false;}};
   const flushOList = ()=>{if(inOList){html+='</ol>';inOList=false;}};
   const flushAll   = ()=>{flushTable();flushList();flushOList();};
@@ -2854,37 +2899,10 @@ function parseAIMarkdown(raw){
       if(cells.length <= 1 && !cells[0]) continue;
       if(!inTable){
         flushList(); flushOList();
-        html += `<div style="overflow-x:auto;margin:10px 0;border-radius:4px;border:1px solid var(--b1)">
-          <table style="width:100%;border-collapse:collapse;font-size:12px;font-family:var(--fm);min-width:400px">
-          <thead style="background:rgba(0,229,255,.06)">
-          <tr>${cells.map(c=>`<th style="padding:9px 12px;text-align:left;border-bottom:2px solid var(--c);color:var(--c);font-weight:700;font-size:10px;letter-spacing:1px;white-space:nowrap">${styleInline(c)}</th>`).join('')}</tr>
-          </thead><tbody>`;
+        tableHeaders = cells;
         inTable = true;
       } else {
-        const rowBg = cells.some(c=>/critical/i.test(c)) ? 'background:rgba(255,23,68,.04);' :
-                      cells.some(c=>/high/i.test(c))     ? 'background:rgba(255,109,0,.03);' : '';
-        html += `<tr style="${rowBg}hover:opacity:.8">`;
-        cells.forEach((c,ci)=>{
-          const badge = sevBadgeStr(c);
-          let cellHtml, cellStyle = 'padding:8px 12px;border-bottom:1px solid rgba(26,47,74,.5);color:var(--txt2);';
-          if(badge){
-            cellHtml  = badge;
-          } else if(isNumeric(c) && ci>0){
-            cellHtml  = `<span style="color:var(--c);font-weight:700">${esc(c)}</span>`;
-            cellStyle += 'text-align:right;';
-          } else if(c.match(/^CVE-\d{4}-\d+$/i)){
-            cellHtml  = `<span style="color:var(--y);font-weight:600;font-family:var(--fm)">${esc(c)}</span>`;
-          } else if(c.match(/^\d+\.\d+$/) && parseFloat(c)<=10){
-            // CVSS score
-            const score=parseFloat(c);
-            const sc=score>=9?'var(--r)':score>=7?'var(--o)':score>=4?'var(--y)':'var(--c)';
-            cellHtml=`<span style="color:${sc};font-weight:700">${esc(c)}</span>`;
-          } else {
-            cellHtml  = styleInline(c);
-          }
-          html += `<td style="${cellStyle}">${cellHtml}</td>`;
-        });
-        html += '</tr>';
+        tableDataRows.push(cells);
       }
       continue;
     }
@@ -4925,7 +4943,7 @@ async function loadCases(page){
           ${c.startDate?`<div class="xfield"><span class="xfield-lbl">Start Date</span><span class="xfield-val">${fmtDate(c.startDate)}</span></div>`:''}
         </div>
         ${allTags?`<div class="xfield-lbl" style="margin-top:4px">All Tags</div><div style="margin-top:4px;line-height:2">${allTags}</div>`:''}
-        ${c.description?`<div class="xfield-lbl" style="margin-top:8px">Description</div><div class="xdesc">${esc(c.description)}</div>`:''}
+        ${c.description?`<div class="xfield-lbl" style="margin-top:8px">Description</div><div style="margin-top:6px">${parseAIMarkdown(c.description)}</div>`:''}
       </div>`;
     return `
       <tr id="xs-cs-${i}" class="xrow" onclick="toggleDetailRow('cs-${i}')">
@@ -5011,7 +5029,7 @@ async function loadHiveAlerts(page){
         <div class="xfield-lbl" style="margin-top:4px">Full Title</div>
         <div class="xdesc" style="max-height:60px">${esc(a.title)}</div>
         ${allTags?`<div class="xfield-lbl" style="margin-top:8px">All Tags</div><div style="margin-top:4px;line-height:2">${allTags}</div>`:''}
-        ${a.description?`<div class="xfield-lbl" style="margin-top:8px">Description</div><div class="xdesc">${esc(a.description)}</div>`:''}
+        ${a.description?`<div class="xfield-lbl" style="margin-top:8px">Description</div><div style="margin-top:6px">${parseAIMarkdown(a.description)}</div>`:''}
       </div>`;
     return `
       <tr id="xs-ha-${i}" class="xrow" onclick="toggleDetailRow('ha-${i}')">
@@ -7297,7 +7315,7 @@ async function loadUebaDigests() {
         <span style="font-size:9px;font-family:var(--fm);background:rgba(255,23,68,.12);color:var(--r);padding:1px 6px;border-radius:3px">${d.high_risk_count} high-risk</span>
         ${emailBadge}
       </div>
-      <div class="ai-txt" style="font-size:12px;line-height:1.7;color:var(--txt2)">${parseAIMarkdown(d.digest_md || '')}</div>
+      <div style="font-size:12px;line-height:1.7;color:var(--txt2)">${parseAIMarkdown(d.digest_md || '')}</div>
     </div>`;
 }
 
@@ -7359,7 +7377,7 @@ async function openDigestModal(id) {
         <span style="font-size:11px;font-family:var(--fm);color:var(--txt3)">${periodStart} → ${periodEnd}</span>
         <span style="font-size:9px;font-family:var(--fm);background:rgba(156,39,176,.12);color:#ce93d8;padding:1px 6px;border-radius:3px">${d.entity_count} entities · ${d.high_risk_count} high-risk</span>
       </div>
-      <div class="ai-txt" style="font-size:12px;line-height:1.7;color:var(--txt2)">${parseAIMarkdown(d.digest_md || '')}</div>
+      <div style="font-size:12px;line-height:1.7;color:var(--txt2)">${parseAIMarkdown(d.digest_md || '')}</div>
     </div>`;
   document.getElementById('modal-digest-title').textContent = `UEBA Digest — ${periodStart}`;
   openModal('modal-digest');
