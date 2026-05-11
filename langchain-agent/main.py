@@ -518,17 +518,16 @@ def health():
         except Exception:
             pass
     return {
-        "status": "ok",
-        "openai":     bool(OPENAI_API_KEY),
-        "mistral":    bool(MISTRAL_API_KEY),
-        "opensearch": bool(OPENSEARCH_URL),
-        "thehive":    bool(THEHIVE_URL),
-        "redis":      redis_ok,
-        "vt":         bool(os.getenv("VIRUSTOTAL_API_KEY")),
-        "abuseipdb":  bool(os.getenv("ABUSEIPDB_API_KEY")),
-        "shodan":     bool(SHODAN_API_KEY),
-        "otx":        bool(OTX_API_KEY),
-        "model": "gpt-4o-mini" if OPENAI_API_KEY else ("mistral-small-latest" if MISTRAL_API_KEY else "none"),
+        "status":      "ok",
+        "ai_engine":   bool(OPENAI_API_KEY or MISTRAL_API_KEY),
+        "opensearch":  bool(OPENSEARCH_URL),
+        "thehive":     bool(THEHIVE_URL),
+        "redis":       redis_ok,
+        "vt":          bool(os.getenv("VIRUSTOTAL_API_KEY")),
+        "abuseipdb":   bool(os.getenv("ABUSEIPDB_API_KEY")),
+        "shodan":      bool(SHODAN_API_KEY),
+        "otx":         bool(OTX_API_KEY),
+        "engine":      "SOCPilots AI" if (OPENAI_API_KEY or MISTRAL_API_KEY) else "offline",
     }
 
 
@@ -914,6 +913,24 @@ def _get_mistral():
     return None
 
 
+# Map internal model identifiers to generic SOC engine labels.
+# No vendor or version strings must reach the frontend.
+_ENGINE_LABEL: dict[str, str] = {
+    "gpt-4o-mini":          "SOC AI Analyzer",
+    "gpt-4o":               "SOC AI Analyzer",
+    "gpt-4-turbo":          "AI Detection Engine",
+    "gpt-4":                "AI Detection Engine",
+    "mistral-large-latest": "Threat Analysis Engine",
+    "mistral-large":        "Threat Analysis Engine",
+    "mistral-medium":       "Threat Analysis Engine",
+    "mistral-small-latest": "SOC AI Analyzer",
+    "mistral-small":        "SOC AI Analyzer",
+}
+
+def _engine(model_id: str) -> str:
+    return _ENGINE_LABEL.get(model_id, "AI Detection Engine")
+
+
 def _parse_json_response(text: str) -> any:
     """Strip markdown fences and parse JSON with bracket-matching fallback."""
     text = text.strip()
@@ -982,9 +999,9 @@ async def analyze_log_sources(req: LogSourcesAnalyzeRequest):
         raise HTTPException(status_code=503, detail="No LLM API key configured")
 
     models_used = {
-        "routing":    "gpt-4o-mini" if gpt_mini else "mistral-large-latest",
-        "analysis":   "mistral-large-latest" if mistral else "gpt-4o-mini",
-        "formatting": "gpt-4o-mini" if gpt_mini else "mistral-large-latest",
+        "routing":    _engine("gpt-4o-mini"          if gpt_mini else "mistral-large-latest"),
+        "analysis":   _engine("mistral-large-latest" if mistral  else "gpt-4o-mini"),
+        "formatting": _engine("gpt-4o-mini"          if gpt_mini else "mistral-large-latest"),
     }
 
     # ── Step 1: GPT-mini routing decision ──────────────────────
@@ -1124,9 +1141,9 @@ async def analyze_mitre_coverage(req: MitreAnalyzeRequest):
         raise HTTPException(status_code=503, detail="No LLM API key configured")
 
     models_used = {
-        "gap_prioritization": "gpt-4o-mini" if gpt_mini else "mistral-large-latest",
-        "deep_analysis":      "mistral-large-latest" if mistral else "gpt-4o-mini",
-        "recommendations":    "gpt-4o-mini" if gpt_mini else "mistral-large-latest",
+        "gap_prioritization": _engine("gpt-4o-mini"          if gpt_mini else "mistral-large-latest"),
+        "deep_analysis":      _engine("mistral-large-latest" if mistral  else "gpt-4o-mini"),
+        "recommendations":    _engine("gpt-4o-mini"          if gpt_mini else "mistral-large-latest"),
     }
 
     covered  = req.covered_techniques[:100]

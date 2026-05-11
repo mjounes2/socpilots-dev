@@ -298,7 +298,7 @@ async function n8nAsk(message, sessionId, user, extra = {}, _retry = 0) {
 
     // After retries exhausted — return specific error
     if (bodyStr.includes('Rate limit') || bodyStr.includes('rate_limited')) {
-      return { ok: false, error: 'Rate limit exceeded (429) — Mistral API quota reached. Wait 60s and retry.', raw: d };
+      return { ok: false, error: 'Rate limit exceeded (429) — AI engine quota reached. Wait 60s and retry.', raw: d };
     }
 
     const text = d?.response || d?.output || d?.text || d?.message ||
@@ -1988,7 +1988,7 @@ Use markdown tables. Be concise.`;
         let triageResult  = null;
         try {
           const triageResp = await axios.post(`${LANGCHAIN_URL}/triage`,
-            { alert, model: 'mistral' },
+            { alert },
             { timeout: 45000, headers: { Authorization: `Bearer ${LANGCHAIN_TOKEN}` }, validateStatus: () => true }
           );
           if (triageResp.status < 400 && triageResp.data) {

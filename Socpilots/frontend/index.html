@@ -4229,9 +4229,8 @@ async function runMitreAnalysis() {
   // Model attribution
   const modelsEl = document.getElementById('mc-intel-models');
   if (modelsEl && d.models_used) {
-    modelsEl.innerHTML = Object.entries(d.models_used).map(([role, m]) =>
-      `<span class="ls-model-tag" title="${esc(role)}">${esc(m)}</span>`
-    ).join('');
+    const uniq = [...new Set(Object.values(d.models_used).filter(Boolean))];
+    modelsEl.innerHTML = uniq.map(m => `<span class="ls-model-tag">${esc(m)}</span>`).join('');
   }
 
   // ── Tactic breakdown ──
@@ -4472,8 +4471,8 @@ async function runLogSourcesAnalysis() {
     insightsEl.innerHTML = r.ai_insights.map(i=>`<div class="ls-ai-insight">${esc(i)}</div>`).join('');
   }
   if (modelsEl && r.models_used) {
-    modelsEl.innerHTML = Object.values(r.models_used).filter(Boolean)
-      .map(m=>`<span class="ls-model-tag">${esc(m)}</span>`).join('');
+    const uniq = [...new Set(Object.values(r.models_used).filter(Boolean))];
+    modelsEl.innerHTML = uniq.map(m => `<span class="ls-model-tag">${esc(m)}</span>`).join('');
   }
 
   renderLsTable();
@@ -5544,7 +5543,7 @@ async function sendChat(){
   } else if(!reply){
     const errMsg=d?.error||'';
     if(errMsg.includes('429')||errMsg.includes('Rate limit')||errMsg.includes('rate_limited')){
-      reply='⚠️ **Mistral AI rate limit (429)**\n\nThe LLM is throttled. Wait 60 seconds and retry.\n\n💡 Fix in n8n: change model to `mistral-small-latest`';
+      reply='⚠️ **AI engine rate limit (429)**\n\nThe analysis engine is throttled. Wait 60 seconds and retry.';
     } else if(errMsg.includes('timeout')){
       reply='⚠️ **Timeout** — Try a simpler question or check n8n.';
     } else {
