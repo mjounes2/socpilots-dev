@@ -857,6 +857,21 @@ app.get('/api/stats/mitre', authMW, async (req, res) => {
 // ── MITRE ATT&CK COVERAGE ──
 let _mitreCovCache = null, _mitreCovCacheTime = 0, _mitreCovCacheTf = '';
 
+function _mitreCoverageScore(docCount, ruleCount, agentCount, lastSeenMs) {
+  const alertScore = Math.min(1, (docCount  || 0) / 100);
+  const ruleScore  = Math.min(1, (ruleCount || 0) / 5);
+  const agentScore = Math.min(1, (agentCount|| 0) / 3);
+  let recency = 0;
+  if (lastSeenMs) {
+    const age = Date.now() - lastSeenMs;
+    if      (age < 86400000)    recency = 1.0;
+    else if (age < 604800000)   recency = 0.7;
+    else if (age < 2592000000)  recency = 0.4;
+    else                        recency = 0.2;
+  }
+  return Math.round(((alertScore + ruleScore + agentScore + recency) / 4) * 100);
+}
+
 app.get('/api/mitre/coverage', authMW, async (req, res) => {
   try {
     const tf = (['24h','7d','30d','90d'].includes(req.query.timeframe) ? req.query.timeframe : '7d');
@@ -875,27 +890,87 @@ app.get('/api/mitre/coverage', authMW, async (req, res) => {
             rules:     { terms: { field: 'rule.id',           size: 20 } },
             agents:    { terms: { field: 'agent.name',        size: 20 } },
             tactics:   { terms: { field: 'rule.mitre.tactic', size:  5 } },
+            decoders:  { terms: { field: 'decoder.name',      size: 10 } },
             max_level: { max:   { field: 'rule.level' } },
             last_seen: { max:   { field: '@timestamp' } },
           },
         },
+        top_agents: { terms: { field: 'agent.name', size: 20 } },
       },
     });
     const coverage = {};
     for (const b of (r.aggregations?.techniques?.buckets || [])) {
+      const ruleList    = b.rules?.buckets?.map(x => x.key)    || [];
+      const agentList   = b.agents?.buckets?.map(x => x.key)   || [];
+      const decoderList = b.decoders?.buckets?.map(x => x.key) || [];
       coverage[b.key] = {
-        count:     b.doc_count,
-        max_level: Math.round(b.max_level?.value || 0),
-        rules:     b.rules?.buckets?.map(x => x.key) || [],
-        agents:    b.agents?.buckets?.map(x => x.key) || [],
-        tactics:   b.tactics?.buckets?.map(x => x.key) || [],
-        last_seen: b.last_seen?.value || null,
+        count:          b.doc_count,
+        max_level:      Math.round(b.max_level?.value || 0),
+        rules:          ruleList,
+        agents:         agentList,
+        decoders:       decoderList,
+        tactics:        b.tactics?.buckets?.map(x => x.key) || [],
+        last_seen:      b.last_seen?.value || null,
+        coverage_score: _mitreCoverageScore(b.doc_count, ruleList.length, agentList.length, b.last_seen?.value),
+        log_source_diversity: decoderList.length,
       };
     }
-    const result = { coverage, timeframe: tf };
+    const allAgents = (r.aggregations?.top_agents?.buckets || []).map(b => b.key);
+    const result = { coverage, timeframe: tf, all_agents: allAgents };
     _mitreCovCache = result; _mitreCovCacheTime = now; _mitreCovCacheTf = tf;
     res.json(result);
   } catch (e) { console.error('[mitre/coverage]', e.message); res.status(502).json({ error: e.message }); }
+});
+
+app.post('/api/mitre/analyze', authMW, async (req, res) => {
+  try {
+    const { covered, gaps, log_sources, agents, summary } = req.body;
+    if (!covered || !gaps) return res.status(400).json({ error: 'covered and gaps arrays required' });
+
+    // Sanitize — send only IDs, names, counts and log source types; no raw alert data
+    const payload = {
+      covered_techniques: (covered || []).slice(0, 100).map(t => ({
+        id: String(t.id || '').replace(/[^A-Z0-9.]/gi, ''),
+        name: String(t.name || '').slice(0, 80),
+        count: Number(t.count) || 0,
+        score: Number(t.score) || 0,
+        rule_count: Number(t.rule_count) || 0,
+        tactics: Array.isArray(t.tactics) ? t.tactics.slice(0, 3) : [],
+      })),
+      gap_techniques: (gaps || []).slice(0, 150).map(t => ({
+        id: String(t.id || '').replace(/[^A-Z0-9.]/gi, ''),
+        name: String(t.name || '').slice(0, 80),
+        tactics: Array.isArray(t.tactics) ? t.tactics.slice(0, 3) : [],
+      })),
+      log_sources:  (log_sources || []).slice(0, 10).map(s => String(s).slice(0, 50)),
+      agents:       (agents     || []).slice(0, 20).map(a => String(a).slice(0, 50)),
+      summary: {
+        total_techniques: Number(summary?.total_techniques) || 0,
+        covered_count:    Number(summary?.covered_count)    || 0,
+        gap_count:        Number(summary?.gap_count)        || 0,
+        coverage_pct:     Number(summary?.coverage_pct)     || 0,
+      },
+    };
+
+    const LANGCHAIN_URL = process.env.LANGCHAIN_URL || 'http://langchain-agent:8001';
+    const r = await fetch(`${LANGCHAIN_URL}/mitre/analyze`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${process.env.LANGCHAIN_INTERNAL_TOKEN || ''}`,
+      },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(90000),
+    });
+    if (!r.ok) {
+      const err = await r.text();
+      return res.status(502).json({ error: `AI service error: ${err.slice(0, 200)}` });
+    }
+    res.json(await r.json());
+  } catch (e) {
+    console.error('[mitre/analyze]', e.message);
+    res.status(502).json({ error: e.message });
+  }
 });
 
 app.get('/api/mitre/technique/:id', authMW, async (req, res) => {

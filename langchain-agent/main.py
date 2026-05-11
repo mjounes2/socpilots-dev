@@ -1057,6 +1057,172 @@ Return ONLY a JSON array of insight strings (no markdown). Be specific and refer
     }
 
 
+# ═══════════════════════════════════════════════════════════════
+#  MITRE ATT&CK COVERAGE INTELLIGENCE — Multi-LLM Pipeline
+#
+#  Pipeline: GPT-mini (gap prioritization) → Mistral (deep analysis)
+#            → GPT-mini (format recommendations)
+# ═══════════════════════════════════════════════════════════════
+
+class MitreAnalyzeRequest(BaseModel):
+    covered_techniques: list[dict]   # [{id, name, count, rules, agents, coverage_score, tactics}]
+    gap_techniques: list[dict]       # [{id, name, tactics}]
+    log_sources: list[str]           # available source types: ["proxy","server","cloud_api",...]
+    agents: list[str]                # monitored agent names
+    summary: dict                    # {covered, gaps, pct, timeframe}
+
+
+@app.post("/mitre/analyze")
+async def analyze_mitre_coverage(req: MitreAnalyzeRequest):
+    """
+    Multi-LLM MITRE ATT&CK coverage intelligence pipeline.
+    GPT-mini handles gap prioritization and recommendation formatting.
+    Mistral handles deep gap explanation and attack behavior analysis.
+    """
+    gpt_mini = _get_gpt_mini()
+    mistral  = _get_mistral()
+
+    if not gpt_mini and not mistral:
+        raise HTTPException(status_code=503, detail="No LLM API key configured")
+
+    models_used = {
+        "gap_prioritization": "gpt-4o-mini" if gpt_mini else "mistral-large-latest",
+        "deep_analysis":      "mistral-large-latest" if mistral else "gpt-4o-mini",
+        "recommendations":    "gpt-4o-mini" if gpt_mini else "mistral-large-latest",
+    }
+
+    covered  = req.covered_techniques[:100]
+    gaps     = req.gap_techniques[:200]
+    log_srcs = req.log_sources[:20]
+    agents   = req.agents[:20]
+    summary  = req.summary
+
+    # ── Step 1: GPT-mini — identify top 15 most critical gaps ──
+    priority_llm = gpt_mini or mistral
+    priority_gaps = []
+    try:
+        gap_input = [{"id": g["id"], "name": g["name"], "tactics": g.get("tactics", [])} for g in gaps[:50]]
+        prio_resp = await priority_llm.ainvoke(
+            f"""You are a SOC detection engineer. Select the 15 highest-priority ATT&CK technique gaps to address.
+
+Environment:
+- Available log sources: {json.dumps(log_srcs)}
+- Coverage: {summary.get('covered_count',0)} of {summary.get('total_techniques',0)} techniques covered ({summary.get('coverage_pct',0)}%)
+- Timeframe: {summary.get('timeframe','7d')}
+
+Uncovered gaps: {json.dumps(gap_input)}
+
+Prioritize by:
+1. High-impact tactics: Initial Access, Execution, Persistence, Privilege Escalation, Defense Evasion, Credential Access
+2. Techniques detectable with available log sources ({', '.join(log_srcs) or 'unknown'})
+3. Commonly seen in enterprise attacks
+
+Return ONLY a JSON array of 15 technique IDs in priority order: ["T1059", "T1566", ...]"""
+        )
+        priority_ids = _parse_json_response(prio_resp.content)
+        if isinstance(priority_ids, list):
+            priority_set = {str(p) for p in priority_ids[:15]}
+            priority_gaps = [g for g in gaps if g["id"] in priority_set]
+    except Exception as e:
+        log.warning(f"[mitre-analyze] Gap prioritization failed: {e}")
+        priority_gaps = gaps[:15]
+
+    # ── Step 2: Mistral — deep gap analysis ──────────────────────
+    analysis_llm = mistral or gpt_mini
+    gap_analysis = []
+    try:
+        covered_json = json.dumps([
+            {"id": t["id"], "name": t["name"], "alerts": t.get("count", 0),
+             "rules": t.get("rule_count", 0), "score": t.get("score", 0)}
+            for t in covered[:20]
+        ])
+        pgaps_json = json.dumps([
+            {"id": g["id"], "name": g["name"], "tactics": g.get("tactics", [])}
+            for g in priority_gaps
+        ])
+        resp = await analysis_llm.ainvoke(
+            f"""You are an expert SOC Detection Engineer and MITRE ATT&CK specialist.
+
+Environment telemetry:
+- Log sources: {json.dumps(log_srcs)}
+- Monitored agents/hosts: {json.dumps(agents)}
+- Coverage: {json.dumps(summary)}
+
+Currently covered techniques (evidence): {covered_json}
+
+Priority gaps (no detection coverage): {pgaps_json}
+
+For each gap technique, explain:
+1. Why it likely goes undetected given these log sources
+2. What attack behavior would appear in available telemetry
+3. One specific detection opportunity (Wazuh rule concept or log source to add)
+
+Return ONLY a JSON array (no markdown):
+[{{"id":"T1059","name":"Command and Scripting Interpreter","tactics":["execution"],"why_missing":"...","attack_behavior":"...","detection_opportunity":"..."}}]"""
+        )
+        gap_analysis = _parse_json_response(resp.content)
+        if not isinstance(gap_analysis, list):
+            gap_analysis = []
+    except Exception as e:
+        log.warning(f"[mitre-analyze] Deep analysis failed: {e}")
+        gap_analysis = [{"id": g["id"], "name": g["name"], "tactics": g.get("tactics", []),
+                         "why_missing": "Analysis unavailable", "attack_behavior": "—",
+                         "detection_opportunity": "Review log source coverage"}
+                        for g in priority_gaps[:10]]
+
+    # ── Step 3: GPT-mini — prioritized recommendations ──────────
+    format_llm = gpt_mini or mistral
+    recommendations = []
+    try:
+        fmt_resp = await format_llm.ainvoke(
+            f"""You are a SOC Detection Engineering lead. Produce 6-8 actionable recommendations to improve ATT&CK coverage.
+
+Environment: coverage={summary.get('coverage_pct',0)}%, log_sources={json.dumps(log_srcs)}, agents={json.dumps(agents)}
+Gap analysis: {json.dumps(gap_analysis[:15])}
+
+Group by effort level. Focus on what's achievable with available log sources.
+
+Return ONLY a JSON array (no markdown):
+[{{"effort":"quick_win|medium_effort|strategic","title":"Enable Wazuh Auditd on Linux","impact":"Covers 12 gaps in Execution","techniques_covered":["T1059.004","T1222"],"steps":"Brief action description"}}]"""
+        )
+        recommendations = _parse_json_response(fmt_resp.content)
+        if not isinstance(recommendations, list):
+            recommendations = []
+    except Exception as e:
+        log.warning(f"[mitre-analyze] Recommendations step failed: {e}")
+
+    # ── Tactic breakdown — server-side aggregation ───────────────
+    tactic_counts: dict = {}
+    for tech in covered:
+        for tactic in tech.get("tactics", []):
+            tactic_counts.setdefault(tactic, {"covered": 0, "gaps": 0})
+            tactic_counts[tactic]["covered"] += 1
+    for tech in gaps:
+        for tactic in tech.get("tactics", []):
+            tactic_counts.setdefault(tactic, {"covered": 0, "gaps": 0})
+            tactic_counts[tactic]["gaps"] += 1
+
+    tactic_breakdown = []
+    for tactic, counts in tactic_counts.items():
+        total = counts["covered"] + counts["gaps"]
+        pct   = round(counts["covered"] / total * 100) if total else 0
+        tactic_breakdown.append({"tactic": tactic, "covered": counts["covered"],
+                                  "gaps": counts["gaps"], "total": total, "pct": pct})
+    tactic_breakdown.sort(key=lambda x: x["pct"], reverse=True)
+
+    log.info(f"[mitre-analyze] gaps={len(gap_analysis)} recs={len(recommendations)} tactics={len(tactic_breakdown)}")
+
+    return {
+        "gap_analysis":         gap_analysis,
+        "recommendations":      recommendations,
+        "tactic_breakdown":     tactic_breakdown,
+        "models_used":          models_used,
+        "priority_gaps_count":  len(priority_gaps),
+        "total_gaps":           len(gaps),
+        "total_covered":        len(covered),
+    }
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8001, log_level="info")

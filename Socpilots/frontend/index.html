@@ -538,6 +538,38 @@ body::before{
 .ls-ai-insight::before{content:'→ ';color:var(--c)}
 .ls-model-badge{display:inline-flex;gap:6px;flex-wrap:wrap;margin-top:8px}
 .ls-model-tag{font-size:10px;padding:2px 7px;border-radius:10px;background:rgba(0,229,255,.1);color:var(--c);border:1px solid rgba(0,229,255,.2)}
+/* ── MITRE Intelligence Panel ──────────────────────────────── */
+.mc-intel-panel{background:rgba(0,229,255,.03);border:1px solid rgba(0,229,255,.15);border-radius:8px;padding:16px 18px;margin-top:12px}
+.mc-intel-panel.mc-hidden{display:none}
+.mc-intel-hd{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px}
+.mc-intel-hd h3{font-size:13px;font-weight:700;color:var(--c);letter-spacing:.5px;text-transform:uppercase;margin:0}
+.mc-tactic-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px;margin-bottom:16px}
+.mc-tactic-card{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.07);border-radius:6px;padding:8px 10px}
+.mc-tactic-name{font-size:10px;font-weight:600;color:var(--txt);text-transform:uppercase;letter-spacing:.3px;margin-bottom:5px}
+.mc-tactic-bar-wrap{height:6px;background:rgba(255,255,255,.08);border-radius:3px;overflow:hidden}
+.mc-tactic-bar{height:100%;border-radius:3px;transition:width .4s}
+.mc-tactic-stats{display:flex;justify-content:space-between;margin-top:4px;font-size:9px;color:var(--txt2);font-family:var(--fm)}
+.mc-gap-list{list-style:none;padding:0;margin:0}
+.mc-gap-item{padding:10px 12px;border:1px solid rgba(255,255,255,.06);border-radius:6px;margin-bottom:8px;background:rgba(255,23,68,.04)}
+.mc-gap-item:last-child{margin-bottom:0}
+.mc-gap-hd{display:flex;align-items:center;gap:8px;margin-bottom:5px}
+.mc-gap-id{font-family:var(--fm);font-size:10px;font-weight:700;color:var(--r)}
+.mc-gap-name{font-size:11px;font-weight:600;color:var(--txt)}
+.mc-gap-tactic{font-size:9px;padding:1px 5px;border-radius:3px;background:rgba(255,255,255,.08);color:var(--txt2)}
+.mc-gap-why{font-size:11px;color:var(--txt2);line-height:1.5;margin-bottom:4px}
+.mc-gap-opp{font-size:11px;color:var(--g);line-height:1.5}
+.mc-gap-opp::before{content:'💡 ';font-style:normal}
+.mc-rec-list{list-style:none;padding:0;margin:0}
+.mc-rec-item{padding:10px 12px;border:1px solid rgba(255,255,255,.06);border-radius:6px;margin-bottom:8px;background:rgba(0,229,255,.03)}
+.mc-rec-item:last-child{margin-bottom:0}
+.mc-rec-effort{font-size:9px;padding:2px 6px;border-radius:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px}
+.mc-eff-quick{background:rgba(0,200,83,.15);color:#69f0ae;border:1px solid rgba(0,200,83,.3)}
+.mc-eff-medium{background:rgba(255,193,7,.12);color:#ffd54f;border:1px solid rgba(255,193,7,.3)}
+.mc-eff-strategic{background:rgba(100,181,246,.12);color:#90caf9;border:1px solid rgba(100,181,246,.25)}
+.mc-rec-title{font-size:12px;font-weight:600;color:var(--txt);margin:5px 0 3px}
+.mc-rec-impact{font-size:11px;color:var(--txt2);line-height:1.4}
+.mc-rec-tech{font-size:9px;font-family:var(--fm);color:var(--c);margin-top:3px}
+.mc-section-hd{font-size:11px;font-weight:700;color:var(--txt2);text-transform:uppercase;letter-spacing:.8px;margin:14px 0 8px;padding-bottom:4px;border-bottom:1px solid rgba(255,255,255,.07)}
 </style>
 </head>
 <body>
@@ -2379,6 +2411,7 @@ sshd: Failed" style="min-height:80px"></textarea></div>
         </div>
         <button class="btn btn-sm" onclick="mitreExportNav()" style="font-size:10px">↓ Navigator JSON</button>
         <button class="btn btn-p btn-sm" onclick="loadMitre()" style="font-size:10px">↻ Refresh</button>
+        <button class="btn btn-sm" id="mc-intel-btn" onclick="runMitreAnalysis()" style="font-size:10px;background:rgba(0,229,255,.12);border-color:rgba(0,229,255,.35);color:var(--c)">🧠 AI Intelligence</button>
       </div>
     </div>
   </div>
@@ -2386,6 +2419,17 @@ sshd: Failed" style="min-height:80px"></textarea></div>
   <!-- Matrix -->
   <div class="card" style="padding:12px">
     <div id="mc-matrix-wrap">
+      <div class="loading"><div class="spin"></div></div>
+    </div>
+  </div>
+
+  <!-- AI Intelligence Panel -->
+  <div class="card mc-intel-panel mc-hidden" id="mc-intel-panel">
+    <div class="mc-intel-hd">
+      <h3>🧠 ATT&CK Coverage Intelligence</h3>
+      <div id="mc-intel-models" class="ls-model-badge"></div>
+    </div>
+    <div id="mc-intel-body">
       <div class="loading"><div class="spin"></div></div>
     </div>
   </div>
@@ -4123,6 +4167,139 @@ function mitreExportNav() {
   a.download = `socpilots-attck-coverage-${_mitreTf}-${new Date().toISOString().slice(0,10)}.json`;
   a.click();
   URL.revokeObjectURL(a.href);
+}
+
+// ─── MITRE AI INTELLIGENCE ───────────────────────────────────
+async function runMitreAnalysis() {
+  if (!_mitreCovData) { alert('Load coverage data first — click ↻ Refresh.'); return; }
+  const panel = document.getElementById('mc-intel-panel');
+  const body  = document.getElementById('mc-intel-body');
+  const btn   = document.getElementById('mc-intel-btn');
+  panel.classList.remove('mc-hidden');
+  body.innerHTML = '<div class="loading"><div class="spin"></div><span style="margin-left:10px;font-size:12px;color:var(--txt2)">Running multi-LLM ATT&CK analysis…</span></div>';
+  document.getElementById('mc-intel-models').innerHTML = '';
+  if (btn) { btn.disabled = true; btn.textContent = '⌛ Analyzing…'; }
+
+  const covered = [], gaps = [];
+  MITRE_TECHS.forEach(([id, name, tacticIds]) => {
+    const d = _mitreCovData[id];
+    const tactics = tacticIds.map(tid => {
+      const t = MITRE_TACTICS.find(x => x.id === tid);
+      return t ? t.n.toLowerCase().replace(/\s+/g, '_') : tid;
+    });
+    if (d && d.count > 0) {
+      covered.push({ id, name, tactics, count: d.count,
+        rules: d.rules || [], agents: d.agents || [],
+        coverage_score: d.coverage_score || 0 });
+    } else {
+      gaps.push({ id, name, tactics });
+    }
+  });
+
+  // Build log sources list from _lsData if available
+  const logSources = _lsData
+    ? [...new Set(_lsData.map(s => s.type).filter(Boolean))]
+    : [];
+  const agents = [...new Set(
+    Object.values(_mitreCovData).flatMap(d => d.agents || []).filter(Boolean)
+  )].slice(0, 20);
+
+  const totalTechs = MITRE_TECHS.length;
+  const payload = {
+    covered,
+    gaps,
+    log_sources: logSources,
+    agents,
+    summary: {
+      total_techniques: totalTechs,
+      covered_count:    covered.length,
+      gap_count:        gaps.length,
+      coverage_pct:     totalTechs ? Math.round(covered.length / totalTechs * 100) : 0,
+    }
+  };
+
+  const d = await P('/api/mitre/analyze', payload);
+  if (btn) { btn.disabled = false; btn.textContent = '🧠 AI Intelligence'; }
+
+  if (!d || d.error) {
+    body.innerHTML = errBnr(d?.error || 'AI analysis failed');
+    return;
+  }
+
+  // Model attribution
+  const modelsEl = document.getElementById('mc-intel-models');
+  if (modelsEl && d.models_used) {
+    modelsEl.innerHTML = Object.entries(d.models_used).map(([role, m]) =>
+      `<span class="ls-model-tag" title="${esc(role)}">${esc(m)}</span>`
+    ).join('');
+  }
+
+  // ── Tactic breakdown ──
+  let tacticHtml = '';
+  if (d.tactic_breakdown?.length) {
+    tacticHtml = `<div class="mc-section-hd">Tactic Coverage Breakdown</div>
+      <div class="mc-tactic-grid">
+        ${d.tactic_breakdown.map(t => {
+          const barColor = t.pct >= 70 ? '#00c853' : t.pct >= 40 ? '#ffc107' : t.pct >= 10 ? '#ff6d00' : '#ff1744';
+          const name = t.tactic.replace(/_/g,' ').replace(/\b\w/g, c => c.toUpperCase());
+          return `<div class="mc-tactic-card">
+            <div class="mc-tactic-name">${esc(name)}</div>
+            <div class="mc-tactic-bar-wrap"><div class="mc-tactic-bar" style="width:${t.pct}%;background:${barColor}"></div></div>
+            <div class="mc-tactic-stats"><span>${t.covered}/${t.total}</span><span style="color:${barColor}">${t.pct}%</span></div>
+          </div>`;
+        }).join('')}
+      </div>`;
+  }
+
+  // ── Gap analysis ──
+  let gapsHtml = '';
+  if (d.gap_analysis?.length) {
+    gapsHtml = `<div class="mc-section-hd">Priority Detection Gaps (${d.gap_analysis.length} of ${d.total_gaps} uncovered)</div>
+      <ul class="mc-gap-list">
+        ${d.gap_analysis.map(g => {
+          const tactics = (g.tactics||[]).slice(0,3).map(t =>
+            `<span class="mc-gap-tactic">${esc(t.replace(/_/g,' '))}</span>`).join(' ');
+          return `<li class="mc-gap-item">
+            <div class="mc-gap-hd">
+              <span class="mc-gap-id">${esc(g.id)}</span>
+              <span class="mc-gap-name">${esc(g.name)}</span>
+              ${tactics}
+            </div>
+            ${g.why_missing ? `<div class="mc-gap-why">${esc(g.why_missing)}</div>` : ''}
+            ${g.detection_opportunity ? `<div class="mc-gap-opp">${esc(g.detection_opportunity)}</div>` : ''}
+          </li>`;
+        }).join('')}
+      </ul>`;
+  }
+
+  // ── Recommendations ──
+  let recsHtml = '';
+  if (d.recommendations?.length) {
+    const effortOrder = { quick_win: 0, medium_effort: 1, strategic: 2 };
+    const sorted = [...d.recommendations].sort((a,b) =>
+      (effortOrder[a.effort]??99) - (effortOrder[b.effort]??99));
+    recsHtml = `<div class="mc-section-hd">Prioritized Recommendations (${d.recommendations.length})</div>
+      <ul class="mc-rec-list">
+        ${sorted.map(r => {
+          const effortClass = r.effort === 'quick_win' ? 'mc-eff-quick'
+            : r.effort === 'medium_effort' ? 'mc-eff-medium' : 'mc-eff-strategic';
+          const effortLabel = r.effort === 'quick_win' ? 'Quick Win'
+            : r.effort === 'medium_effort' ? 'Medium Effort' : 'Strategic';
+          const techs = (r.techniques_covered||[]).slice(0,5).join(', ');
+          return `<li class="mc-rec-item">
+            <span class="mc-rec-effort ${effortClass}">${esc(effortLabel)}</span>
+            <div class="mc-rec-title">${esc(r.title||'')}</div>
+            <div class="mc-rec-impact">${esc(r.impact||'')}</div>
+            ${techs ? `<div class="mc-rec-tech">${esc(techs)}</div>` : ''}
+          </li>`;
+        }).join('')}
+      </ul>`;
+  }
+
+  body.innerHTML = tacticHtml + gapsHtml + recsHtml
+    || '<div style="color:var(--txt3);font-size:12px;padding:10px">No analysis results returned.</div>';
+
+  panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 // ─── LOG SOURCES INTELLIGENCE ────────────────────────────────
