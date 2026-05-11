@@ -1,0 +1,49 @@
+# gitleaks.toml — Secret scanning configuration for SOCPilots
+# Run: docker run --rm -v $(pwd):/repo zricethezav/gitleaks:latest detect --source=/repo -v
+
+[allowlist]
+  description = "Allowlist for false positives"
+  paths = [
+    ".env.example",
+    ".env.template",
+    "MCP-WAZUH/.env.example",
+    "Socpilots/configs/.env.template",
+  ]
+  regexes = [
+    # Placeholder patterns — not real secrets
+    "YOUR_.*",
+    "CHANGE_ME.*",
+    "<CHANGE.*",
+    "example\\.com",
+    "1\\.2\\.3\\.4",
+    "192\\.168\\.1\\.",
+    "authless",
+    # Test/mock values in test files
+    "test_.*_key",
+  ]
+
+[[rules]]
+  id = "openai-api-key"
+  description = "OpenAI API Key"
+  regex = '''sk-[a-zA-Z0-9]{20,}'''
+  tags = ["key", "openai"]
+
+[[rules]]
+  id = "generic-api-key"
+  description = "Generic API Key pattern"
+  regex = '''(?i)(api[_-]?key|apikey)\s*[:=]\s*['\"][a-zA-Z0-9\-_\.]{20,}['\"]'''
+  tags = ["key", "api"]
+
+[[rules]]
+  id = "github-token"
+  description = "GitHub Personal Access Token"
+  regex = '''ghp_[a-zA-Z0-9]{36,}'''
+  tags = ["key", "github"]
+
+[[rules]]
+  id = "password-in-code"
+  description = "Hardcoded password assignment"
+  regex = '''(?i)(password|passwd|pwd)\s*[:=]\s*['\"][^'\"$\{]{8,}['\"]'''
+  tags = ["password"]
+  [rules.allowlist]
+    regexes = ["hash|bcrypt|test|example|change|placeholder|YOUR_"]

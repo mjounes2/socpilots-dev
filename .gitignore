@@ -1,9 +1,21 @@
-# Environment files — copy .env.template and fill values on the server
+# Environment files — NEVER commit real values
 .env
 *.env
 .env.*
 !.env.template
 !.env.example
+
+# All env-style files with real credentials patterns
+*.env.production
+*.env.staging
+*.env.local
+*.env.socpilots
+*.env.customer
+configs/.env
+configs/*.env
+**/configs/.env*
+!**/configs/.env.template
+!**/configs/.env.example
 
 # Python
 __pycache__/
