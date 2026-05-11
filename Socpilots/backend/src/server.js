@@ -3396,6 +3396,19 @@ app.get('/api/ueba/graph-nodes/:entity', authMW, async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+app.get('/api/ueba/path', authMW, async (req, res) => {
+  try {
+    const { from, to } = req.query;
+    if (!from || !to) return res.status(400).json({ error: 'from and to query params required' });
+    const path = await ueba.getAttackPath(from.trim(), to.trim());
+    if (!path) return res.json({ found: false, from, to, message: 'No path found between these entities' });
+    res.json({ found: true, ...path });
+  } catch (e) {
+    console.error('[ueba/path]', e.message);
+    res.status(502).json({ error: e.message });
+  }
+});
+
 // ═══════════════════════════════════════════════════════════════
 // ─── USERS API (admin only) ─────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════

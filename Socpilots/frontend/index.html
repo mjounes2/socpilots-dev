@@ -1930,6 +1930,16 @@ sshd: Failed" style="min-height:80px"></textarea></div>
       <div id="lb-exp-profile" style="display:none">
         <div id="lb-exp-profile-content" style="margin-top:8px;padding:10px 14px;background:rgba(156,39,176,.05);border-left:3px solid rgba(156,39,176,.5);font-size:12px;color:var(--txt2);line-height:1.6;border-radius:0 4px 4px 0"></div>
       </div>
+      <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--b1)">
+        <div style="font-size:10px;color:var(--txt3);font-family:var(--fm);letter-spacing:.8px;margin-bottom:7px">🎯 ATTACK PATH FINDER</div>
+        <div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap">
+          <input class="fi" id="path-from" placeholder="From entity…" style="flex:1;min-width:100px;font-size:11px" onkeydown="if(event.key==='Enter')findAttackPath()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="rgba(255,215,0,.6)" stroke-width="2" style="width:14px;height:14px;flex-shrink:0"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          <input class="fi" id="path-to"   placeholder="To entity…"   style="flex:1;min-width:100px;font-size:11px" onkeydown="if(event.key==='Enter')findAttackPath()">
+          <button class="btn btn-sm" onclick="findAttackPath()" style="background:rgba(255,215,0,.1);border-color:rgba(255,215,0,.4);color:#ffd700;white-space:nowrap">Find Path</button>
+        </div>
+        <div id="entity-path-result" style="display:none;margin-top:10px"></div>
+      </div>
     </div>
   </div>
 
@@ -1950,12 +1960,14 @@ sshd: Failed" style="min-height:80px"></textarea></div>
         <button class="btn btn-sm ueba-fbtn" id="filter-tactic-impossible_travel"    onclick="uebaFilter('tactic:impossible_travel')"    style="color:#ff174466;border-color:#ff174433">Init.Access</button>
         <button class="btn btn-sm ueba-fbtn" id="filter-tactic-privilege_escalation" onclick="uebaFilter('tactic:privilege_escalation')" style="color:#ff6d0066;border-color:#ff6d0033">Priv.Esc</button>
         <input  id="ueba-graph-search" class="fi" placeholder="search…" style="width:100px;font-size:10px;padding:3px 7px" oninput="uebaSearchNodes(this.value)">
+        <button class="btn btn-sm" id="ueba-path-btn" onclick="togglePathMode()" title="Path mode: click two nodes to find attack path between them" style="background:rgba(255,215,0,.08);border-color:rgba(255,215,0,.3);color:#ffd700">🎯 Path</button>
         <button class="btn btn-sm btn-h" onclick="uebaResetZoom()">⊙ Reset</button>
         <button class="btn btn-sm btn-p" onclick="uebaExpandGraph()">⛶ Fullscreen</button>
       </div>
     </div>
     <div id="ueba-force-container" style="width:100%;height:520px;position:relative;overflow:hidden;border-radius:4px;background:var(--bg2)"></div>
-    <div style="font-size:9px;color:var(--txt3);font-family:var(--fm);margin-top:6px;padding:0 2px">Drag nodes · Scroll to zoom · Click to highlight · <strong style="color:rgba(0,229,255,.5)">Shift+click</strong> to Ask AI · Double-click to explore · Node size = risk score</div>
+    <div id="ueba-graph-hint" style="font-size:9px;color:var(--txt3);font-family:var(--fm);margin-top:6px;padding:0 2px">Drag nodes · Scroll to zoom · Click to highlight · <strong style="color:rgba(0,229,255,.5)">Shift+click</strong> to Ask AI · Double-click to explore · Node size = risk score · <strong style="color:rgba(255,215,0,.6)">🎯 Path</strong> to trace attack chain</div>
+    <div id="ueba-path-result" style="display:none;margin-top:10px;padding:12px 14px;background:rgba(255,215,0,.06);border-left:3px solid rgba(255,215,0,.6);border-radius:0 4px 4px 0;font-size:12px;color:var(--txt2);font-family:var(--fm)"></div>
   </div>
 
   <!-- Anomaly Panels Row 1 -->
@@ -2984,6 +2996,7 @@ let _assetPage=1,_assetPageSize=50;
 let _agPage=1,_agPageSize=20;
 let _lbPage=1,_lbPageSize=20;
 let _uebaTimeframe='24h';
+let _pathMode=false, _pathSource=null;
 function _uebaHours(){return {'24h':24,'7d':168,'30d':720}[_uebaTimeframe]||24;}
 function _uebaTfLabel(){return {'24h':'last 24h','7d':'last 7 days','30d':'last 30 days'}[_uebaTimeframe]||'last 24h';}
 function setUebaTimeframe(tf){
@@ -7002,6 +7015,134 @@ function askAIAboutUeba(entity, riskScore){
   if(inp){inp.placeholder=`Ask about ${entity}…`;inp.focus();}
 }
 
+// ── Attack-Path Mode ──────────────────────────────────────────
+function togglePathMode(){
+  _pathMode=!_pathMode;
+  _pathSource=null;
+  const btn=document.getElementById('ueba-path-btn');
+  if(btn){
+    btn.style.background=_pathMode?'rgba(255,215,0,.22)':'rgba(255,215,0,.08)';
+    btn.style.borderColor=_pathMode?'rgba(255,215,0,.8)':'rgba(255,215,0,.3)';
+    btn.textContent=_pathMode?'🎯 Path ON':'🎯 Path';
+  }
+  const hint=document.getElementById('ueba-graph-hint');
+  if(hint){
+    hint.innerHTML=_pathMode
+      ?'<strong style="color:#ffd700">PATH MODE:</strong> Click 1st node (source) then 2nd node (destination) to trace attack path'
+      :'Drag nodes · Scroll to zoom · Click to highlight · <strong style="color:rgba(0,229,255,.5)">Shift+click</strong> to Ask AI · Double-click to explore · Node size = risk score · <strong style="color:rgba(255,215,0,.6)">🎯 Path</strong> to trace attack chain';
+  }
+  // clear any previous path result
+  const pr=document.getElementById('ueba-path-result');
+  if(pr){pr.style.display='none';pr.innerHTML='';}
+}
+
+async function findAttackPath(toOverride){
+  const fromEl=document.getElementById('path-from');
+  const toEl=document.getElementById('path-to');
+  const from=(fromEl?.value||'').trim();
+  const to=(toOverride||(toEl?.value||'')).trim();
+  const resultEl=document.getElementById('entity-path-result');
+  const graphResultEl=document.getElementById('ueba-path-result');
+
+  if(!from||!to){
+    if(resultEl){resultEl.style.display='block';resultEl.innerHTML=`<div style="color:#ff9800;font-size:11px;font-family:var(--fm)">Enter both From and To entities</div>`;}
+    return;
+  }
+  if(resultEl){resultEl.style.display='block';resultEl.innerHTML=`<div style="font-size:11px;color:var(--txt3);font-family:var(--fm)">🔍 Finding path from <em>${esc(from)}</em> to <em>${esc(to)}</em>…</div>`;}
+  if(graphResultEl){graphResultEl.style.display='block';graphResultEl.innerHTML=`<div style="font-size:11px;color:var(--txt3)">🔍 Searching for path…</div>`;}
+
+  const d=await G(`/api/ueba/path?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
+  if(!d||d.error){
+    const msg=`<div style="color:var(--r);font-size:11px;font-family:var(--fm)">Error: ${esc(d?.error||'Request failed')}</div>`;
+    if(resultEl){resultEl.innerHTML=msg;}
+    if(graphResultEl){graphResultEl.innerHTML=msg;}
+    return;
+  }
+  if(!d.found){
+    const msg=`<div style="font-size:11px;color:#ff9800;font-family:var(--fm)">⚠ No path found between <strong>${esc(from)}</strong> and <strong>${esc(to)}</strong>. Entities may not be connected in the graph.</div>`;
+    if(resultEl){resultEl.innerHTML=msg;}
+    if(graphResultEl){graphResultEl.innerHTML=msg;}
+    return;
+  }
+
+  const html=renderPathResult(d);
+  if(resultEl){resultEl.innerHTML=html;}
+  if(graphResultEl){graphResultEl.innerHTML=html;}
+
+  // Highlight path in current graph
+  _highlightAttackPath(d);
+
+  // Exit path mode after finding
+  if(_pathMode){togglePathMode();}
+}
+
+function renderPathResult(d){
+  const devColor=d.maxDeviation>=70?'var(--r)':d.maxDeviation>=40?'#ff9800':'#ffd700';
+  const chain=d.nodes.map(n=>`<span style="display:inline-flex;align-items:center;gap:4px">
+    <span style="background:rgba(255,215,0,.12);border:1px solid rgba(255,215,0,.4);border-radius:4px;padding:2px 7px;font-size:10px;color:#ffd700;font-family:var(--fm)">${esc(n.id)}</span>
+    <span style="font-size:9px;color:var(--txt3)">(risk:${n.risk})</span>
+  </span>`).join('<span style="color:rgba(255,215,0,.5);padding:0 4px;font-size:14px">→</span>');
+
+  return `
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap">
+      <span style="font-size:10px;color:#ffd700;font-family:var(--fm);letter-spacing:.5px">🎯 ATTACK PATH FOUND</span>
+      <span style="font-size:10px;font-family:var(--fm);color:var(--txt3)">${d.hops} hop${d.hops!==1?'s':''}</span>
+      <span style="font-size:10px;font-family:var(--fm);color:${devColor}">Max Deviation: ${d.maxDeviation.toFixed(0)}</span>
+      <button class="btn btn-sm" onclick="askAIAboutPath('${esc(d.from)}','${esc(d.to)}',${d.hops})" style="font-size:9px;padding:3px 8px;background:rgba(0,229,255,.08);border-color:rgba(0,229,255,.3);color:var(--c)">💬 Ask AI</button>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;align-items:center;gap:5px;margin-bottom:10px;padding:8px 10px;background:rgba(255,215,0,.04);border-radius:4px">
+      ${chain}
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:6px">
+      ${d.edges.map(e=>`
+        <div style="padding:5px 8px;background:rgba(255,215,0,.05);border:1px solid rgba(255,215,0,.15);border-radius:4px;font-size:10px;font-family:var(--fm)">
+          <div style="color:#ffd700;font-weight:600">${esc(e.source)} → ${esc(e.target)}</div>
+          <div style="color:var(--txt3);margin-top:2px">${esc(e.rel)} · dev:${e.deviation.toFixed?.(0)??e.deviation}</div>
+          ${(e.flags&&e.flags.length)?`<div style="margin-top:3px;display:flex;gap:3px;flex-wrap:wrap">${e.flags.slice(0,2).map(f=>`<span style="font-size:8px;padding:1px 4px;background:rgba(255,215,0,.1);color:#ffd700;border-radius:3px">${f.replace(/_/g,' ')}</span>`).join('')}</div>`:``}
+        </div>`).join('')}
+    </div>`;
+}
+
+function askAIAboutPath(from, to, hops){
+  _alertContext={ruleId:'UEBA-PATH',description:`Attack path traced: ${from} → ${to} (${hops} hops). Investigate lateral movement and privilege escalation chain.`,agent:from,srcIp:'',severity:'critical',timestamp:new Date().toISOString(),mitre:['T1021','T1078']};
+  const chip=document.getElementById('chat-alert-chip');
+  const lbl=document.getElementById('chat-alert-chip-name');
+  if(chip&&lbl){lbl.textContent=`Attack Path: ${from} → ${to} (${hops} hops)`;chip.style.display='flex';}
+  go('copilot');
+}
+
+function _highlightAttackPath(pathData){
+  if(!window._uebaGraph)return;
+  const pathNodeIds=new Set(pathData.nodes.map(n=>n.id));
+  const pathEdgePairs=new Set(pathData.edges.map(e=>`${e.source}||${e.target}`));
+
+  const key=window._uebaGraph._fsSvg?'_fs':'_inline';
+  const svgEl=window._uebaGraph[key+'Svg']||window._uebaGraph['_inlineSvg'];
+  if(!svgEl)return;
+
+  // Highlight using D3 selections on existing rendered elements
+  d3.select(svgEl).selectAll('.ueba-node')
+    .attr('opacity',d=>pathNodeIds.has(d.id)?1:.15)
+    .select('circle')
+    .attr('stroke',d=>pathNodeIds.has(d.id)?'#ffd700':null)
+    .attr('stroke-width',d=>pathNodeIds.has(d.id)?3:null)
+    .style('filter',d=>pathNodeIds.has(d.id)?'drop-shadow(0 0 10px rgba(255,215,0,.8))':null);
+
+  d3.select(svgEl).selectAll('.ueba-edge')
+    .attr('opacity',e=>{
+      const s=e.source?.id||e.source, t=e.target?.id||e.target;
+      return(pathEdgePairs.has(`${s}||${t}`)||pathEdgePairs.has(`${t}||${s}`))?1:.08;
+    })
+    .attr('stroke',e=>{
+      const s=e.source?.id||e.source, t=e.target?.id||e.target;
+      return(pathEdgePairs.has(`${s}||${t}`)||pathEdgePairs.has(`${t}||${s}`))? '#ffd700':null;
+    })
+    .attr('stroke-width',e=>{
+      const s=e.source?.id||e.source, t=e.target?.id||e.target;
+      return(pathEdgePairs.has(`${s}||${t}`)||pathEdgePairs.has(`${t}||${s}`))? 3:null;
+    });
+}
+
 function renderUebaSection(elId,items,rowFn,emptyMsg){
   const el=document.getElementById(elId);
   if(!el)return;
@@ -7321,12 +7462,35 @@ function renderForceGraphD3(container, allNodes, allEdges, isFullscreen){
   // Node selection
   let _sel=null;
   function selectNode(ev,d){
+    const t=document.getElementById('ueba-tooltip');if(t)t.style.display='none';
     // Shift+click → Ask AI about this entity
-    if(ev.shiftKey){
-      const t=document.getElementById('ueba-tooltip');if(t)t.style.display='none';
-      askAIAboutUeba(d.id, d.risk||0);
+    if(ev.shiftKey){ askAIAboutUeba(d.id, d.risk||0); return; }
+
+    // Path mode — two-click source → destination
+    if(_pathMode){
+      if(!_pathSource){
+        // First click: mark source (gold ring)
+        _pathSource=d.id;
+        node.select('circle')
+          .attr('stroke',n=>n.id===d.id?'#ffd700':null)
+          .attr('stroke-width',n=>n.id===d.id?3:null)
+          .style('filter',n=>n.id===d.id?'drop-shadow(0 0 10px rgba(255,215,0,.8))':null);
+        const hint=document.getElementById('ueba-graph-hint');
+        if(hint)hint.innerHTML=`<strong style="color:#ffd700">PATH MODE:</strong> Source set: <strong style="color:#ffd700">${esc(d.id)}</strong> — now click a destination node`;
+        // Pre-fill path-from field
+        const pfEl=document.getElementById('path-from');if(pfEl)pfEl.value=d.id;
+      } else {
+        // Second click: trigger path lookup
+        const toId=d.id;
+        const pfEl=document.getElementById('path-to');if(pfEl)pfEl.value=toId;
+        findAttackPath(toId);
+        _pathSource=null;
+        // reset circle styles
+        node.select('circle').attr('stroke',null).attr('stroke-width',null).style('filter',null);
+      }
       return;
     }
+
     if(_sel===d.id){ _sel=null; link.attr('opacity',1).attr('stroke-width',e=>e.deviation>=70?2.5:1.5); node.attr('opacity',1); return; }
     _sel=d.id;
     const connected=new Set([d.id]);

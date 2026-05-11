@@ -843,13 +843,68 @@ async function ping() {
   try { await run('RETURN 1'); return true; } catch { return false; }
 }
 
+// ── Attack-Path Finding ───────────────────────────────────────
+// Returns shortest path between two entities using Neo4j shortestPath().
+// Returns null when no path exists or entities are not in graph.
+async function getAttackPath(fromEntity, toEntity) {
+  const records = await run(
+    `MATCH (a), (b)
+     WHERE (a.name = $from OR a.address = $from)
+       AND (b.name = $to   OR b.address = $to)
+     WITH a, b LIMIT 1
+     MATCH path = shortestPath((a)-[*..10]-(b))
+     WITH path, nodes(path) AS ns, relationships(path) AS rs
+     RETURN
+       [n IN ns | {
+         id:         coalesce(n.name, n.address),
+         type:       labels(n)[0],
+         risk:       coalesce(n.risk_score, 0),
+         events:     coalesce(n.total_events, 0),
+         anomalies:  coalesce(n.anomaly_count, 0),
+         last_seen:  n.last_seen,
+         last_anomaly: n.last_anomaly
+       }] AS path_nodes,
+       [r IN rs | {
+         rel:       type(r),
+         deviation: coalesce(r.deviation_score, 0),
+         flags:     r.flags,
+         time:      r.time
+       }] AS path_rels,
+       length(path) AS hops
+     LIMIT 1`,
+    { from: fromEntity, to: toEntity }
+  );
+  if (!records.length) return null;
+  const rec = records[0];
+  const pathNodes = rec.get('path_nodes').map(n => ({
+    id:          n.id,
+    type:        n.type || 'Unknown',
+    risk:        n.risk?.toNumber?.()       ?? n.risk       ?? 0,
+    events:      n.events?.toNumber?.()     ?? n.events     ?? 0,
+    anomalies:   n.anomalies?.toNumber?.()  ?? n.anomalies  ?? 0,
+    last_seen:   n.last_seen   || null,
+    last_anomaly: n.last_anomaly || null,
+  }));
+  const pathEdges = rec.get('path_rels').map((e, i) => ({
+    source:    pathNodes[i]?.id,
+    target:    pathNodes[i + 1]?.id,
+    rel:       e.rel,
+    deviation: e.deviation?.toNumber?.() ?? e.deviation ?? 0,
+    flags:     e.flags || [],
+    time:      e.time,
+  }));
+  const hops = rec.get('hops')?.toNumber?.() ?? rec.get('hops') ?? 0;
+  const maxDeviation = pathEdges.length ? Math.max(...pathEdges.map(e => e.deviation)) : 0;
+  return { nodes: pathNodes, edges: pathEdges, hops, maxDeviation, from: fromEntity, to: toEntity };
+}
+
 module.exports = {
   initSchema, ingestEvent, recalcBaselines, backfillRiskScores,
   getRiskLeaderboard, getUserProfile,
   getAllAnomalies, getEntityGraph, getUebaStats, ping,
   detectLateralMovement,
   detectMultiStageAttack, detectSharedCredentials,
-  getGraphNodes,
+  getGraphNodes, getAttackPath,
   ANOMALY_WEIGHTS,
 };
 
