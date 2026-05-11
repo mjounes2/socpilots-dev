@@ -715,18 +715,26 @@ async function getGraphNodes(entity) {
 }
 
 // ── Get All Anomalies ─────────────────────────────────────────
+// Each detection query gets an individual 8s timeout — slow queries return []
+// rather than blocking the whole response. Uses allSettled so one failure
+// never prevents the other 8 results from rendering.
 async function getAllAnomalies(hours = 24) {
-  const [lateral, travel, privesc, afterhours, hf, rare, newconn, multistage, sharedcreds] = await Promise.all([
-    detectLateralMovement(hours),
-    detectImpossibleTravel(),           // always uses a fixed minute window (10 min)
-    detectPrivilegeEscalation(hours),
-    detectAfterHoursAccess(hours),
-    detectHighFrequencyLogins(),        // always 1h window — measures burst rate
-    detectRareProcesses(),              // all-time rarity, no time filter
-    detectNewConnections(hours),
-    detectMultiStageAttack(hours),
-    detectSharedCredentials(hours),
-  ]);
+  const withTimeout = (promise, ms = 8000) =>
+    Promise.race([promise, new Promise(res => setTimeout(() => res([]), ms))]);
+
+  const [lateral, travel, privesc, afterhours, hf, rare, newconn, multistage, sharedcreds] =
+    await Promise.allSettled([
+      withTimeout(detectLateralMovement(hours)),
+      withTimeout(detectImpossibleTravel()),
+      withTimeout(detectPrivilegeEscalation(hours)),
+      withTimeout(detectAfterHoursAccess(hours)),
+      withTimeout(detectHighFrequencyLogins()),
+      withTimeout(detectRareProcesses()),
+      withTimeout(detectNewConnections(hours)),
+      withTimeout(detectMultiStageAttack(hours)),
+      withTimeout(detectSharedCredentials(hours)),
+    ]).then(results => results.map(r => (r.status === 'fulfilled' ? r.value : [])));
+
   return {
     lateral_movement:      lateral,
     impossible_travel:     travel,

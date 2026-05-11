@@ -3320,9 +3320,18 @@ app.post('/api/ueba/event', authMW, async (req, res) => {
 app.get('/api/ueba/anomalies', authMW, async (req, res) => {
   try {
     const hours = Math.min(parseInt(req.query.hours || '24') || 24, 720);
-    const data = await ueba.getAllAnomalies(hours);
+    const timeout = new Promise((_,rej) => setTimeout(() => rej(new Error('timeout')), 30000));
+    const data = await Promise.race([ueba.getAllAnomalies(hours), timeout]);
     res.json(data);
-  } catch(e) { res.status(500).json({ error: e.message }); }
+  } catch(e) {
+    console.error('[ueba/anomalies]', e.message);
+    // Return empty structure so the UI renders "no data" cards rather than spinning
+    res.json({
+      lateral_movement: [], impossible_travel: [], privilege_escalation: [],
+      after_hours_access: [], high_frequency_logins: [], rare_processes: [],
+      new_connections: [], multi_stage_attacks: [], shared_credentials: [],
+    });
+  }
 });
 
 app.get('/api/ueba/graph/:entity', authMW, async (req, res) => {
@@ -3491,12 +3500,17 @@ app.get('/api/ueba/profile/:user', authMW, async (req, res) => {
 app.get('/api/ueba/correlations', authMW, async (req, res) => {
   try {
     const hours = parseInt(req.query.hours || '24');
+    const withTimeout = (p, ms = 8000) =>
+      Promise.race([p, new Promise(res => setTimeout(() => res([]), ms))]);
     const [multi_stage, shared_credentials] = await Promise.all([
-      ueba.detectMultiStageAttack(hours),
-      ueba.detectSharedCredentials(hours),
+      withTimeout(ueba.detectMultiStageAttack(hours)),
+      withTimeout(ueba.detectSharedCredentials(hours)),
     ]);
     res.json({ multi_stage_attacks: multi_stage, shared_credentials });
-  } catch(e) { res.status(500).json({ error: e.message }); }
+  } catch(e) {
+    console.error('[ueba/correlations]', e.message);
+    res.json({ multi_stage_attacks: [], shared_credentials: [] });
+  }
 });
 
 app.get('/api/ueba/graph-nodes/:entity', authMW, async (req, res) => {
