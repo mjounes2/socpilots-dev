@@ -891,6 +891,172 @@ Return ONLY valid JSON:
                 "duration_ms": int((time.time() - start) * 1000)}
 
 
+# ═══════════════════════════════════════════════════════════════
+#  LOG SOURCES INTELLIGENCE — Multi-LLM Pipeline
+#
+#  Pipeline: GPT-mini (routing) → Mistral (deep analysis)
+#            → GPT-mini (classify + format final output)
+# ═══════════════════════════════════════════════════════════════
+
+class LogSourcesAnalyzeRequest(BaseModel):
+    sources: list[dict]
+
+
+def _get_gpt_mini():
+    if OPENAI_API_KEY:
+        return ChatOpenAI(model="gpt-4o-mini", api_key=OPENAI_API_KEY, temperature=0)
+    return None
+
+
+def _get_mistral():
+    if MISTRAL_API_KEY:
+        return ChatMistralAI(model="mistral-large-latest", api_key=MISTRAL_API_KEY, temperature=0)
+    return None
+
+
+def _parse_json_response(text: str) -> any:
+    """Strip markdown fences and parse JSON."""
+    text = text.strip()
+    if text.startswith("```"):
+        parts = text.split("```")
+        text = parts[1].lstrip("json").strip() if len(parts) > 1 else text
+    match = re.search(r'[\[{][\s\S]*[\]}]', text)
+    if match:
+        return json.loads(match.group())
+    return json.loads(text)
+
+
+@app.post("/log-sources/analyze")
+async def analyze_log_sources(req: LogSourcesAnalyzeRequest):
+    """
+    Multi-LLM log sources analysis pipeline.
+    GPT-mini handles routing/classification/formatting.
+    Mistral handles deep vendor detection and behavioral analysis.
+    """
+    sources = req.sources[:50]  # cap to prevent abuse
+    if not sources:
+        raise HTTPException(status_code=400, detail="sources list is empty")
+
+    gpt_mini = _get_gpt_mini()
+    mistral  = _get_mistral()
+
+    if not gpt_mini and not mistral:
+        raise HTTPException(status_code=503, detail="No LLM API key configured")
+
+    models_used = {
+        "routing":    "gpt-4o-mini" if gpt_mini else "mistral-large-latest",
+        "analysis":   "mistral-large-latest" if mistral else "gpt-4o-mini",
+        "formatting": "gpt-4o-mini" if gpt_mini else "mistral-large-latest",
+    }
+
+    # ── Step 1: GPT-mini routing decision ──────────────────────
+    routing_llm = gpt_mini or mistral
+    routing_map = {}
+    try:
+        source_summaries = [
+            {"id": s.get("source_id"), "type": s.get("type"), "vendor": s.get("vendor"),
+             "decoder": s.get("top_decoder"), "groups": s.get("top_groups"),
+             "integration": s.get("integration"), "is_new": s.get("is_new"),
+             "anomaly": s.get("anomaly"), "confidence": s.get("confidence")}
+            for s in sources
+        ]
+        routing_resp = await routing_llm.ainvoke(
+            f"""You are a SOC orchestrator. For each log source, decide if it needs deep Mistral analysis.
+Mark as "analyze" if: vendor is unknown, type is unknown/server with low confidence, or anomaly=true or is_new=true.
+Mark as "skip" if: well-classified (confidence > 0.8) and not anomalous.
+
+Sources: {json.dumps(source_summaries)}
+
+Return ONLY a JSON array: [{{"id": "...", "decision": "analyze|skip"}}]"""
+        )
+        decisions = _parse_json_response(routing_resp.content)
+        for d in decisions:
+            routing_map[str(d.get("id"))] = d.get("decision", "skip")
+    except Exception as e:
+        log.warning(f"[log-sources] Routing step failed: {e} — analyzing all")
+        routing_map = {str(s.get("source_id")): "analyze" for s in sources}
+
+    # ── Step 2: Mistral deep analysis (only flagged sources) ──
+    analysis_llm = mistral or gpt_mini
+    mistral_results = {}
+    to_analyze = [s for s in sources if routing_map.get(str(s.get("source_id"))) == "analyze"]
+    for src in to_analyze[:10]:  # cap at 10 deep analyses per call
+        try:
+            resp = await analysis_llm.ainvoke(
+                f"""You are a security data engineer analyzing a Wazuh SIEM log source.
+
+Source metadata (no raw logs, only aggregated stats):
+- Name: {src.get('source_name')}
+- Current type: {src.get('type')} | Vendor: {src.get('vendor')}
+- Protocol: {src.get('protocol')} | Integration: {src.get('integration')}
+- Top rule groups: {src.get('top_groups')}
+- Top decoder: {src.get('top_decoder')}
+- EPS (24h avg): {src.get('eps')} | Events 24h: {src.get('event_count_24h')}
+- New source: {src.get('is_new')} | Anomaly flagged: {src.get('anomaly')}
+- Severity dist: {src.get('severity_dist')}
+
+Tasks:
+1. Identify the most likely vendor and source type
+2. Assess if the behavior is normal, suspicious, or anomalous
+3. Provide 1-2 specific SOC recommendations
+
+Return ONLY valid JSON (no markdown):
+{{"vendor": "...", "type": "firewall|waf|proxy|server|cloud_api|network|unknown", "confidence": 0.0-1.0, "assessment": "normal|suspicious|anomalous", "recommendations": ["..."]}}"""
+            )
+            mistral_results[str(src.get("source_id"))] = _parse_json_response(resp.content)
+        except Exception as e:
+            log.warning(f"[log-sources] Mistral analysis failed for {src.get('source_id')}: {e}")
+
+    # ── Step 3: GPT-mini classify & normalize enriched sources ─
+    enriched = []
+    for src in sources:
+        s = dict(src)
+        sid = str(s.get("source_id"))
+        if sid in mistral_results:
+            insight = mistral_results[sid]
+            if insight.get("vendor") and insight["vendor"].lower() not in ("unknown", ""):
+                s["vendor"]     = insight["vendor"]
+                s["confidence"] = insight.get("confidence", s.get("confidence", 0.5))
+            if insight.get("type") and insight["type"] != "unknown":
+                s["type"] = insight["type"]
+            s["ai_assessment"]     = insight.get("assessment", "unknown")
+            s["ai_recommendations"]= insight.get("recommendations", [])
+        enriched.append(s)
+
+    # ── Step 4: GPT-mini final SOC insights summary ─────────────
+    format_llm = gpt_mini or mistral
+    ai_insights = []
+    try:
+        summary_input = [
+            {"name": s.get("source_name"), "type": s.get("type"), "vendor": s.get("vendor"),
+             "eps": s.get("eps"), "anomaly": s.get("anomaly"),
+             "assessment": s.get("ai_assessment", "—")}
+            for s in enriched[:20]
+        ]
+        fmt_resp = await format_llm.ainvoke(
+            f"""You are a senior SOC analyst. Write 3-5 concise, actionable insights about this log source inventory.
+Focus on: coverage gaps, anomalous sources, high-volume sources, vendor diversity, detection opportunities.
+
+Sources: {json.dumps(summary_input)}
+
+Return ONLY a JSON array of insight strings (no markdown). Be specific and reference source names."""
+        )
+        ai_insights = _parse_json_response(fmt_resp.content)
+        if not isinstance(ai_insights, list):
+            ai_insights = [str(ai_insights)]
+    except Exception as e:
+        log.warning(f"[log-sources] Summary step failed: {e}")
+        ai_insights = ["AI analysis complete — review enriched source table for vendor and behavioral assessments"]
+
+    return {
+        "enriched_sources": enriched,
+        "ai_insights": ai_insights,
+        "models_used": models_used,
+        "sources_analyzed": len(to_analyze),
+        "total_sources": len(sources),
+    }
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8001, log_level="info")

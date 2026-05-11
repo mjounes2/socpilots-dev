@@ -3484,6 +3484,234 @@ app.post('/api/otx/sync', authMW, requireRole('admin'), async (req, res) => {
   setImmediate(() => otxFeedSync());
 });
 
+// ─── LOG SOURCES INTELLIGENCE ───────────────────────────────────
+
+const LS_INTEGRATION_MAP = {
+  aws:      { type: 'cloud_api', vendor: 'AWS CloudTrail' },
+  azure:    { type: 'cloud_api', vendor: 'Microsoft Azure' },
+  'ms-graph': { type: 'cloud_api', vendor: 'Microsoft 365' },
+  office365:{ type: 'cloud_api', vendor: 'Microsoft 365' },
+  gcp:      { type: 'cloud_api', vendor: 'Google Cloud Platform' },
+  virustotal:{ type: 'cloud_api', vendor: 'VirusTotal' },
+  'ms-defender':{ type: 'cloud_api', vendor: 'Microsoft Defender' },
+};
+
+const LS_PROGRAM_MAP = {
+  fortigate: { type: 'firewall', vendor: 'Fortinet' }, fgtd: { type: 'firewall', vendor: 'Fortinet' },
+  paloalto:  { type: 'firewall', vendor: 'Palo Alto Networks' }, 'pan-os': { type: 'firewall', vendor: 'Palo Alto Networks' },
+  checkpoint:{ type: 'firewall', vendor: 'Check Point' },
+  'cisco-asa':{ type: 'firewall', vendor: 'Cisco ASA' },
+  'cisco-ios':{ type: 'network', vendor: 'Cisco IOS' },
+  'f5-bigip': { type: 'waf',      vendor: 'F5 BIG-IP' },
+  bluecoat:   { type: 'proxy',    vendor: 'Blue Coat' },
+  squid:      { type: 'proxy',    vendor: 'Squid Proxy' },
+};
+
+const LS_DECODER_MAP = {
+  'nginx-accesslog': { type: 'proxy',  vendor: 'nginx' },
+  'nginx-errorlog':  { type: 'proxy',  vendor: 'nginx' },
+  'apache-errorlog': { type: 'proxy',  vendor: 'Apache' },
+  'apache-access':   { type: 'proxy',  vendor: 'Apache' },
+  sshd:              { type: 'server', vendor: 'OpenSSH' },
+  syscheck_new_entry:{ type: 'server', vendor: 'Wazuh FIM' },
+  syscheck_deleted:  { type: 'server', vendor: 'Wazuh FIM' },
+  syscheck_integrity_changed: { type: 'server', vendor: 'Wazuh FIM' },
+};
+
+const LS_GROUP_MAP = {
+  nginx: { type: 'proxy', vendor: 'nginx' }, web: { type: 'proxy', vendor: null },
+  apache: { type: 'proxy', vendor: 'Apache' }, syscheck: { type: 'server', vendor: 'Wazuh FIM' },
+  firewall: { type: 'firewall', vendor: null }, sshd: { type: 'server', vendor: 'OpenSSH' },
+  authentication_failed: { type: 'server', vendor: null }, pam: { type: 'server', vendor: null },
+};
+
+let _logSourcesCache = null, _logSourcesCacheTime = 0;
+
+app.get('/api/log-sources', authMW, async (req, res) => {
+  try {
+    const now = Date.now();
+    if (_logSourcesCache && now - _logSourcesCacheTime < 60000) return res.json(_logSourcesCache);
+
+    const [r24h, r7d] = await Promise.all([
+      osSearch({
+        size: 0,
+        query: { range: { '@timestamp': { gte: 'now-24h' } } },
+        aggs: {
+          by_source: {
+            terms: { field: 'agent.id', size: 100 },
+            aggs: {
+              agent_name:  { terms: { field: 'agent.name',              size: 1 } },
+              agent_ip:    { terms: { field: 'agent.ip',                size: 1 } },
+              top_decoder: { terms: { field: 'decoder.name',            size: 5 } },
+              top_groups:  { terms: { field: 'rule.groups',             size: 10 } },
+              integration: { terms: { field: 'data.integration',        size: 3 } },
+              program_name:{ terms: { field: 'predecoder.program_name', size: 3 } },
+              severity_dist:{ terms: { field: 'rule.level',             size: 15 } },
+              last_seen:   { max:   { field: '@timestamp' } },
+              first_seen_24h: { min: { field: '@timestamp' } },
+            },
+          },
+        },
+      }),
+      osSearch({
+        size: 0,
+        query: { range: { '@timestamp': { gte: 'now-7d' } } },
+        aggs: {
+          by_source: {
+            terms: { field: 'agent.id', size: 100 },
+            aggs: {
+              count_7d:     { value_count: { field: 'agent.id' } },
+              first_seen_7d:{ min: { field: '@timestamp' } },
+            },
+          },
+        },
+      }),
+    ]);
+
+    const map7d = {};
+    for (const b of (r7d.aggregations?.by_source?.buckets || [])) {
+      map7d[b.key] = { count: b.count_7d?.value || 0, first_seen: b.first_seen_7d?.value || null };
+    }
+
+    const sources = [];
+    for (const b of (r24h.aggregations?.by_source?.buckets || [])) {
+      const id    = b.key;
+      const name  = b.agent_name?.buckets?.[0]?.key  || `agent-${id}`;
+      const ip    = b.agent_ip?.buckets?.[0]?.key     || 'unknown';
+      const count24h = b.doc_count;
+      const eps   = parseFloat((count24h / 86400).toFixed(3));
+      const lastSeen = new Date(b.last_seen?.value || 0).toISOString();
+      const firstSeen7d = map7d[id]?.first_seen ? new Date(map7d[id].first_seen).toISOString() : null;
+      const isNew = firstSeen7d ? (Date.now() - new Date(firstSeen7d).getTime()) < 86400000 : false;
+
+      const integKey  = b.integration?.buckets?.[0]?.key;
+      const progKey   = (b.program_name?.buckets?.[0]?.key || '').toLowerCase();
+      const decoderKey= (b.top_decoder?.buckets?.[0]?.key  || '').toLowerCase();
+      const groups    = (b.top_groups?.buckets || []).map(x => x.key.toLowerCase());
+
+      let type = 'server', vendor = null, protocol = 'agent', confidence = 0.65;
+
+      if (integKey && LS_INTEGRATION_MAP[integKey]) {
+        ({ type, vendor } = LS_INTEGRATION_MAP[integKey]);
+        protocol = 'api'; confidence = 0.98;
+      } else if (LS_PROGRAM_MAP[progKey]) {
+        ({ type, vendor } = LS_PROGRAM_MAP[progKey]);
+        protocol = 'syslog'; confidence = 0.90;
+      } else if (LS_DECODER_MAP[decoderKey]) {
+        ({ type, vendor } = LS_DECODER_MAP[decoderKey]);
+        confidence = 0.80;
+      } else {
+        for (const g of groups) {
+          if (LS_GROUP_MAP[g]) {
+            type = LS_GROUP_MAP[g].type;
+            if (!vendor && LS_GROUP_MAP[g].vendor) vendor = LS_GROUP_MAP[g].vendor;
+            confidence = Math.max(confidence, 0.75);
+            break;
+          }
+        }
+      }
+
+      const sevDist = {};
+      for (const sv of (b.severity_dist?.buckets || [])) {
+        const lvl = sv.key;
+        const cat = lvl >= 12 ? 'critical' : lvl >= 8 ? 'high' : lvl >= 5 ? 'medium' : 'low';
+        sevDist[cat] = (sevDist[cat] || 0) + sv.doc_count;
+      }
+
+      sources.push({
+        source_id: id, source_name: name, source_ip: ip,
+        type, vendor: vendor || 'unknown', protocol,
+        event_count_24h: count24h, event_count_7d: map7d[id]?.count || 0,
+        eps, last_seen: lastSeen, first_seen_7d: firstSeen7d,
+        is_new: isNew, confidence,
+        anomaly: false,
+        severity_dist: sevDist,
+        top_groups: groups.slice(0, 5),
+        top_decoder: decoderKey,
+        integration: integKey || null,
+      });
+    }
+
+    // Anomaly: new source OR EPS >5x dataset average
+    const avgEps = sources.length ? sources.reduce((s, x) => s + x.eps, 0) / sources.length : 0;
+    for (const src of sources) {
+      src.anomaly = src.is_new || (avgEps > 0 && src.eps > avgEps * 5 && src.eps > 5);
+    }
+    sources.sort((a, b) => (b.anomaly - a.anomaly) || (b.event_count_24h - a.event_count_24h));
+
+    const totalEps = parseFloat(sources.reduce((s, x) => s + x.eps, 0).toFixed(3));
+    const insights = [];
+    const newCnt   = sources.filter(x => x.is_new).length;
+    const anomCnt  = sources.filter(x => x.anomaly).length;
+    const unkCnt   = sources.filter(x => x.vendor === 'unknown').length;
+    const topSrc   = sources[0];
+
+    if (newCnt  > 0) insights.push(`${newCnt} new log source(s) first seen in the last 24h`);
+    if (anomCnt > 0) insights.push(`${anomCnt} source(s) showing anomalous EPS behaviour`);
+    if (topSrc)      insights.push(`Highest-volume source: ${topSrc.source_name} — ${topSrc.eps.toFixed(2)} EPS`);
+    if (unkCnt  > 0) insights.push(`${unkCnt} source(s) with unidentified vendor — AI Analysis recommended`);
+
+    const result = {
+      sources,
+      summary: {
+        total_sources: sources.length,
+        total_events_24h: sources.reduce((s, x) => s + x.event_count_24h, 0),
+        total_eps: totalEps,
+        unknown_sources: unkCnt,
+        anomaly_count: anomCnt,
+        cloud_api_sources: sources.filter(x => x.type === 'cloud_api').length,
+        new_sources_24h: newCnt,
+        top_source: topSrc?.source_name || null,
+      },
+      insights,
+    };
+
+    _logSourcesCache = result;
+    _logSourcesCacheTime = now;
+    res.json(result);
+  } catch (e) {
+    console.error('[log-sources]', e.message);
+    res.status(502).json({ error: e.message });
+  }
+});
+
+app.post('/api/log-sources/analyze', authMW, async (req, res) => {
+  try {
+    const { sources } = req.body;
+    if (!Array.isArray(sources) || !sources.length) return res.status(400).json({ error: 'sources array required' });
+
+    // Strip PII/sensitive fields before sending to LLM
+    const sanitized = sources.map(s => ({
+      source_id: s.source_id, source_name: s.source_name, type: s.type,
+      vendor: s.vendor, protocol: s.protocol, event_count_24h: s.event_count_24h,
+      eps: s.eps, is_new: s.is_new, anomaly: s.anomaly,
+      top_groups: s.top_groups, top_decoder: s.top_decoder,
+      integration: s.integration, severity_dist: s.severity_dist,
+      confidence: s.confidence,
+    }));
+
+    const LANGCHAIN_URL = process.env.LANGCHAIN_URL || 'http://langchain-agent:8001';
+    const r = await fetch(`${LANGCHAIN_URL}/log-sources/analyze`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${process.env.LANGCHAIN_INTERNAL_TOKEN || ''}`,
+      },
+      body: JSON.stringify({ sources: sanitized }),
+      signal: AbortSignal.timeout(90000),
+    });
+    if (!r.ok) {
+      const err = await r.text();
+      return res.status(502).json({ error: `AI service error: ${err.slice(0, 200)}` });
+    }
+    _logSourcesCache = null;
+    res.json(await r.json());
+  } catch (e) {
+    console.error('[log-sources/analyze]', e.message);
+    res.status(502).json({ error: e.message });
+  }
+});
+
 // ─── STATIC (must be last — after all /api routes) ──────────────
 app.use(express.static(path.join(__dirname, '../../frontend')));
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, '../../frontend/index.html')));

@@ -518,6 +518,26 @@ body::before{
 .ml-low{background:rgba(255,109,0,.5)}
 .ml-none{background:rgba(255,255,255,.1)}
 .mitre-stats-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:12px}
+/* ── Log Sources Intelligence ──────────────────────────────── */
+.ls-kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:12px}
+.ls-type-badge{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:3px;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.5px}
+.ls-t-firewall{background:rgba(255,23,68,.15);color:#ff5252;border:1px solid rgba(255,23,68,.3)}
+.ls-t-waf{background:rgba(255,152,0,.15);color:#ffb74d;border:1px solid rgba(255,152,0,.3)}
+.ls-t-proxy{background:rgba(0,229,255,.12);color:var(--c);border:1px solid rgba(0,229,255,.25)}
+.ls-t-server{background:rgba(100,181,246,.12);color:#90caf9;border:1px solid rgba(100,181,246,.25)}
+.ls-t-cloud_api{background:rgba(0,230,118,.12);color:#69f0ae;border:1px solid rgba(0,230,118,.25)}
+.ls-t-network{background:rgba(171,71,188,.15);color:#ce93d8;border:1px solid rgba(171,71,188,.3)}
+.ls-t-unknown{background:rgba(255,255,255,.06);color:var(--txt2);border:1px solid var(--b1)}
+.ls-eps{font-family:var(--fm);font-size:12px;color:var(--txt)}
+.ls-anomaly-dot{width:8px;height:8px;border-radius:50%;display:inline-block;background:var(--r);box-shadow:0 0 6px rgba(255,23,68,.7);animation:pulse 1.5s infinite}
+.ls-ok-dot{width:8px;height:8px;border-radius:50%;display:inline-block;background:var(--g)}
+.ls-new-badge{display:inline-block;padding:1px 5px;border-radius:3px;font-size:9px;font-weight:700;background:rgba(0,229,255,.18);color:var(--c);border:1px solid rgba(0,229,255,.35);text-transform:uppercase}
+.ls-ai-panel{background:rgba(0,229,255,.04);border:1px solid rgba(0,229,255,.15);border-radius:6px;padding:14px 16px;margin-top:12px}
+.ls-ai-insight{padding:5px 0;border-bottom:1px solid rgba(255,255,255,.05);font-size:12px;color:var(--txt2);line-height:1.5}
+.ls-ai-insight:last-child{border-bottom:none}
+.ls-ai-insight::before{content:'→ ';color:var(--c)}
+.ls-model-badge{display:inline-flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.ls-model-tag{font-size:10px;padding:2px 7px;border-radius:10px;background:rgba(0,229,255,.1);color:var(--c);border:1px solid rgba(0,229,255,.2)}
 </style>
 </head>
 <body>
@@ -549,6 +569,7 @@ if(localStorage.getItem("soc_dim")==="1")document.body.classList.add("dim");
     <div class="sbi" onclick="go('alerts')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><span class="sbi-lbl">Alerts</span><span class="sbi-n" id="n-alerts">—</span></div>
     <div class="sbi" onclick="go('rules')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><span class="sbi-lbl">Detection Rules</span></div>
     <div class="sbi" onclick="go('mitre')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="4" height="4" rx="1"/><rect x="10" y="3" width="4" height="4" rx="1"/><rect x="17" y="3" width="4" height="4" rx="1"/><rect x="3" y="10" width="4" height="4" rx="1"/><rect x="10" y="10" width="4" height="4" rx="1"/><rect x="17" y="10" width="4" height="4" rx="1"/><rect x="3" y="17" width="4" height="4" rx="1"/><rect x="10" y="17" width="4" height="4" rx="1"/><rect x="17" y="17" width="4" height="4" rx="1"/></svg><span class="sbi-lbl">ATT&CK Coverage</span></div>
+    <div class="sbi" onclick="go('log-sources')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="4" rx="1"/><rect x="2" y="10" width="20" height="4" rx="1"/><rect x="2" y="17" width="20" height="4" rx="1"/><circle cx="6" cy="5" r="1" fill="currentColor" stroke="none"/><circle cx="6" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="6" cy="19" r="1" fill="currentColor" stroke="none"/></svg><span class="sbi-lbl">Log Sources</span><span class="sbi-n" id="n-log-sources">—</span></div>
 
     <div class="sb-sec">Investigation</div>
     <div class="sbi" onclick="go('cases')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v16"/></svg><span class="sbi-lbl">Cases</span><span class="sbi-n" id="n-cases">—</span></div>
@@ -2370,6 +2391,85 @@ sshd: Failed" style="min-height:80px"></textarea></div>
   </div>
 </div>
 
+<!-- ── LOG SOURCES INTELLIGENCE PAGE ───────────────────────── -->
+<div class="page" id="page-log-sources">
+  <div class="ph"><h1>LOG SOURCES INTELLIGENCE</h1><p>Real-time classification, EPS metrics, and AI-powered vendor detection for all SIEM ingestion sources</p></div>
+
+  <!-- KPI row -->
+  <div class="ls-kpi-grid">
+    <div class="kpi cl"><div class="kpi-lbl">Total Sources</div><div class="kpi-val" id="ls-kpi-total">—</div><div class="kpi-sub">active log sources</div></div>
+    <div class="kpi cg"><div class="kpi-lbl">Total EPS</div><div class="kpi-val" id="ls-kpi-eps">—</div><div class="kpi-sub">events / second</div></div>
+    <div class="kpi co"><div class="kpi-lbl">Anomalies</div><div class="kpi-val" id="ls-kpi-anomaly">—</div><div class="kpi-sub">flagged sources</div></div>
+    <div class="kpi cr"><div class="kpi-lbl">Unknown Vendors</div><div class="kpi-val" id="ls-kpi-unknown">—</div><div class="kpi-sub">unclassified</div></div>
+  </div>
+
+  <!-- Filter bar -->
+  <div class="card" style="padding:12px;margin-bottom:12px">
+    <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+      <input class="fi" id="ls-search" placeholder="Search source name or IP…" oninput="lsFilterDebounce()" style="width:220px">
+      <select class="fi" id="ls-type-filter" onchange="applyLsFilters()" style="width:160px">
+        <option value="">All Types</option>
+        <option value="firewall">Firewall</option>
+        <option value="waf">WAF</option>
+        <option value="proxy">Proxy / Web</option>
+        <option value="server">Server</option>
+        <option value="cloud_api">Cloud / API</option>
+        <option value="network">Network</option>
+        <option value="unknown">Unknown</option>
+      </select>
+      <select class="fi" id="ls-anomaly-filter" onchange="applyLsFilters()" style="width:140px">
+        <option value="">All Sources</option>
+        <option value="anomaly">Anomalies Only</option>
+        <option value="new">New Sources</option>
+      </select>
+      <div style="margin-left:auto;display:flex;gap:8px">
+        <button class="btn btn-h btn-sm" onclick="loadLogSources()">↻ Refresh</button>
+        <button class="btn btn-sm" id="ls-ai-btn" onclick="runLogSourcesAnalysis()" style="background:rgba(0,229,255,.12);border-color:rgba(0,229,255,.3);color:var(--c)">🧠 AI Analysis</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- AI results panel (hidden until analysis runs) -->
+  <div class="ls-ai-panel" id="ls-ai-panel" style="display:none;margin-bottom:12px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <div style="font-size:12px;font-weight:700;color:var(--c);letter-spacing:.5px">AI ANALYSIS RESULTS</div>
+      <div class="ls-model-badge" id="ls-models-used"></div>
+    </div>
+    <div id="ls-ai-insights"></div>
+  </div>
+
+  <!-- Sources table -->
+  <div class="card" style="padding:0">
+    <div class="card-hd" style="padding:12px 16px">
+      <div class="card-ttl">LOG SOURCE INVENTORY</div>
+      <div style="font-size:11px;color:var(--txt2)" id="ls-tbl-meta">Loading…</div>
+    </div>
+    <div class="tbl">
+      <table style="width:100%;border-collapse:collapse">
+        <thead>
+          <tr style="border-bottom:1px solid var(--b1)">
+            <th style="padding:10px 12px;text-align:left;font-size:10px;color:var(--txt2);font-weight:600;width:32px"></th>
+            <th style="padding:10px 12px;text-align:left;font-size:10px;color:var(--txt2);font-weight:600">SOURCE</th>
+            <th style="padding:10px 12px;text-align:left;font-size:10px;color:var(--txt2);font-weight:600">TYPE</th>
+            <th style="padding:10px 12px;text-align:left;font-size:10px;color:var(--txt2);font-weight:600">VENDOR</th>
+            <th style="padding:10px 12px;text-align:left;font-size:10px;color:var(--txt2);font-weight:600">PROTOCOL</th>
+            <th style="padding:10px 12px;text-align:right;font-size:10px;color:var(--txt2);font-weight:600">EPS</th>
+            <th style="padding:10px 12px;text-align:right;font-size:10px;color:var(--txt2);font-weight:600">24H EVENTS</th>
+            <th style="padding:10px 12px;text-align:left;font-size:10px;color:var(--txt2);font-weight:600">LAST SEEN</th>
+            <th style="padding:10px 12px;text-align:center;font-size:10px;color:var(--txt2);font-weight:600">STATUS</th>
+          </tr>
+        </thead>
+        <tbody id="ls-tbl-body">
+          <tr><td colspan="9" style="padding:32px;text-align:center"><div class="loading"><div class="spin"></div></div></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Global insights bar (below table) -->
+  <div id="ls-insights-bar" style="margin-top:10px"></div>
+</div>
+
 <!-- MITRE Technique Detail Modal -->
 <div class="modal-ov" id="modal-mitre-tech">
   <div class="modal" style="width:680px;max-height:80vh;overflow:hidden;display:flex;flex-direction:column">
@@ -2379,6 +2479,18 @@ sshd: Failed" style="min-height:80px"></textarea></div>
     </div>
     <div class="modal-body" id="mm-body" style="overflow-y:auto;flex:1"></div>
     <div class="modal-ft"><button class="btn btn-h" onclick="closeModal('modal-mitre-tech')">Close</button></div>
+  </div>
+</div>
+
+<!-- LOG SOURCE DETAIL MODAL -->
+<div class="modal-ov" id="modal-log-source">
+  <div class="modal" style="width:680px;max-height:82vh;overflow:hidden;display:flex;flex-direction:column">
+    <div class="modal-hd">
+      <div class="modal-ttl" id="lsd-title">Log Source Detail</div>
+      <button class="modal-x" onclick="closeModal('modal-log-source')">✕</button>
+    </div>
+    <div class="modal-body" id="lsd-body" style="overflow-y:auto;flex:1"></div>
+    <div class="modal-ft"><button class="btn btn-h" onclick="closeModal('modal-log-source')">Close</button></div>
   </div>
 </div>
 
@@ -2801,7 +2913,7 @@ let _cPage=1,_cPageSize=20,_cTimeframe='all',_cChartSev=null,_cSearchTimer=null;
 
 // ─── NAV ─────────────────────────────────────────────────────
 let CUR='dashboard';
-const LOAD_MAP={dashboard:loadDashboard,agents:loadAgents,alerts:loadAlerts,rules:loadRules,mitre:loadMitre,'create-rules':loadCustomRules,investigation:()=>{loadInvAlerts();loadAutoTriageSettings();loadInvHistory();},
+const LOAD_MAP={dashboard:loadDashboard,agents:loadAgents,alerts:loadAlerts,rules:loadRules,mitre:loadMitre,'log-sources':loadLogSources,'create-rules':loadCustomRules,investigation:()=>{loadInvAlerts();loadAutoTriageSettings();loadInvHistory();},
   cases:()=>{setCaseTimeframe(_cTimeframe);},'hive-alerts':()=>{setHaTimeframe(_haTimeframe);},threatmap:loadThreatMap,
   ioc:()=>{loadIOCQuick();loadOtxFeed();},reports:loadReportMetrics,
   assets:()=>{loadSubnets();loadAssets();loadScanStatus();},
@@ -4011,6 +4123,183 @@ function mitreExportNav() {
   a.download = `socpilots-attck-coverage-${_mitreTf}-${new Date().toISOString().slice(0,10)}.json`;
   a.click();
   URL.revokeObjectURL(a.href);
+}
+
+// ─── LOG SOURCES INTELLIGENCE ────────────────────────────────
+let _lsData = null, _lsFiltered = [], _lsSearchTimer = null;
+
+const LS_TYPE_LABELS = {
+  firewall:'Firewall', waf:'WAF', proxy:'Proxy/Web', server:'Server',
+  cloud_api:'Cloud/API', network:'Network', unknown:'Unknown'
+};
+
+function lsTypeBadge(t) {
+  const lbl = LS_TYPE_LABELS[t] || t || 'Unknown';
+  return `<span class="ls-type-badge ls-t-${t||'unknown'}">${esc(lbl)}</span>`;
+}
+
+async function loadLogSources() {
+  const body = document.getElementById('ls-tbl-body');
+  const meta = document.getElementById('ls-tbl-meta');
+  if (body) body.innerHTML = '<tr><td colspan="9" style="padding:32px;text-align:center"><div class="loading"><div class="spin"></div></div></td></tr>';
+
+  const d = await G('/api/log-sources');
+  if (!d || d.error) {
+    if (body) body.innerHTML = `<tr><td colspan="9">${errBnr(d?.error||'Failed to load log sources')}</td></tr>`;
+    return;
+  }
+  _lsData = d;
+
+  // Update KPIs
+  const s = d.summary || {};
+  document.getElementById('ls-kpi-total').textContent = s.total_sources ?? '—';
+  document.getElementById('ls-kpi-eps').textContent = s.total_eps != null ? s.total_eps.toFixed(1) : '—';
+  document.getElementById('ls-kpi-anomaly').textContent = s.anomaly_count ?? '—';
+  document.getElementById('ls-kpi-unknown').textContent = s.unknown_sources ?? '—';
+
+  // Badge in nav
+  const nb = document.getElementById('n-log-sources');
+  if (nb) { nb.textContent = s.total_sources || 0; nb.style.display = s.anomaly_count > 0 ? '' : 'none'; }
+
+  // Insights bar
+  const ib = document.getElementById('ls-insights-bar');
+  if (ib && d.insights?.length) {
+    ib.innerHTML = `<div class="ls-ai-panel">${d.insights.map(i=>`<div class="ls-ai-insight">${esc(i)}</div>`).join('')}</div>`;
+  }
+
+  _lsFiltered = d.sources || [];
+  applyLsFilters();
+
+  if (meta) meta.textContent = `${s.total_sources || 0} sources · ${s.total_events_24h?.toLocaleString() || 0} events (24h)`;
+}
+
+function lsFilterDebounce() {
+  clearTimeout(_lsSearchTimer);
+  _lsSearchTimer = setTimeout(applyLsFilters, 250);
+}
+
+function applyLsFilters() {
+  if (!_lsData) return;
+  const q = (document.getElementById('ls-search')?.value || '').toLowerCase();
+  const typeF = document.getElementById('ls-type-filter')?.value || '';
+  const anomF = document.getElementById('ls-anomaly-filter')?.value || '';
+
+  _lsFiltered = (_lsData.sources || []).filter(s => {
+    if (q && !s.source_name?.toLowerCase().includes(q) && !s.source_ip?.toLowerCase().includes(q)) return false;
+    if (typeF && s.type !== typeF) return false;
+    if (anomF === 'anomaly' && !s.anomaly) return false;
+    if (anomF === 'new' && !s.is_new) return false;
+    return true;
+  });
+
+  renderLsTable();
+}
+
+function renderLsTable() {
+  const body = document.getElementById('ls-tbl-body');
+  if (!body) return;
+  if (!_lsFiltered.length) {
+    body.innerHTML = `<tr><td colspan="9">${empty('No log sources match current filters')}</td></tr>`;
+    return;
+  }
+
+  body.innerHTML = _lsFiltered.map(s => {
+    const epsColor = s.eps > 50 ? 'var(--r)' : s.eps > 10 ? 'var(--o)' : 'var(--txt)';
+    const statusDot = s.anomaly
+      ? `<span class="ls-anomaly-dot" title="Anomaly detected"></span>`
+      : `<span class="ls-ok-dot" title="Normal"></span>`;
+    const newBadge = s.is_new ? `<span class="ls-new-badge">NEW</span> ` : '';
+    const confPct = Math.round((s.confidence || 0) * 100);
+    const confColor = confPct >= 85 ? 'var(--g)' : confPct >= 60 ? 'var(--y)' : 'var(--o)';
+    const protoIcon = s.protocol === 'api' ? '⚡' : s.protocol === 'syslog' ? '📡' : '🖥';
+    const aiAssess = s.ai_assessment ? `<span style="font-size:9px;color:${s.ai_assessment==='anomalous'?'var(--r)':s.ai_assessment==='suspicious'?'var(--o)':'var(--g)'};margin-left:4px">${s.ai_assessment.toUpperCase()}</span>` : '';
+    return `<tr style="border-bottom:1px solid rgba(255,255,255,.04);cursor:pointer" onclick="showLogSourceDetail(${JSON.stringify(s).replace(/"/g,'&quot;')})">
+      <td style="padding:10px 12px;text-align:center">${statusDot}</td>
+      <td style="padding:10px 12px">
+        <div style="font-size:13px;font-weight:600;color:var(--txt)">${newBadge}${esc(s.source_name)}</div>
+        <div style="font-size:11px;color:var(--txt3);font-family:var(--fm)">${esc(s.source_ip)}${aiAssess}</div>
+      </td>
+      <td style="padding:10px 12px">${lsTypeBadge(s.type)}</td>
+      <td style="padding:10px 12px;font-size:12px;color:var(--txt2)">${esc(s.vendor||'—')}<span style="font-size:10px;color:${confColor};margin-left:4px">${confPct}%</span></td>
+      <td style="padding:10px 12px;font-size:11px;color:var(--txt3)">${protoIcon} ${esc(s.protocol||'—')}</td>
+      <td style="padding:10px 12px;text-align:right;font-family:var(--fm);font-size:13px;color:${epsColor}">${s.eps?.toFixed(2)}</td>
+      <td style="padding:10px 12px;text-align:right;font-family:var(--fm);font-size:12px;color:var(--txt2)">${(s.event_count_24h||0).toLocaleString()}</td>
+      <td style="padding:10px 12px;font-size:11px;color:var(--txt3)">${fmtDate(s.last_seen)}</td>
+      <td style="padding:10px 12px;text-align:center"><span style="font-size:10px;color:${s.anomaly?'var(--r)':'var(--g)'}">${s.anomaly?'ANOMALY':'OK'}</span></td>
+    </tr>`;
+  }).join('');
+}
+
+function showLogSourceDetail(s) {
+  document.getElementById('lsd-title').textContent = `Source: ${s.source_name}`;
+  const sevHtml = Object.entries(s.severity_dist||{}).map(([k,v])=>
+    `<div style="display:flex;justify-content:space-between;padding:3px 0"><span class="badge ${k}">${k}</span><span style="font-family:var(--fm);font-size:12px">${v.toLocaleString()}</span></div>`
+  ).join('') || '<div style="color:var(--txt3);font-size:12px">No severity data</div>';
+
+  const groupsHtml = (s.top_groups||[]).map(g=>`<span style="background:rgba(255,255,255,.06);padding:2px 7px;border-radius:3px;font-size:11px;margin:2px;display:inline-block">${esc(g)}</span>`).join('') || '—';
+  const recsHtml = (s.ai_recommendations||[]).map(r=>`<div class="ls-ai-insight">${esc(r)}</div>`).join('');
+
+  document.getElementById('lsd-body').innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
+      <div><div style="font-size:10px;color:var(--txt3);margin-bottom:4px">TYPE</div>${lsTypeBadge(s.type)}</div>
+      <div><div style="font-size:10px;color:var(--txt3);margin-bottom:4px">VENDOR</div><div style="font-size:13px;color:var(--txt)">${esc(s.vendor||'unknown')}</div></div>
+      <div><div style="font-size:10px;color:var(--txt3);margin-bottom:4px">SOURCE IP</div><div style="font-size:13px;font-family:var(--fm);color:var(--c)">${esc(s.source_ip)}</div></div>
+      <div><div style="font-size:10px;color:var(--txt3);margin-bottom:4px">PROTOCOL</div><div style="font-size:13px;color:var(--txt)">${esc(s.protocol||'—')}</div></div>
+      <div><div style="font-size:10px;color:var(--txt3);margin-bottom:4px">EPS (24h avg)</div><div style="font-size:18px;font-family:var(--fm);color:var(--c)">${s.eps?.toFixed(3)}</div></div>
+      <div><div style="font-size:10px;color:var(--txt3);margin-bottom:4px">EVENTS (24h)</div><div style="font-size:18px;font-family:var(--fm);color:var(--txt)">${(s.event_count_24h||0).toLocaleString()}</div></div>
+      <div><div style="font-size:10px;color:var(--txt3);margin-bottom:4px">LAST SEEN</div><div style="font-size:12px;color:var(--txt2)">${fmtDate(s.last_seen)}</div></div>
+      <div><div style="font-size:10px;color:var(--txt3);margin-bottom:4px">CONFIDENCE</div><div style="font-size:13px;color:var(--g)">${Math.round((s.confidence||0)*100)}%</div></div>
+    </div>
+    <div style="margin-bottom:12px">
+      <div style="font-size:10px;color:var(--txt3);margin-bottom:6px">TOP RULE GROUPS</div>
+      ${groupsHtml}
+    </div>
+    <div style="margin-bottom:12px">
+      <div style="font-size:10px;color:var(--txt3);margin-bottom:6px">SEVERITY DISTRIBUTION (24h)</div>
+      ${sevHtml}
+    </div>
+    ${s.ai_assessment ? `<div style="margin-bottom:12px">
+      <div style="font-size:10px;color:var(--txt3);margin-bottom:6px">AI ASSESSMENT</div>
+      <div style="font-size:13px;font-weight:600;color:${s.ai_assessment==='anomalous'?'var(--r)':s.ai_assessment==='suspicious'?'var(--o)':'var(--g)'}">${s.ai_assessment.toUpperCase()}</div>
+    </div>` : ''}
+    ${recsHtml ? `<div class="ls-ai-panel"><div style="font-size:10px;font-weight:700;color:var(--c);margin-bottom:6px">AI RECOMMENDATIONS</div>${recsHtml}</div>` : ''}
+  `;
+  openModal('modal-log-source');
+}
+
+async function runLogSourcesAnalysis() {
+  if (!_lsData?.sources?.length) return;
+  const btn = document.getElementById('ls-ai-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Analyzing…'; }
+
+  const toAnalyze = _lsData.sources.filter(s => s.type === 'unknown' || s.anomaly || s.is_new || s.vendor === 'unknown');
+  const payload = toAnalyze.length > 0 ? toAnalyze : _lsData.sources.slice(0, 10);
+
+  const r = await P('/api/log-sources/analyze', { sources: payload });
+  if (btn) { btn.disabled = false; btn.textContent = '🧠 AI Analysis'; }
+
+  if (!r || r.error) { alert(r?.error || 'Analysis failed'); return; }
+
+  // Merge AI enrichment back into _lsData
+  const enrichMap = {};
+  for (const s of (r.enriched_sources || [])) enrichMap[s.source_id] = s;
+  _lsData.sources = _lsData.sources.map(s => enrichMap[s.source_id] ? {...s, ...enrichMap[s.source_id]} : s);
+  _lsFiltered = _lsFiltered.map(s => enrichMap[s.source_id] ? {...s, ...enrichMap[s.source_id]} : s);
+
+  // Show AI panel
+  const panel = document.getElementById('ls-ai-panel');
+  const insightsEl = document.getElementById('ls-ai-insights');
+  const modelsEl = document.getElementById('ls-models-used');
+  if (panel) panel.style.display = '';
+  if (insightsEl && r.ai_insights?.length) {
+    insightsEl.innerHTML = r.ai_insights.map(i=>`<div class="ls-ai-insight">${esc(i)}</div>`).join('');
+  }
+  if (modelsEl && r.models_used) {
+    modelsEl.innerHTML = Object.values(r.models_used).filter(Boolean)
+      .map(m=>`<span class="ls-model-tag">${esc(m)}</span>`).join('');
+  }
+
+  renderLsTable();
 }
 
 // ─── INVESTIGATION TABS / AUTO-TRIAGE / HISTORY ─────────────
