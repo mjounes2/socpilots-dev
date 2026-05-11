@@ -4009,6 +4009,83 @@ async function loadMitre() {
     MITRE_TACTICS.forEach(t => { const o = document.createElement('option'); o.value = t.id; o.textContent = t.n; tsel.appendChild(o); });
   }
   renderMitreMatrix();
+
+  // Auto-load cached AI analysis if available
+  const cached = await G('/api/mitre/analysis');
+  if (cached?.available) {
+    const panel = document.getElementById('mc-intel-panel');
+    const body  = document.getElementById('mc-intel-body');
+    const modelsEl = document.getElementById('mc-intel-models');
+    if (panel) panel.classList.remove('mc-hidden');
+    const d = cached.result;
+    const ageMin = Math.round((Date.now() - cached.last_analyzed_at) / 60000);
+    const ageStr = ageMin < 60 ? `${ageMin}m ago` : `${Math.round(ageMin/60)}h ago`;
+    const srcTag = `<span style="font-size:10px;color:var(--txt3);margin-left:8px">${cached.source === 'auto' ? 'auto' : 'manual'} · ${ageStr}</span>`;
+    if (modelsEl && d.models_used) {
+      const uniq = [...new Set(Object.values(d.models_used).filter(Boolean))];
+      modelsEl.innerHTML = uniq.map(m => `<span class="ls-model-tag">${esc(m)}</span>`).join('') + srcTag;
+    } else if (modelsEl) { modelsEl.innerHTML = srcTag; }
+    // Reuse existing render helper
+    if (body) _renderMitreAnalysisResult(d, body);
+  }
+}
+
+function _renderMitreAnalysisResult(d, body) {
+  let tacticHtml = '';
+  if (d.tactic_breakdown?.length) {
+    tacticHtml = `<div class="mc-section-hd">Tactic Coverage Breakdown</div>
+      <div class="mc-tactic-grid">
+        ${d.tactic_breakdown.map(t => {
+          const barColor = t.pct >= 70 ? '#00c853' : t.pct >= 40 ? '#ffc107' : t.pct >= 10 ? '#ff6d00' : '#ff1744';
+          const name = t.tactic.replace(/_/g,' ').replace(/\b\w/g, c => c.toUpperCase());
+          return `<div class="mc-tactic-card">
+            <div class="mc-tactic-name">${esc(name)}</div>
+            <div class="mc-tactic-bar-wrap"><div class="mc-tactic-bar" style="width:${t.pct}%;background:${barColor}"></div></div>
+            <div class="mc-tactic-stats"><span>${t.covered}/${t.total}</span><span style="color:${barColor}">${t.pct}%</span></div>
+          </div>`;
+        }).join('')}
+      </div>`;
+  }
+  let gapsHtml = '';
+  if (d.gap_analysis?.length) {
+    gapsHtml = `<div class="mc-section-hd">Priority Detection Gaps (${d.gap_analysis.length} of ${d.total_gaps} uncovered)</div>
+      <ul class="mc-gap-list">
+        ${d.gap_analysis.map(g => {
+          const tactics = (g.tactics||[]).slice(0,3).map(t =>
+            `<span class="mc-gap-tactic">${esc(t.replace(/_/g,' '))}</span>`).join(' ');
+          return `<li class="mc-gap-item">
+            <div class="mc-gap-hd">
+              <span class="mc-gap-id">${esc(g.id)}</span>
+              <span class="mc-gap-name">${esc(g.name)}</span>
+              ${tactics}
+            </div>
+            ${g.why_missing ? `<div class="mc-gap-why">${esc(g.why_missing)}</div>` : ''}
+            ${g.detection_opportunity ? `<div class="mc-gap-opp">${esc(g.detection_opportunity)}</div>` : ''}
+          </li>`;
+        }).join('')}
+      </ul>`;
+  }
+  let recsHtml = '';
+  if (d.recommendations?.length) {
+    const effortOrder = { quick_win: 0, medium_effort: 1, strategic: 2 };
+    const sorted = [...d.recommendations].sort((a,b) => (effortOrder[a.effort]??99)-(effortOrder[b.effort]??99));
+    recsHtml = `<div class="mc-section-hd">Prioritized Recommendations (${d.recommendations.length})</div>
+      <ul class="mc-rec-list">
+        ${sorted.map(r => {
+          const effortClass = r.effort==='quick_win'?'mc-eff-quick':r.effort==='medium_effort'?'mc-eff-medium':'mc-eff-strategic';
+          const effortLabel = r.effort==='quick_win'?'Quick Win':r.effort==='medium_effort'?'Medium Effort':'Strategic';
+          const techs = (r.techniques_covered||[]).slice(0,5).join(', ');
+          return `<li class="mc-rec-item">
+            <span class="mc-rec-effort ${effortClass}">${esc(effortLabel)}</span>
+            <div class="mc-rec-title">${esc(r.title||'')}</div>
+            <div class="mc-rec-impact">${esc(r.impact||'')}</div>
+            ${techs?`<div class="mc-rec-tech">${esc(techs)}</div>`:''}
+          </li>`;
+        }).join('')}
+      </ul>`;
+  }
+  body.innerHTML = tacticHtml + gapsHtml + recsHtml
+    || '<div style="color:var(--txt3);font-size:12px;padding:10px">No analysis results returned.</div>';
 }
 
 function applyMitreFilters() { if (_mitreLoaded) renderMitreMatrix(); }
@@ -4226,78 +4303,13 @@ async function runMitreAnalysis() {
     return;
   }
 
-  // Model attribution
   const modelsEl = document.getElementById('mc-intel-models');
   if (modelsEl && d.models_used) {
     const uniq = [...new Set(Object.values(d.models_used).filter(Boolean))];
     modelsEl.innerHTML = uniq.map(m => `<span class="ls-model-tag">${esc(m)}</span>`).join('');
   }
 
-  // ── Tactic breakdown ──
-  let tacticHtml = '';
-  if (d.tactic_breakdown?.length) {
-    tacticHtml = `<div class="mc-section-hd">Tactic Coverage Breakdown</div>
-      <div class="mc-tactic-grid">
-        ${d.tactic_breakdown.map(t => {
-          const barColor = t.pct >= 70 ? '#00c853' : t.pct >= 40 ? '#ffc107' : t.pct >= 10 ? '#ff6d00' : '#ff1744';
-          const name = t.tactic.replace(/_/g,' ').replace(/\b\w/g, c => c.toUpperCase());
-          return `<div class="mc-tactic-card">
-            <div class="mc-tactic-name">${esc(name)}</div>
-            <div class="mc-tactic-bar-wrap"><div class="mc-tactic-bar" style="width:${t.pct}%;background:${barColor}"></div></div>
-            <div class="mc-tactic-stats"><span>${t.covered}/${t.total}</span><span style="color:${barColor}">${t.pct}%</span></div>
-          </div>`;
-        }).join('')}
-      </div>`;
-  }
-
-  // ── Gap analysis ──
-  let gapsHtml = '';
-  if (d.gap_analysis?.length) {
-    gapsHtml = `<div class="mc-section-hd">Priority Detection Gaps (${d.gap_analysis.length} of ${d.total_gaps} uncovered)</div>
-      <ul class="mc-gap-list">
-        ${d.gap_analysis.map(g => {
-          const tactics = (g.tactics||[]).slice(0,3).map(t =>
-            `<span class="mc-gap-tactic">${esc(t.replace(/_/g,' '))}</span>`).join(' ');
-          return `<li class="mc-gap-item">
-            <div class="mc-gap-hd">
-              <span class="mc-gap-id">${esc(g.id)}</span>
-              <span class="mc-gap-name">${esc(g.name)}</span>
-              ${tactics}
-            </div>
-            ${g.why_missing ? `<div class="mc-gap-why">${esc(g.why_missing)}</div>` : ''}
-            ${g.detection_opportunity ? `<div class="mc-gap-opp">${esc(g.detection_opportunity)}</div>` : ''}
-          </li>`;
-        }).join('')}
-      </ul>`;
-  }
-
-  // ── Recommendations ──
-  let recsHtml = '';
-  if (d.recommendations?.length) {
-    const effortOrder = { quick_win: 0, medium_effort: 1, strategic: 2 };
-    const sorted = [...d.recommendations].sort((a,b) =>
-      (effortOrder[a.effort]??99) - (effortOrder[b.effort]??99));
-    recsHtml = `<div class="mc-section-hd">Prioritized Recommendations (${d.recommendations.length})</div>
-      <ul class="mc-rec-list">
-        ${sorted.map(r => {
-          const effortClass = r.effort === 'quick_win' ? 'mc-eff-quick'
-            : r.effort === 'medium_effort' ? 'mc-eff-medium' : 'mc-eff-strategic';
-          const effortLabel = r.effort === 'quick_win' ? 'Quick Win'
-            : r.effort === 'medium_effort' ? 'Medium Effort' : 'Strategic';
-          const techs = (r.techniques_covered||[]).slice(0,5).join(', ');
-          return `<li class="mc-rec-item">
-            <span class="mc-rec-effort ${effortClass}">${esc(effortLabel)}</span>
-            <div class="mc-rec-title">${esc(r.title||'')}</div>
-            <div class="mc-rec-impact">${esc(r.impact||'')}</div>
-            ${techs ? `<div class="mc-rec-tech">${esc(techs)}</div>` : ''}
-          </li>`;
-        }).join('')}
-      </ul>`;
-  }
-
-  body.innerHTML = tacticHtml + gapsHtml + recsHtml
-    || '<div style="color:var(--txt3);font-size:12px;padding:10px">No analysis results returned.</div>';
-
+  _renderMitreAnalysisResult(d, body);
   panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
@@ -4347,6 +4359,34 @@ async function loadLogSources() {
   applyLsFilters();
 
   if (meta) meta.textContent = `${s.total_sources || 0} sources · ${s.total_events_24h?.toLocaleString() || 0} events (24h)`;
+
+  // Auto-load cached AI analysis if available
+  const cached = await G('/api/log-sources/analysis');
+  if (cached?.available) {
+    const panel = document.getElementById('ls-ai-panel');
+    const insightsEl = document.getElementById('ls-ai-insights');
+    const modelsEl = document.getElementById('ls-models-used');
+    if (panel) panel.style.display = '';
+    const r = cached.result;
+    const ageMin = Math.round((Date.now() - cached.last_analyzed_at) / 60000);
+    const ageStr = ageMin < 60 ? `${ageMin}m ago` : `${Math.round(ageMin/60)}h ago`;
+    const srcTag = `<span style="font-size:10px;color:var(--txt3);margin-left:8px">${cached.source === 'auto' ? 'auto' : 'manual'} · ${ageStr}</span>`;
+    if (insightsEl && r.ai_insights?.length) {
+      insightsEl.innerHTML = r.ai_insights.map(i => `<div class="ls-ai-insight">${esc(i)}</div>`).join('') + srcTag;
+    }
+    if (modelsEl && r.models_used) {
+      const uniq = [...new Set(Object.values(r.models_used).filter(Boolean))];
+      modelsEl.innerHTML = uniq.map(m => `<span class="ls-model-tag">${esc(m)}</span>`).join('');
+    }
+    // Merge AI enrichment into source data
+    if (r.enriched_sources?.length) {
+      const enrichMap = {};
+      for (const src of r.enriched_sources) enrichMap[src.source_id] = src;
+      _lsData.sources = _lsData.sources.map(src => enrichMap[src.source_id] ? {...src, ...enrichMap[src.source_id]} : src);
+      _lsFiltered = _lsFiltered.map(src => enrichMap[src.source_id] ? {...src, ...enrichMap[src.source_id]} : src);
+      renderLsTable();
+    }
+  }
 }
 
 function lsFilterDebounce() {

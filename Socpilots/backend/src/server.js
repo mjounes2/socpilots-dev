@@ -856,6 +856,121 @@ app.get('/api/stats/mitre', authMW, async (req, res) => {
 
 // ── MITRE ATT&CK COVERAGE ──
 let _mitreCovCache = null, _mitreCovCacheTime = 0, _mitreCovCacheTf = '';
+let _mitreAutoAnalysis = null;
+
+// KEEP IN SYNC WITH Socpilots/frontend/index.html MITRE_TACTICS and MITRE_TECHS
+const _MITRE_TACTICS_MAP = {
+  TA0043:'reconnaissance',TA0042:'resource_development',TA0001:'initial_access',
+  TA0002:'execution',TA0003:'persistence',TA0004:'privilege_escalation',
+  TA0005:'defense_evasion',TA0006:'credential_access',TA0007:'discovery',
+  TA0008:'lateral_movement',TA0009:'collection',TA0010:'exfiltration',
+  TA0011:'command_and_control',TA0040:'impact',
+};
+const _MITRE_TECHS_LIST = [
+  ['T1595','Active Scanning',['TA0043']],['T1592','Gather Victim Host Info',['TA0043']],
+  ['T1589','Gather Victim Identity Info',['TA0043']],['T1590','Gather Victim Network Info',['TA0043']],
+  ['T1591','Gather Victim Org Info',['TA0043']],['T1598','Phishing for Info',['TA0043']],
+  ['T1597','Search Closed Sources',['TA0043']],['T1596','Search Open Tech Databases',['TA0043']],
+  ['T1593','Search Open Websites',['TA0043']],['T1594','Search Victim Website',['TA0043']],
+  ['T1583','Acquire Infrastructure',['TA0042']],['T1584','Compromise Infrastructure',['TA0042']],
+  ['T1586','Compromise Accounts',['TA0042']],['T1587','Develop Capabilities',['TA0042']],
+  ['T1588','Obtain Capabilities',['TA0042']],['T1585','Establish Accounts',['TA0042']],
+  ['T1608','Stage Capabilities',['TA0042']],
+  ['T1189','Drive-by Compromise',['TA0001']],['T1190','Exploit Public-Facing App',['TA0001']],
+  ['T1133','External Remote Services',['TA0001','TA0003']],['T1200','Hardware Additions',['TA0001']],
+  ['T1566','Phishing',['TA0001']],['T1091','Replication via Removable Media',['TA0001','TA0008']],
+  ['T1195','Supply Chain Compromise',['TA0001']],['T1199','Trusted Relationship',['TA0001']],
+  ['T1078','Valid Accounts',['TA0001','TA0003','TA0004','TA0005']],['T1659','Content Injection',['TA0001']],
+  ['T1059','Command and Scripting Interpreter',['TA0002']],['T1203','Exploitation for Client Execution',['TA0002']],
+  ['T1559','Inter-Process Communication',['TA0002']],['T1106','Native API',['TA0002']],
+  ['T1053','Scheduled Task/Job',['TA0002','TA0003','TA0004']],['T1129','Shared Modules',['TA0002']],
+  ['T1569','System Services',['TA0002','TA0003']],['T1204','User Execution',['TA0002']],
+  ['T1047','Windows Management Instrumentation',['TA0002']],['T1072','Software Deployment Tools',['TA0002','TA0008']],
+  ['T1098','Account Manipulation',['TA0003','TA0004']],['T1197','BITS Jobs',['TA0003','TA0005']],
+  ['T1547','Boot or Logon Autostart',['TA0003','TA0004']],['T1176','Browser Extensions',['TA0003']],
+  ['T1554','Compromise Host Software Binary',['TA0003']],['T1136','Create Account',['TA0003']],
+  ['T1543','Create or Modify System Process',['TA0003','TA0004']],['T1546','Event Triggered Execution',['TA0003','TA0004']],
+  ['T1574','Hijack Execution Flow',['TA0003','TA0004','TA0005']],['T1137','Office Application Startup',['TA0003']],
+  ['T1542','Pre-OS Boot',['TA0003','TA0005']],['T1505','Server Software Component',['TA0003']],
+  ['T1548','Abuse Elevation Control Mechanism',['TA0004','TA0005']],['T1134','Access Token Manipulation',['TA0004','TA0005']],
+  ['T1484','Domain or Tenant Policy Modification',['TA0004','TA0005']],['T1068','Exploitation for Privilege Escalation',['TA0004']],
+  ['T1055','Process Injection',['TA0004','TA0005']],['T1611','Escape to Host',['TA0004']],
+  ['T1140','Deobfuscate/Decode Files',['TA0005']],['T1006','Direct Volume Access',['TA0005']],
+  ['T1480','Execution Guardrails',['TA0005']],['T1211','Exploitation for Defense Evasion',['TA0005']],
+  ['T1222','File and Directory Permissions Mod',['TA0005']],['T1564','Hide Artifacts',['TA0005']],
+  ['T1562','Impair Defenses',['TA0005']],['T1070','Indicator Removal',['TA0005']],
+  ['T1202','Indirect Command Execution',['TA0005']],['T1036','Masquerading',['TA0005']],
+  ['T1112','Modify Registry',['TA0005']],['T1027','Obfuscated Files or Information',['TA0005']],
+  ['T1647','Plist File Modification',['TA0005']],['T1620','Reflective Code Loading',['TA0005']],
+  ['T1553','Subvert Trust Controls',['TA0005']],['T1218','System Binary Proxy Execution',['TA0005']],
+  ['T1216','System Script Proxy Execution',['TA0005']],['T1127','Trusted Developer Utilities Proxy',['TA0005']],
+  ['T1535','Unused/Unsupported Cloud Regions',['TA0005']],['T1497','Virtualization/Sandbox Evasion',['TA0005']],
+  ['T1600','Weaken Encryption',['TA0005']],
+  ['T1557','Adversary-in-the-Middle',['TA0006','TA0009']],['T1110','Brute Force',['TA0006']],
+  ['T1555','Credentials from Password Stores',['TA0006']],['T1212','Exploitation for Credential Access',['TA0006']],
+  ['T1187','Forced Authentication',['TA0006']],['T1606','Forge Web Credentials',['TA0006']],
+  ['T1056','Input Capture',['TA0006','TA0009']],['T1040','Network Sniffing',['TA0006','TA0007']],
+  ['T1003','OS Credential Dumping',['TA0006']],['T1528','Steal Application Access Token',['TA0006']],
+  ['T1558','Steal or Forge Kerberos Tickets',['TA0006']],['T1539','Steal Web Session Cookie',['TA0006']],
+  ['T1552','Unsecured Credentials',['TA0006']],
+  ['T1087','Account Discovery',['TA0007']],['T1010','Application Window Discovery',['TA0007']],
+  ['T1217','Browser Information Discovery',['TA0007']],['T1580','Cloud Infrastructure Discovery',['TA0007']],
+  ['T1538','Cloud Service Dashboard',['TA0007']],['T1526','Cloud Service Discovery',['TA0007']],
+  ['T1613','Container and Resource Discovery',['TA0007']],['T1622','Debugger Evasion',['TA0007']],
+  ['T1482','Domain Trust Discovery',['TA0007']],['T1083','File and Directory Discovery',['TA0007']],
+  ['T1615','Group Policy Discovery',['TA0007']],['T1046','Network Service Discovery',['TA0007']],
+  ['T1135','Network Share Discovery',['TA0007']],['T1201','Password Policy Discovery',['TA0007']],
+  ['T1120','Peripheral Device Discovery',['TA0007']],['T1069','Permission Groups Discovery',['TA0007']],
+  ['T1057','Process Discovery',['TA0007']],['T1012','Query Registry',['TA0007']],
+  ['T1018','Remote System Discovery',['TA0007']],['T1518','Software Discovery',['TA0007']],
+  ['T1082','System Information Discovery',['TA0007']],['T1016','System Network Configuration Discovery',['TA0007']],
+  ['T1049','System Network Connections Discovery',['TA0007']],['T1033','System Owner/User Discovery',['TA0007']],
+  ['T1007','System Service Discovery',['TA0007']],['T1124','System Time Discovery',['TA0007']],
+  ['T1210','Exploitation of Remote Services',['TA0008']],['T1534','Internal Spearphishing',['TA0008']],
+  ['T1570','Lateral Tool Transfer',['TA0008']],['T1563','Remote Service Session Hijacking',['TA0008']],
+  ['T1021','Remote Services',['TA0008']],['T1080','Taint Shared Content',['TA0008']],
+  ['T1550','Use Alternate Authentication Material',['TA0005','TA0008']],
+  ['T1560','Archive Collected Data',['TA0009']],['T1123','Audio Capture',['TA0009']],
+  ['T1119','Automated Collection',['TA0009']],['T1185','Browser Session Hijacking',['TA0009']],
+  ['T1115','Clipboard Data',['TA0009']],['T1530','Data from Cloud Storage',['TA0009']],
+  ['T1213','Data from Information Repositories',['TA0009']],['T1005','Data from Local System',['TA0009']],
+  ['T1039','Data from Network Shared Drive',['TA0009']],['T1025','Data from Removable Media',['TA0009']],
+  ['T1074','Data Staged',['TA0009']],['T1114','Email Collection',['TA0009']],
+  ['T1602','Data from Configuration Repository',['TA0009']],['T1113','Screen Capture',['TA0009']],
+  ['T1125','Video Capture',['TA0009']],
+  ['T1020','Automated Exfiltration',['TA0010']],['T1030','Data Transfer Size Limits',['TA0010']],
+  ['T1048','Exfiltration Over Alt Protocol',['TA0010']],['T1041','Exfiltration Over C2 Channel',['TA0010']],
+  ['T1011','Exfiltration Over Other Network',['TA0010']],['T1052','Exfiltration Over Physical Medium',['TA0010']],
+  ['T1567','Exfiltration Over Web Service',['TA0010']],['T1537','Transfer Data to Cloud Account',['TA0010']],
+  ['T1029','Scheduled Transfer',['TA0010']],
+  ['T1071','Application Layer Protocol',['TA0011']],['T1092','Communication via Removable Media',['TA0011']],
+  ['T1132','Data Encoding',['TA0011']],['T1001','Data Obfuscation',['TA0011']],
+  ['T1568','Dynamic Resolution',['TA0011']],['T1573','Encrypted Channel',['TA0011']],
+  ['T1008','Fallback Channels',['TA0011']],['T1105','Ingress Tool Transfer',['TA0011']],
+  ['T1104','Multi-Stage Channels',['TA0011']],['T1095','Non-Application Layer Protocol',['TA0011']],
+  ['T1571','Non-Standard Port',['TA0011']],['T1572','Protocol Tunneling',['TA0011']],
+  ['T1090','Proxy',['TA0011']],['T1219','Remote Access Software',['TA0011']],
+  ['T1205','Traffic Signaling',['TA0011','TA0003']],['T1102','Web Service',['TA0011']],
+  ['T1531','Account Access Removal',['TA0040']],['T1485','Data Destruction',['TA0040']],
+  ['T1486','Data Encrypted for Impact',['TA0040']],['T1565','Data Manipulation',['TA0040']],
+  ['T1491','Defacement',['TA0040']],['T1561','Disk Wipe',['TA0040']],
+  ['T1499','Endpoint Denial of Service',['TA0040']],['T1495','Firmware Corruption',['TA0040']],
+  ['T1490','Inhibit System Recovery',['TA0040']],['T1498','Network Denial of Service',['TA0040']],
+  ['T1496','Resource Hijacking',['TA0040']],['T1489','Service Stop',['TA0040']],
+  ['T1529','System Shutdown/Reboot',['TA0040']],['T1657','Financial Theft',['TA0040']],
+];
+
+async function _runMitreAnalysis(payload) {
+  const LANGCHAIN_URL = process.env.LANGCHAIN_URL || 'http://langchain-agent:8001';
+  const r = await fetch(`${LANGCHAIN_URL}/mitre/analyze`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.LANGCHAIN_INTERNAL_TOKEN || ''}` },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(90000),
+  });
+  if (!r.ok) throw new Error(`AI service error: ${(await r.text()).slice(0, 200)}`);
+  return r.json();
+}
 
 function _mitreCoverageScore(docCount, ruleCount, agentCount, lastSeenMs) {
   const alertScore = Math.min(1, (docCount  || 0) / 100);
@@ -952,25 +1067,18 @@ app.post('/api/mitre/analyze', authMW, async (req, res) => {
       },
     };
 
-    const LANGCHAIN_URL = process.env.LANGCHAIN_URL || 'http://langchain-agent:8001';
-    const r = await fetch(`${LANGCHAIN_URL}/mitre/analyze`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${process.env.LANGCHAIN_INTERNAL_TOKEN || ''}`,
-      },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(90000),
-    });
-    if (!r.ok) {
-      const err = await r.text();
-      return res.status(502).json({ error: `AI service error: ${err.slice(0, 200)}` });
-    }
-    res.json(await r.json());
+    const result = await _runMitreAnalysis(payload);
+    _mitreAutoAnalysis = { result, last_analyzed_at: Date.now(), source: 'manual', timeframe: _mitreCovCacheTf || '7d' };
+    res.json(result);
   } catch (e) {
     console.error('[mitre/analyze]', e.message);
     res.status(502).json({ error: e.message });
   }
+});
+
+app.get('/api/mitre/analysis', authMW, (req, res) => {
+  if (!_mitreAutoAnalysis) return res.json({ available: false });
+  res.json({ available: true, ..._mitreAutoAnalysis });
 });
 
 app.get('/api/mitre/technique/:id', authMW, async (req, res) => {
@@ -2461,6 +2569,112 @@ setInterval(() => { otxFeedSync(); }, 6 * 3600_000);
 setTimeout (() => { otxFeedSync(); }, 5 * 60_000);   // first run 5min after boot
 
 // ═══════════════════════════════════════════════════════════════
+// ─── MITRE ATT&CK AUTO-ANALYSIS WORKER (every 24 hours) ────────
+// Fetches live 7d coverage, computes covered vs gap techniques,
+// calls LangChain /mitre/analyze, and caches the result so the
+// UI shows fresh AI intelligence on every page open without a
+// manual trigger. Manual "Analyze" button also updates this cache.
+// ═══════════════════════════════════════════════════════════════
+async function mitreAutoAnalyzer() {
+  try {
+    const os = await osSearch({
+      size: 0,
+      query: { bool: { must: [
+        { range: { '@timestamp': { gte: 'now-7d' } } },
+        { exists: { field: 'rule.mitre.id' } },
+      ]}},
+      aggs: {
+        techniques: {
+          terms: { field: 'rule.mitre.id', size: 500 },
+          aggs: {
+            rules:     { terms: { field: 'rule.id',       size: 20 } },
+            agents:    { terms: { field: 'agent.name',    size: 20 } },
+            max_level: { max:   { field: 'rule.level' } },
+          },
+        },
+        top_agents: { terms: { field: 'agent.name', size: 20 } },
+      },
+    });
+
+    const covMap = {};
+    for (const b of (os.aggregations?.techniques?.buckets || [])) {
+      covMap[b.key] = {
+        count:  b.doc_count,
+        rules:  b.rules?.buckets?.map(x => x.key) || [],
+        agents: b.agents?.buckets?.map(x => x.key) || [],
+        score:  Math.round(b.max_level?.value || 0),
+      };
+    }
+
+    const covered = [], gaps = [];
+    for (const [id, name, tacticIds] of _MITRE_TECHS_LIST) {
+      const tactics = tacticIds.map(tid => _MITRE_TACTICS_MAP[tid] || tid);
+      const d = covMap[id];
+      if (d && d.count > 0) {
+        covered.push({ id: String(id).replace(/[^A-Z0-9.]/gi, ''), name: String(name).slice(0, 80),
+          tactics: tactics.slice(0, 3), count: d.count, score: d.score, rule_count: d.rules.length });
+      } else {
+        gaps.push({ id: String(id).replace(/[^A-Z0-9.]/gi, ''), name: String(name).slice(0, 80), tactics: tactics.slice(0, 3) });
+      }
+    }
+
+    const allAgents = (os.aggregations?.top_agents?.buckets || []).map(b => b.key);
+    const logSources = _logSourcesCache
+      ? [...new Set((_logSourcesCache.sources || []).map(s => s.type).filter(Boolean))].slice(0, 10)
+      : [];
+    const totalTechs = _MITRE_TECHS_LIST.length;
+
+    const result = await _runMitreAnalysis({
+      covered_techniques: covered.slice(0, 100),
+      gap_techniques:     gaps.slice(0, 150),
+      log_sources:        logSources,
+      agents:             allAgents.slice(0, 20).map(a => String(a).slice(0, 50)),
+      summary: {
+        total_techniques: totalTechs,
+        covered_count:    covered.length,
+        gap_count:        gaps.length,
+        coverage_pct:     totalTechs ? Math.round(covered.length / totalTechs * 100) : 0,
+      },
+    });
+    _mitreAutoAnalysis = { result, last_analyzed_at: Date.now(), source: 'auto', timeframe: '7d' };
+    console.log(`[mitre-auto-analyze] Done — ${covered.length} covered, ${gaps.length} gaps`);
+  } catch (e) {
+    console.error('[mitre-auto-analyze]', e.message);
+  }
+}
+setInterval(() => { mitreAutoAnalyzer(); }, 24 * 3600_000);
+setTimeout (() => { mitreAutoAnalyzer(); }, 10 * 60_000);  // first run 10min after boot
+
+// ═══════════════════════════════════════════════════════════════
+// ─── LOG SOURCES AUTO-ANALYSIS WORKER (every 24 hours) ─────────
+// Ensures the log source inventory is fresh, routes anomalous /
+// unknown sources through the LangChain multi-LLM pipeline, and
+// caches the enriched result for instant display on page load.
+// ═══════════════════════════════════════════════════════════════
+async function logSourcesAutoAnalyzer() {
+  try {
+    // Refresh source inventory if cache is missing or older than 1 hour
+    if (!_logSourcesCache || Date.now() - _logSourcesCacheTime > 3600_000) {
+      await _fetchLogSources();
+    }
+    if (!_logSourcesCache?.sources?.length) {
+      console.log('[log-sources-auto-analyze] No sources available — skipping');
+      return;
+    }
+    const sources = _logSourcesCache.sources;
+    const toAnalyze = sources.filter(s => s.type === 'unknown' || s.anomaly || s.is_new || s.vendor === 'unknown');
+    const payload = toAnalyze.length > 0 ? toAnalyze : sources.slice(0, 10);
+    const result = await _runLogSourcesAnalysis(payload);
+    _logSourcesAutoAnalysis = { result, last_analyzed_at: Date.now(), source: 'auto' };
+    console.log(`[log-sources-auto-analyze] Done — ${result.sources_analyzed || 0} sources analyzed`);
+  } catch (e) {
+    console.error('[log-sources-auto-analyze]', e.message);
+  }
+}
+setInterval(() => { logSourcesAutoAnalyzer(); }, 24 * 3600_000);
+setTimeout (() => { logSourcesAutoAnalyzer(); }, 13 * 60_000);  // first run 13min after boot (staggered from MITRE)
+
+// ═══════════════════════════════════════════════════════════════
 // ─── DARK SOC — APPROVAL EXPIRY WORKER (every 2 minutes) ───────
 // Scans isolation_approvals for any that have passed their expiry
 // time and auto-rejects them (marks as expired, no isolation fired).
@@ -3601,11 +3815,29 @@ const LS_GROUP_MAP = {
 };
 
 let _logSourcesCache = null, _logSourcesCacheTime = 0;
+let _logSourcesAutoAnalysis = null;
 
-app.get('/api/log-sources', authMW, async (req, res) => {
-  try {
-    const now = Date.now();
-    if (_logSourcesCache && now - _logSourcesCacheTime < 60000) return res.json(_logSourcesCache);
+async function _runLogSourcesAnalysis(sources) {
+  const sanitized = sources.map(s => ({
+    source_id: s.source_id, source_name: s.source_name, type: s.type,
+    vendor: s.vendor, protocol: s.protocol, event_count_24h: s.event_count_24h,
+    eps: s.eps, is_new: s.is_new, anomaly: s.anomaly,
+    top_groups: s.top_groups, top_decoder: s.top_decoder,
+    integration: s.integration, severity_dist: s.severity_dist,
+    confidence: s.confidence,
+  }));
+  const LANGCHAIN_URL = process.env.LANGCHAIN_URL || 'http://langchain-agent:8001';
+  const r = await fetch(`${LANGCHAIN_URL}/log-sources/analyze`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.LANGCHAIN_INTERNAL_TOKEN || ''}` },
+    body: JSON.stringify({ sources: sanitized }),
+    signal: AbortSignal.timeout(90000),
+  });
+  if (!r.ok) throw new Error(`AI service error: ${(await r.text()).slice(0, 200)}`);
+  return r.json();
+}
+
+async function _fetchLogSources() {
 
     const [r24h, r7d] = await Promise.all([
       osSearch({
@@ -3742,8 +3974,14 @@ app.get('/api/log-sources', authMW, async (req, res) => {
     };
 
     _logSourcesCache = result;
-    _logSourcesCacheTime = now;
-    res.json(result);
+    _logSourcesCacheTime = Date.now();
+    return result;
+}
+
+app.get('/api/log-sources', authMW, async (req, res) => {
+  try {
+    if (_logSourcesCache && Date.now() - _logSourcesCacheTime < 60000) return res.json(_logSourcesCache);
+    res.json(await _fetchLogSources());
   } catch (e) {
     console.error('[log-sources]', e.message);
     res.status(502).json({ error: e.message });
@@ -3755,36 +3993,19 @@ app.post('/api/log-sources/analyze', authMW, async (req, res) => {
     const { sources } = req.body;
     if (!Array.isArray(sources) || !sources.length) return res.status(400).json({ error: 'sources array required' });
 
-    // Strip PII/sensitive fields before sending to LLM
-    const sanitized = sources.map(s => ({
-      source_id: s.source_id, source_name: s.source_name, type: s.type,
-      vendor: s.vendor, protocol: s.protocol, event_count_24h: s.event_count_24h,
-      eps: s.eps, is_new: s.is_new, anomaly: s.anomaly,
-      top_groups: s.top_groups, top_decoder: s.top_decoder,
-      integration: s.integration, severity_dist: s.severity_dist,
-      confidence: s.confidence,
-    }));
-
-    const LANGCHAIN_URL = process.env.LANGCHAIN_URL || 'http://langchain-agent:8001';
-    const r = await fetch(`${LANGCHAIN_URL}/log-sources/analyze`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${process.env.LANGCHAIN_INTERNAL_TOKEN || ''}`,
-      },
-      body: JSON.stringify({ sources: sanitized }),
-      signal: AbortSignal.timeout(90000),
-    });
-    if (!r.ok) {
-      const err = await r.text();
-      return res.status(502).json({ error: `AI service error: ${err.slice(0, 200)}` });
-    }
+    const result = await _runLogSourcesAnalysis(sources);
+    _logSourcesAutoAnalysis = { result, last_analyzed_at: Date.now(), source: 'manual' };
     _logSourcesCache = null;
-    res.json(await r.json());
+    res.json(result);
   } catch (e) {
     console.error('[log-sources/analyze]', e.message);
     res.status(502).json({ error: e.message });
   }
+});
+
+app.get('/api/log-sources/analysis', authMW, (req, res) => {
+  if (!_logSourcesAutoAnalysis) return res.json({ available: false });
+  res.json({ available: true, ..._logSourcesAutoAnalysis });
 });
 
 // ─── STATIC (must be last — after all /api routes) ──────────────
