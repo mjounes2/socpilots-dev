@@ -3329,23 +3329,29 @@ app.post('/api/hunting/search-patterns', authMW, async (req, res) => {
 
 app.post('/api/ueba/analyze-anomaly', authMW, async (req, res) => {
   try {
-    const { entity, anomaly_description } = req.body;
-    if (!anomaly_description) return res.status(400).json({ error: 'anomaly_description required' });
+    const { entity } = req.body;
+    if (!entity) return res.status(400).json({ error: 'entity required' });
 
-    // Run RAG retrieval + UEBA profile in parallel
-    const [ragResult, uebaProfile] = await Promise.allSettled([
-      axios.post(`${RAG_URL}/search/investigation`,
-        { query: anomaly_description, limit: 5 },
-        { timeout: 15_000, headers: RAG_HEADERS() }
-      ),
-      entity ? ueba.getUserProfile(entity).catch(() => null) : Promise.resolve(null),
-    ]);
+    // Fetch full UEBA profile from Neo4j
+    const profile = await ueba.getUserProfile(entity).catch(() => null);
+    if (!profile) return res.status(404).json({ error: `Entity "${entity}" not found in UEBA graph` });
+
+    // Call LangChain agent for direct LLM explanation (Mistral, no agent loop)
+    const llmResp = await axios.post(
+      `${LANGCHAIN_URL}/ueba/explain`,
+      { entity, profile },
+      { timeout: 30_000, headers: LANGCHAIN_TOKEN ? { Authorization: `Bearer ${LANGCHAIN_TOKEN}` } : {} }
+    );
 
     res.json({
-      rag_context: ragResult.status === 'fulfilled' ? ragResult.value.data : null,
-      ueba_profile: uebaProfile.status === 'fulfilled' ? uebaProfile.value : null,
+      explanation:  llmResp.data.explanation,
+      entity,
+      risk_score:   profile.risk_score,
+      anomaly_count: profile.anomaly_count,
+      profile,
     });
   } catch(e) {
+    console.error('[ueba/analyze-anomaly]', e.message);
     res.status(500).json({ error: e.message });
   }
 });

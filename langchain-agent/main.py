@@ -1474,6 +1474,87 @@ Return ONLY a JSON array (no markdown):
     }
 
 
+# ═══════════════════════════════════════════════════════════════
+#  UEBA EXPLAIN — Direct LLM risk narrative (no agent loop)
+# ═══════════════════════════════════════════════════════════════
+
+class UebaExplainRequest(BaseModel):
+    entity: str
+    profile: dict
+
+
+@app.post("/ueba/explain")
+async def ueba_explain(req: UebaExplainRequest):
+    """
+    Generate a plain-English SOC analyst narrative explaining WHY an entity
+    has its current risk score. Uses Mistral (fast) with a direct invoke —
+    no agent loop, no tools.
+    """
+    llm = _get_mistral() or _get_gpt_mini()
+    if not llm:
+        raise HTTPException(status_code=503, detail="No LLM available for UEBA explanation")
+
+    p = req.profile
+    entity_type  = p.get("entity_type", "user")
+    risk_score   = p.get("risk_score", 0)
+    anomaly_cnt  = p.get("anomaly_count", 0)
+    total_events = p.get("total_events", 0)
+    last_anomaly = p.get("last_anomaly", "unknown")
+    all_hosts    = p.get("all_hosts") or p.get("all_users") or []
+    typical_hrs  = p.get("typical_hours", [])
+
+    # Build recent activity summary from logins
+    logins = p.get("recent_logins", []) or []
+    flagged = [l for l in logins if l.get("flags") or (l.get("deviation", 0) or 0) > 30]
+    high_dev = sorted(logins, key=lambda l: l.get("deviation", 0) or 0, reverse=True)[:3]
+
+    flags_summary = ""
+    if flagged:
+        flag_lines = []
+        for l in flagged[:5]:
+            fl = l.get("flags") or []
+            dev = l.get("deviation") or 0
+            host = l.get("host") or l.get("user") or "?"
+            flag_lines.append(f"  - {host}: flags={fl}, deviation={dev}")
+        flags_summary = "Flagged activity:\n" + "\n".join(flag_lines)
+
+    high_dev_summary = ""
+    if high_dev:
+        hd_lines = [f"  - {l.get('host') or l.get('user') or '?'}: deviation score {l.get('deviation', 0)}" for l in high_dev]
+        high_dev_summary = "Highest deviation events:\n" + "\n".join(hd_lines)
+
+    prompt_text = f"""You are a senior SOC analyst. Explain why this {entity_type} has a behavioral risk score of {risk_score}/100.
+Be specific, concise, and actionable. Write 3-5 sentences in plain English.
+Focus on the most suspicious indicators and tell the analyst what to investigate first.
+Do NOT use generic filler. If the score is low, say so and explain why there is little concern.
+
+Entity: {req.entity}
+Type: {entity_type}
+Risk Score: {risk_score}/100
+Anomaly Count: {anomaly_cnt}
+Total Events: {total_events}
+Associated Hosts/Users: {', '.join(str(h) for h in all_hosts[:10]) or 'none observed'}
+Typical access hours: {', '.join(str(h)+'h' for h in typical_hrs) or 'not established'}
+Last anomaly: {last_anomaly}
+{flags_summary}
+{high_dev_summary}
+
+Analyst narrative:"""
+
+    from langchain_core.messages import SystemMessage, HumanMessage as HM
+    try:
+        response = await llm.ainvoke([
+            SystemMessage(content="You are a senior SOC analyst writing behavioral risk explanations for a UEBA dashboard. Be specific, direct, and actionable."),
+            HM(content=prompt_text),
+        ])
+        explanation = response.content.strip()
+    except Exception as e:
+        log.error(f"[ueba/explain] LLM error: {e}")
+        raise HTTPException(status_code=500, detail=f"LLM error: {str(e)}")
+
+    return {"explanation": explanation, "entity": req.entity, "risk_score": risk_score}
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8001, log_level="info")

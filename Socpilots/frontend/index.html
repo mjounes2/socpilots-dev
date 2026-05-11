@@ -6887,15 +6887,68 @@ function renderLeaderboard(users, total){
   const pgn=buildPaginator(_lbPage,_lbPageSize,total||users.length,
     `loadUebaLeaderboard(${_lbPage-1})`,`loadUebaLeaderboard(${_lbPage+1})`,
     'setLbPageSize(this)');
-  el.innerHTML=`<table class="tbl"><thead><tr><th>#</th><th>USER</th><th>RISK</th><th>ANOMALIES</th><th>EVENTS 24H</th><th>RECENT HOSTS</th></tr></thead><tbody>`+
-    users.map((u,i)=>`<tr>
+  const rows=users.map((u,i)=>{
+    const uid=`lb-exp-${_lbPage}-${i}`;
+    return `<tr>
       <td style="color:#8ab0d0">${offset+i+1}</td>
-      <td style="cursor:pointer;color:var(--c)" onclick="uebaLookup('${u.user}')">${u.user}</td>
+      <td style="cursor:pointer;color:var(--c)" onclick="uebaLookup('${esc(u.user)}')">${esc(u.user)}</td>
       <td>${riskBadge(u.risk_score)}</td>
       <td style="color:#8ab0d0">${u.anomaly_count||0}</td>
       <td style="color:#8ab0d0">${u.events_24h||0}</td>
       <td style="font-size:10px;color:var(--txt2)">${(u.recent_hosts||[]).join(', ')||'—'}</td>
-    </tr>`).join('')+'</tbody></table>'+pgn;
+      <td style="white-space:nowrap">
+        <button class="btn btn-sm" onclick="uebaExplainRisk('${esc(u.user)}','${uid}')" style="padding:4px 8px;background:rgba(156,39,176,.1);border:1px solid rgba(156,39,176,.4);color:#ce93d8;font-size:10px" title="AI risk narrative">🧠 Explain</button>
+        <button class="btn btn-sm btn-h" onclick="go('copilot');askAIAboutUeba('${esc(u.user)}',${u.risk_score})" style="padding:4px 7px;font-size:10px;margin-left:3px" title="Ask SOCPilots AI">💬</button>
+      </td>
+    </tr>
+    <tr id="${uid}" style="display:none">
+      <td colspan="7" style="padding:0">
+        <div id="${uid}-content" style="padding:10px 14px;background:rgba(156,39,176,.05);border-left:3px solid rgba(156,39,176,.5);font-size:12px;color:var(--txt2);line-height:1.6"></div>
+      </td>
+    </tr>`;
+  }).join('');
+  el.innerHTML=`<div class="tbl"><table><thead><tr><th>#</th><th>USER</th><th>RISK</th><th>ANOMALIES</th><th>EVENTS 24H</th><th>RECENT HOSTS</th><th>ACTIONS</th></tr></thead><tbody>${rows}</tbody></table></div>${pgn}`;
+}
+
+async function uebaExplainRisk(entity, rowId){
+  const expRow=document.getElementById(rowId);
+  const content=document.getElementById(rowId+'-content');
+  if(!expRow||!content)return;
+
+  // Toggle off if already expanded with content
+  if(expRow.style.display!=='none'){
+    expRow.style.display='none';
+    return;
+  }
+
+  // Show expansion row with spinner
+  expRow.style.display='';
+  content.innerHTML=`<div style="display:flex;align-items:center;gap:8px;color:#ce93d8"><div class="spin" style="width:13px;height:13px;border-color:rgba(156,39,176,.3);border-top-color:#ce93d8"></div><span style="font-size:11px;font-family:var(--fm)">Analysing behavioral risk for ${esc(entity)}…</span></div>`;
+
+  const d=await P('/api/ueba/analyze-anomaly',{entity});
+  if(!d||d.error){
+    content.innerHTML=`<span style="color:var(--r)">${esc(d?.error||'Failed to get explanation')}</span>`;
+    return;
+  }
+  content.innerHTML=`
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+      <span style="font-size:10px;font-family:var(--fm);color:#ce93d8;letter-spacing:.5px">🧠 AI RISK ANALYSIS</span>
+      <span style="font-size:9px;color:var(--txt3);font-family:var(--fm)">${esc(entity)} · Score ${d.risk_score||0}/100 · ${d.anomaly_count||0} anomalies</span>
+    </div>
+    <div style="color:var(--txt);line-height:1.65;font-size:12px">${parseAIMarkdown(d.explanation||'No explanation generated.')}</div>
+    <div style="margin-top:10px;display:flex;gap:6px">
+      <button class="btn btn-sm" onclick="uebaLookup('${esc(entity)}')" style="font-size:10px;padding:4px 8px">🕸 View Graph</button>
+      <button class="btn btn-sm btn-p" onclick="go('copilot');askAIAboutUeba('${esc(entity)}',${d.risk_score||0})" style="font-size:10px;padding:4px 8px">💬 Ask AI More</button>
+    </div>`;
+}
+
+function askAIAboutUeba(entity, riskScore){
+  _alertContext={ruleId:'UEBA',description:`UEBA behavioral risk entity: ${entity} — Risk Score: ${riskScore}/100`,agent:entity,srcIp:'',severity:riskScore>=70?'critical':riskScore>=40?'high':'medium',timestamp:new Date().toISOString(),mitre:[]};
+  const chip=document.getElementById('chat-alert-chip');
+  const lbl=document.getElementById('chat-alert-chip-name');
+  if(chip&&lbl){lbl.textContent=`UEBA Entity: ${entity} — Risk ${riskScore}/100`;chip.style.display='flex';}
+  const inp=document.getElementById('chat-in');
+  if(inp){inp.placeholder=`Ask about ${entity}…`;inp.focus();}
 }
 
 function renderUebaSection(elId,items,rowFn,emptyMsg){
