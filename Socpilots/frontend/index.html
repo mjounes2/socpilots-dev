@@ -116,6 +116,19 @@ th{font-size:9px;color:#8ab0d0;letter-spacing:1.5px;text-transform:uppercase;pad
 td{padding:9px 10px;font-size:12px;border-bottom:1px solid rgba(26,47,74,.4);font-family:var(--fm);vertical-align:middle}
 tr:hover td{background:rgba(0,229,255,.02)}
 tr:last-child td{border-bottom:none}
+/* Expandable rows */
+tr.xrow{cursor:pointer;user-select:none}
+tr.xrow:hover td{background:rgba(0,229,255,.04)!important}
+tr.xrow.open td{border-bottom:none}
+tr.xrow.open td:first-child{border-left:3px solid var(--c)}
+tr.xdetail td{padding:0!important;border-bottom:1px solid var(--b1)!important}
+.xdetail-inner{padding:12px 16px 14px;background:rgba(0,229,255,.025);font-size:11px;line-height:1.8;color:var(--txt2)}
+.xfield{display:inline-flex;flex-direction:column;gap:2px;margin-right:20px;margin-bottom:6px;vertical-align:top}
+.xfield-lbl{font-size:9px;letter-spacing:.8px;color:var(--txt3);font-family:var(--fm);text-transform:uppercase}
+.xfield-val{font-size:11px;color:var(--txt);font-family:var(--fm)}
+.xdesc{margin-top:8px;padding:8px 10px;background:rgba(0,0,0,.2);border-radius:4px;font-size:11px;color:var(--txt2);white-space:pre-wrap;word-break:break-word;max-height:140px;overflow-y:auto;border-left:3px solid var(--b2)}
+.xcaret{float:right;font-size:10px;color:var(--txt3);transition:transform .15s;margin-left:4px}
+tr.xrow.open .xcaret{transform:rotate(180deg);color:var(--c)}
 
 /* ─── BADGES ──────────────────────── */
 .badge{display:inline-flex;align-items:center;font-size:9px;padding:2px 7px;border-radius:3px;font-family:var(--fm);font-weight:600;white-space:nowrap;letter-spacing:.5px}
@@ -3580,6 +3593,15 @@ async function refreshInvestigatedKeys(){
 function getAlertKey(a){return `${a.ruleId}_${a.timestamp}_${a.agent}_${a.srcIp||''}`;}
 function isInvestigated(a){return _investigatedKeys.has(getAlertKey(a));}
 
+function toggleDetailRow(id, cols) {
+  const detail = document.getElementById('xd-' + id);
+  const summary = document.getElementById('xs-' + id);
+  if (!detail || !summary) return;
+  const opening = detail.style.display === 'none';
+  detail.style.display = opening ? '' : 'none';
+  summary.classList.toggle('open', opening);
+}
+
 function renderAlerts(alerts, total){
   const el=document.getElementById('al-body');
   if(!alerts.length){el.innerHTML=empty('No alerts match');return;}
@@ -3590,32 +3612,55 @@ function renderAlerts(alerts, total){
     const lvl = parseInt(a.level) || 0;
     const isHighCritical = lvl >= 8;
     const investigateBtn = isHighCritical
-      ? `<button type="button" class="btn btn-sm" onclick="investigateFromAlert(${i})" style="padding:5px 8px;background:var(--cdim);border:1px solid var(--c);color:var(--c);margin-right:4px" title="Run AI Investigation">🔍 Investigate</button>`
+      ? `<button type="button" class="btn btn-sm" onclick="event.stopPropagation();investigateFromAlert(${i})" style="padding:4px 8px;background:var(--cdim);border:1px solid var(--c);color:var(--c)" title="Run AI Investigation">🔍 Investigate</button>`
       : '';
     const reportBtn = investigated
-      ? `<button type="button" class="btn btn-h btn-sm" onclick="viewInvestigation(${i})" style="padding:5px 8px" title="View Saved Report">📋 Report</button>`
+      ? `<button type="button" class="btn btn-h btn-sm" onclick="event.stopPropagation();viewInvestigation(${i})" style="padding:4px 8px" title="View Saved Report">📋 Report</button>`
       : '';
+    const askBtn = `<button type="button" class="btn btn-sm" onclick="event.stopPropagation();askAIAboutAlert(${i})" style="padding:4px 8px;background:rgba(0,230,118,.08);border:1px solid rgba(0,230,118,.35);color:var(--g)" title="Ask AI">💬 AI</button>`;
     const statusBadge = investigated
-      ? '<span class="badge ok" style="font-size:9px" title="Investigated by AI">🤖 INVESTIGATED</span>'
-      : (isHighCritical ? '<span style="font-size:9px;color:var(--txt3);font-family:var(--fm)">pending</span>' : '');
-    return `<tr ${investigated?'style="background:rgba(0,229,255,.04)"':''}>
-      <td style="color:#8ab0d0;white-space:nowrap">${fmtDate(a.timestamp)}</td>
-      <td><span class="badge ${sbadge(a.severity)}">${a.level}</span></td>
-      <td style="color:var(--c)">${esc(a.ruleId)}</td>
-      <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(a.description)}</td>
-      <td>${esc(a.agent)}</td>
-      <td style="color:var(--txt2)">${esc(a.srcIp)}</td>
-      <td>${(a.mitre||[]).slice(0,1).map(m=>`<span class="badge low" style="font-size:8px">${esc(m)}</span>`).join('')}</td>
-      <td>${statusBadge}</td>
-      <td style="white-space:nowrap;min-width:200px">
-        <button type="button" class="btn btn-p btn-sm" onclick="showAlert(${i})" style="padding:5px 10px;margin-right:4px">View Details</button>${investigateBtn}${reportBtn}<button type="button" class="btn btn-sm" onclick="askAIAboutAlert(${i})" style="padding:5px 8px;background:rgba(0,230,118,.08);border:1px solid rgba(0,230,118,.35);color:var(--g);margin-left:2px" title="Ask SOCPilots AI about this alert">💬 Ask AI</button>
-      </td>
-    </tr>`;
+      ? '<span class="badge ok" style="font-size:9px">🤖 DONE</span>'
+      : (isHighCritical ? '<span style="font-size:9px;color:var(--txt3)">pending</span>' : '');
+    const mitreFull = (a.mitre||[]).map(m=>`<span class="badge low" style="font-size:8px;margin-right:2px">${esc(m)}</span>`).join('');
+    const detailHtml = `
+      <div class="xdetail-inner">
+        <div style="display:flex;flex-wrap:wrap;gap:0">
+          <div class="xfield"><span class="xfield-lbl">Timestamp</span><span class="xfield-val">${esc(a.timestamp)}</span></div>
+          <div class="xfield"><span class="xfield-lbl">Rule ID</span><span class="xfield-val" style="color:var(--c)">${esc(a.ruleId)}</span></div>
+          <div class="xfield"><span class="xfield-lbl">Level</span><span class="xfield-val"><span class="badge ${sbadge(a.severity)}">${a.level} — ${esc(a.severity)}</span></span></div>
+          <div class="xfield"><span class="xfield-lbl">Agent</span><span class="xfield-val">${esc(a.agent)}</span></div>
+          <div class="xfield"><span class="xfield-lbl">Source IP</span><span class="xfield-val">${esc(a.srcIp)||'—'}</span></div>
+          ${(a.mitre||[]).length ? `<div class="xfield"><span class="xfield-lbl">MITRE Techniques</span><span class="xfield-val">${mitreFull}</span></div>` : ''}
+        </div>
+        <div class="xfield-lbl" style="margin-top:4px">Full Description</div>
+        <div class="xdesc">${esc(a.description)}</div>
+        ${a.fullLog ? `<div class="xfield-lbl" style="margin-top:8px">Raw Log</div><div class="xdesc" style="font-family:monospace;font-size:10px;color:var(--txt3)">${esc(a.fullLog)}</div>` : ''}
+        <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap">
+          <button type="button" class="btn btn-p btn-sm" onclick="showAlert(${i})" style="padding:4px 12px">⊞ Full Detail Modal</button>
+          ${investigateBtn}${reportBtn}${askBtn}
+        </div>
+      </div>`;
+    const rowBg = investigated ? 'style="background:rgba(0,229,255,.04)"' : '';
+    return `
+      <tr id="xs-al-${i}" class="xrow" ${rowBg} onclick="toggleDetailRow('al-${i}')">
+        <td style="color:#8ab0d0;white-space:nowrap">${fmtDate(a.timestamp)}<span class="xcaret">▼</span></td>
+        <td><span class="badge ${sbadge(a.severity)}">${a.level}</span></td>
+        <td style="color:var(--c)">${esc(a.ruleId)}</td>
+        <td style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(a.description)}</td>
+        <td>${esc(a.agent)}</td>
+        <td style="color:var(--txt2)">${esc(a.srcIp)}</td>
+        <td>${(a.mitre||[]).slice(0,2).map(m=>`<span class="badge low" style="font-size:8px">${esc(m)}</span>`).join('')}${(a.mitre||[]).length>2?`<span style="font-size:9px;color:var(--txt3)"> +${a.mitre.length-2}</span>`:''}</td>
+        <td>${statusBadge}</td>
+        <td style="white-space:nowrap" onclick="event.stopPropagation()">
+          <div style="display:flex;gap:3px;flex-wrap:wrap">${investigateBtn}${reportBtn}${askBtn}</div>
+        </td>
+      </tr>
+      <tr id="xd-al-${i}" class="xdetail" style="display:none"><td colspan="9">${detailHtml}</td></tr>`;
   }).join('');
   const pgn=buildPaginator(_alertPage,_alertPageSize,total||alerts.length,
     `loadAlerts(${_alertPage-1})`,`loadAlerts(${_alertPage+1})`,
     'setAlertPageSize(this)');
-  el.innerHTML=`<div class="tbl"><table><thead><tr><th>Time</th><th>Sev</th><th>Rule</th><th>Description</th><th>Agent</th><th>Src IP</th><th>MITRE</th><th>Status</th><th>Action</th></tr></thead><tbody>${rows}</tbody></table></div>${pgn}`;
+  el.innerHTML=`<div class="tbl"><table><thead><tr><th>Time ▼</th><th>Sev</th><th>Rule</th><th>Description</th><th>Agent</th><th>Src IP</th><th>MITRE</th><th>Status</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>${pgn}`;
 }
 function askAIAboutAlert(i){
   const cached=window._renderedAlerts||_alerts;
@@ -4865,9 +4910,37 @@ async function loadCases(page){
   const lbl=document.getElementById('cs-total-lbl');
   if(lbl)lbl.textContent=`${total.toLocaleString()} case${total!==1?'s':''}`;
   if(!cases.length){document.getElementById('cs-body').innerHTML=empty('No cases match');return;}
-  const rows=cases.map(c=>`<tr><td style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--txt2)">${esc(c.title||'Untitled')}</td><td style="color:#8ab0d0;font-family:var(--fm)">#${c.number||'—'}</td><td><span class="badge ${sbadge(c.status)}">${esc(c.statusLabel||c.status)}</span></td><td><span class="badge ${sbadge(c.severity)}">${c.severity}</span></td><td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px">${c.assignee?esc(c.assignee.split('@')[0]):'—'}</td><td>${(c.tags||[]).slice(0,2).map(t=>`<span class="badge low" style="font-size:7px;margin-right:2px">${esc(t)}</span>`).join('')}</td><td style="color:#8ab0d0;white-space:nowrap">${fmtDate(c.created)}</td></tr>`).join('');
+  window._casesData = cases;
+  const rows=cases.map((c,i)=>{
+    const allTags=(c.tags||[]).map(t=>`<span class="badge low" style="font-size:7px;margin-right:2px">${esc(t)}</span>`).join('');
+    const detailHtml=`
+      <div class="xdetail-inner">
+        <div style="display:flex;flex-wrap:wrap;gap:0">
+          <div class="xfield"><span class="xfield-lbl">Case #</span><span class="xfield-val" style="color:var(--c)">#${c.number||'—'}</span></div>
+          <div class="xfield"><span class="xfield-lbl">Status</span><span class="xfield-val"><span class="badge ${sbadge(c.status)}">${esc(c.statusLabel||c.status)}</span></span></div>
+          <div class="xfield"><span class="xfield-lbl">Severity</span><span class="xfield-val"><span class="badge ${sbadge(c.severity)}">${esc(c.severity)}</span></span></div>
+          <div class="xfield"><span class="xfield-lbl">Assignee</span><span class="xfield-val">${c.assignee?esc(c.assignee):'—'}</span></div>
+          <div class="xfield"><span class="xfield-lbl">TLP</span><span class="xfield-val">${esc(c.tlp||'—')}</span></div>
+          <div class="xfield"><span class="xfield-lbl">Created</span><span class="xfield-val">${fmtDate(c.created)}</span></div>
+          ${c.startDate?`<div class="xfield"><span class="xfield-lbl">Start Date</span><span class="xfield-val">${fmtDate(c.startDate)}</span></div>`:''}
+        </div>
+        ${allTags?`<div class="xfield-lbl" style="margin-top:4px">All Tags</div><div style="margin-top:4px;line-height:2">${allTags}</div>`:''}
+        ${c.description?`<div class="xfield-lbl" style="margin-top:8px">Description</div><div class="xdesc">${esc(c.description)}</div>`:''}
+      </div>`;
+    return `
+      <tr id="xs-cs-${i}" class="xrow" onclick="toggleDetailRow('cs-${i}')">
+        <td style="color:var(--txt2)">${esc(c.title||'Untitled')}<span class="xcaret">▼</span></td>
+        <td style="color:#8ab0d0">#${c.number||'—'}</td>
+        <td><span class="badge ${sbadge(c.status)}">${esc(c.statusLabel||c.status)}</span></td>
+        <td><span class="badge ${sbadge(c.severity)}">${esc(c.severity)}</span></td>
+        <td style="max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px">${c.assignee?esc(c.assignee.split('@')[0]):'—'}</td>
+        <td>${(c.tags||[]).slice(0,2).map(t=>`<span class="badge low" style="font-size:7px;margin-right:2px">${esc(t)}</span>`).join('')}${(c.tags||[]).length>2?`<span style="font-size:9px;color:var(--txt3)"> +${c.tags.length-2}</span>`:''}</td>
+        <td style="color:#8ab0d0;white-space:nowrap">${fmtDate(c.created)}</td>
+      </tr>
+      <tr id="xd-cs-${i}" class="xdetail" style="display:none"><td colspan="7">${detailHtml}</td></tr>`;
+  }).join('');
   const pgn=buildPaginator(_cPage,_cPageSize,total,`loadCases(${_cPage-1})`,`loadCases(${_cPage+1})`,'setCasePageSize(this)');
-  document.getElementById('cs-body').innerHTML=`<div class="tbl"><table><thead><tr><th>Title</th><th>Case #</th><th>Status</th><th>Severity</th><th>Assignee</th><th>Tags</th><th>Created</th></tr></thead><tbody>${rows}</tbody></table></div>${pgn}`;
+  document.getElementById('cs-body').innerHTML=`<div class="tbl"><table><thead><tr><th>Title ▼ click to expand</th><th>Case #</th><th>Status</th><th>Severity</th><th>Assignee</th><th>Tags</th><th>Created</th></tr></thead><tbody>${rows}</tbody></table></div>${pgn}`;
 }
 function setCasePageSize(sel){_cPageSize=parseInt(sel.value)||20;_cPage=1;loadCases();}
 async function createCase(){const title=document.getElementById('cc-title').value;if(!title){toast('Title required','warn');return;}closeModal('modal-case');toast('Creating SP-CM case...','info');const d=await P('/api/cases/create',{title,description:document.getElementById('cc-desc').value,severity:document.getElementById('cc-sev').value,tags:document.getElementById('cc-tags').value.split(',').map(t=>t.trim()).filter(Boolean)});if(d?.success){toast('Case created in SP-CM!','ok');loadCases();}else toast(d?.error||'Failed','err');}
@@ -4923,9 +4996,37 @@ async function loadHiveAlerts(page){
   const lbl=document.getElementById('ha-total-lbl');
   if(lbl)lbl.textContent=`${total.toLocaleString()} alert${total!==1?'s':''}`;
   if(!alerts.length){document.getElementById('ha-body').innerHTML=empty('No alerts match');return;}
-  const rows=alerts.map(a=>`<tr><td style="max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--txt2)">${esc(a.title)}</td><td>${esc(a.source||'—')}</td><td style="max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(a.sourceRef||'—')}</td><td><span class="badge ${sbadge(a.severity)}">${a.severity}</span></td><td><span class="badge ${sbadge(a.status)}">${a.status}</span></td><td>${(a.tags||[]).slice(0,3).map(t=>`<span class="badge low" style="font-size:7px;margin-right:2px">${esc(t)}</span>`).join('')}</td><td style="color:#8ab0d0;white-space:nowrap">${fmtDate(a.created)}</td></tr>`).join('');
+  window._hiveAlertsData = alerts;
+  const rows=alerts.map((a,i)=>{
+    const allTags=(a.tags||[]).map(t=>`<span class="badge low" style="font-size:7px;margin-right:2px">${esc(t)}</span>`).join('');
+    const detailHtml=`
+      <div class="xdetail-inner">
+        <div style="display:flex;flex-wrap:wrap;gap:0">
+          <div class="xfield"><span class="xfield-lbl">Severity</span><span class="xfield-val"><span class="badge ${sbadge(a.severity)}">${esc(a.severity)}</span></span></div>
+          <div class="xfield"><span class="xfield-lbl">Status</span><span class="xfield-val"><span class="badge ${sbadge(a.status)}">${esc(a.status)}</span></span></div>
+          <div class="xfield"><span class="xfield-lbl">Source</span><span class="xfield-val">${esc(a.source||'—')}</span></div>
+          <div class="xfield"><span class="xfield-lbl">Source Ref</span><span class="xfield-val" style="color:var(--c)">${esc(a.sourceRef||'—')}</span></div>
+          <div class="xfield"><span class="xfield-lbl">Created</span><span class="xfield-val">${fmtDate(a.created)}</span></div>
+        </div>
+        <div class="xfield-lbl" style="margin-top:4px">Full Title</div>
+        <div class="xdesc" style="max-height:60px">${esc(a.title)}</div>
+        ${allTags?`<div class="xfield-lbl" style="margin-top:8px">All Tags</div><div style="margin-top:4px;line-height:2">${allTags}</div>`:''}
+        ${a.description?`<div class="xfield-lbl" style="margin-top:8px">Description</div><div class="xdesc">${esc(a.description)}</div>`:''}
+      </div>`;
+    return `
+      <tr id="xs-ha-${i}" class="xrow" onclick="toggleDetailRow('ha-${i}')">
+        <td style="max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--txt2)">${esc(a.title)}<span class="xcaret">▼</span></td>
+        <td>${esc(a.source||'—')}</td>
+        <td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--c)">${esc(a.sourceRef||'—')}</td>
+        <td><span class="badge ${sbadge(a.severity)}">${esc(a.severity)}</span></td>
+        <td><span class="badge ${sbadge(a.status)}">${esc(a.status)}</span></td>
+        <td>${(a.tags||[]).slice(0,3).map(t=>`<span class="badge low" style="font-size:7px;margin-right:2px">${esc(t)}</span>`).join('')}${(a.tags||[]).length>3?`<span style="font-size:9px;color:var(--txt3)"> +${a.tags.length-3}</span>`:''}</td>
+        <td style="color:#8ab0d0;white-space:nowrap">${fmtDate(a.created)}</td>
+      </tr>
+      <tr id="xd-ha-${i}" class="xdetail" style="display:none"><td colspan="7">${detailHtml}</td></tr>`;
+  }).join('');
   const pgn=buildPaginator(_haPage,_haPageSize,total,`loadHiveAlerts(${_haPage-1})`,`loadHiveAlerts(${_haPage+1})`,'setHaPageSize(this)');
-  document.getElementById('ha-body').innerHTML=`<div class="tbl"><table><thead><tr><th>Title</th><th>Source</th><th>Ref</th><th>Severity</th><th>Status</th><th>Tags</th><th>Created</th></tr></thead><tbody>${rows}</tbody></table></div>${pgn}`;
+  document.getElementById('ha-body').innerHTML=`<div class="tbl"><table><thead><tr><th>Title ▼ click to expand</th><th>Source</th><th>Ref</th><th>Severity</th><th>Status</th><th>Tags</th><th>Created</th></tr></thead><tbody>${rows}</tbody></table></div>${pgn}`;
 }
 function setHaPageSize(sel){_haPageSize=parseInt(sel.value)||20;_haPage=1;loadHiveAlerts();}
 
