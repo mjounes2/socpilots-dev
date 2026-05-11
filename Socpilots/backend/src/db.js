@@ -1073,6 +1073,16 @@ async function createNotification(type, title, message, severity, username, meta
   return r.rows[0];
 }
 
+async function recentNotificationExists(type, metadataFilter, hours) {
+  const r = await pool.query(
+    `SELECT 1 FROM notifications
+     WHERE type=$1 AND metadata @> $2::jsonb
+     AND created_at > NOW() - ($3 || ' hours')::INTERVAL LIMIT 1`,
+    [type, JSON.stringify(metadataFilter), hours.toString()]
+  );
+  return r.rows.length > 0;
+}
+
 async function listNotifications(username, limit = 50, offset = 0, unreadOnly = false) {
   const unreadClause = unreadOnly ? 'AND read=false' : '';
   const r = await pool.query(
@@ -1347,6 +1357,7 @@ module.exports = {
   updateLastLogin,
   // Notifications CRUD
   createNotification,
+  recentNotificationExists,
   listNotifications,
   markNotificationRead,
   markAllNotificationsRead,

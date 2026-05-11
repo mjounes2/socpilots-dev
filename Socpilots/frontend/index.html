@@ -7990,6 +7990,30 @@ function initSocketIO(){
       `Playbook <b>${esc(d.playbook)}</b> executed on ${esc(d.agent||'?')} — ${esc((d.actions_taken||[]).join(', ')||'done')}`,
       '#d500f9');
   });
+
+  _socket.on('log_source:silent', d=>{
+    _notifCount = (_notifCount||0)+1;
+    updateNotifBadge(_notifCount);
+    const hrsStr = d.age_hours != null ? `${d.age_hours}h` : 'unknown';
+    showLiveToast('log_source_silent',
+      `Log Source Silent: ${esc(d.source_name||'?')} — no logs for ${hrsStr}`,
+      d.severity||'warning');
+    appendDsLiveFeed('log_source_silent',
+      `Log source <b>${esc(d.source_name||'?')}</b> silent for ${esc(hrsStr)} — last seen ${esc(d.last_seen||'N/A')}`,
+      d.severity==='critical'?'#ff1744':'#ff9800');
+  });
+
+  _socket.on('agent:down', d=>{
+    _notifCount = (_notifCount||0)+1;
+    updateNotifBadge(_notifCount);
+    const hrsStr = d.age_hours != null ? `${d.age_hours}h` : 'never';
+    showLiveToast('agent_down',
+      `Agent Down: ${esc(d.agent_name||'?')} — silent for ${hrsStr}`,
+      d.severity||'warning');
+    appendDsLiveFeed('agent_down',
+      `Agent <b>${esc(d.agent_name||'?')}</b> (ID: ${esc(d.agent_id||'?')}) has not sent logs for ${esc(hrsStr)}`,
+      d.severity==='critical'?'#ff1744':'#ff9800');
+  });
 }
 
 function appendDsLiveFeed(type, html, color){
@@ -7997,7 +8021,7 @@ function appendDsLiveFeed(type, html, color){
   if(!feed) return;
   // Clear placeholder
   if(feed.querySelector('[style*="Waiting for"]')) feed.innerHTML='';
-  const icons = {investigation:'⚡',correlation:'🔗',darksoc:'🤖'};
+  const icons = {investigation:'⚡',correlation:'🔗',darksoc:'🤖',log_source_silent:'📵',agent_down:'🔴'};
   const now = new Date().toLocaleTimeString();
   const row = document.createElement('div');
   row.style.cssText=`display:flex;gap:8px;align-items:flex-start;padding:6px 8px;background:var(--bg3);border-radius:4px;border-left:2px solid ${color};font-size:10px;font-family:var(--fm)`;

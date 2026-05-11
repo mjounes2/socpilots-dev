@@ -2675,6 +2675,103 @@ setInterval(() => { logSourcesAutoAnalyzer(); }, 24 * 3600_000);
 setTimeout (() => { logSourcesAutoAnalyzer(); }, 13 * 60_000);  // first run 13min after boot (staggered from MITRE)
 
 // ═══════════════════════════════════════════════════════════════
+// ─── LOG SOURCE SILENCE MONITOR (every 30 minutes) ─────────────
+// Alerts when a log source stops sending events. Cloud API sources
+// (e.g. Cloudflare, Azure) have wider tolerances than agent sources.
+// Deduplicates via the notifications table to survive restarts.
+// ═══════════════════════════════════════════════════════════════
+async function logSourceSilenceMonitor() {
+  try {
+    const data = await _fetchLogSources();
+    if (!data?.sources?.length) return;
+    const now = Date.now();
+    for (const src of data.sources) {
+      if (!src.last_seen) continue;  // never seen — can't assess silence
+      const ageHrs = (now - new Date(src.last_seen).getTime()) / 3600000;
+      const isCloud = src.source_id?.startsWith('grp:');
+      // Cloud API integrations tolerate longer gaps due to infrequent polling
+      const warnHrs = isCloud ? 24 : 6;
+      const critHrs = isCloud ? 72 : 24;
+      if (ageHrs < warnHrs) continue;
+      const sev      = ageHrs >= critHrs ? 'critical' : 'warning';
+      const dedupHrs = sev === 'critical' ? 24 : 6;
+      const already  = await db.recentNotificationExists('log_source_silent', { source_id: src.source_id }, dedupHrs);
+      if (already) continue;
+      const hrs     = Math.round(ageHrs);
+      const title   = `Log Source Silent: ${src.source_name}`;
+      const message = `No logs received from ${src.source_name} for ${hrs}h (last seen: ${src.last_seen})`;
+      await db.createNotification('log_source_silent', title, message, sev, null, {
+        source_id: src.source_id, source_name: src.source_name, last_seen: src.last_seen, age_hours: hrs,
+      }).catch(() => {});
+      io.emit('log_source:silent', {
+        source_id: src.source_id, source_name: src.source_name,
+        last_seen: src.last_seen, age_hours: hrs, severity: sev,
+      });
+      console.log(`[log-source-silence] ${sev.toUpperCase()} — ${src.source_name} silent for ${hrs}h`);
+    }
+  } catch (e) {
+    console.error('[log-source-silence]', e.message);
+  }
+}
+setInterval(() => { logSourceSilenceMonitor(); }, 30 * 60_000);
+setTimeout (() => { logSourceSilenceMonitor(); }, 20 * 60_000);  // first run 20min after boot
+
+// ═══════════════════════════════════════════════════════════════
+// ─── AGENT DOWN MONITOR (every 30 minutes) ──────────────────────
+// Detects Wazuh agents that have stopped sending any logs.
+// Warning: silent >6h | Critical: silent >24h (or never seen).
+// ═══════════════════════════════════════════════════════════════
+async function agentDownMonitor() {
+  try {
+    const r = await osSearch({
+      size: 0,
+      aggs: {
+        agents: {
+          terms: { field: 'agent.name', size: 500 },
+          aggs: {
+            id:   { terms: { field: 'agent.id', size: 1 } },
+            last: { max: { field: '@timestamp' } },
+          },
+        },
+      },
+    });
+    const EXCLUDE = new Set(['wazuh.manager', 'wazuh-manager', 'manager']);
+    const now = Date.now();
+    for (const b of (r.aggregations?.agents?.buckets || [])) {
+      if (EXCLUDE.has((b.key || '').toLowerCase())) continue;
+      const lastMs  = b.last?.value || 0;
+      const ageMs   = lastMs > 0 ? now - lastMs : Infinity;
+      const ageHrs  = ageMs / 3600000;
+      if (ageHrs < 6) continue;  // agent healthy
+      const sev       = ageHrs >= 24 ? 'critical' : 'warning';
+      const agentName = b.key;
+      const agentId   = b.id?.buckets?.[0]?.key || 'unknown';
+      const dedupHrs  = sev === 'critical' ? 24 : 6;
+      const already   = await db.recentNotificationExists('agent_down', { agent_name: agentName }, dedupHrs);
+      if (already) continue;
+      const hrs     = lastMs > 0 ? Math.round(ageHrs) : null;
+      const lastStr = lastMs > 0 ? new Date(lastMs).toISOString() : null;
+      const title   = `Agent Down: ${agentName}`;
+      const message = hrs !== null
+        ? `Agent ${agentName} (ID: ${agentId}) has not sent logs for ${hrs}h`
+        : `Agent ${agentName} (ID: ${agentId}) has never sent any logs`;
+      await db.createNotification('agent_down', title, message, sev, null, {
+        agent_name: agentName, agent_id: agentId, last_seen: lastStr, age_hours: hrs,
+      }).catch(() => {});
+      io.emit('agent:down', {
+        agent_name: agentName, agent_id: agentId,
+        severity: sev, age_hours: hrs, last_seen: lastStr,
+      });
+      console.log(`[agent-down] ${sev.toUpperCase()} — ${agentName} silent for ${hrs ?? '∞'}h`);
+    }
+  } catch (e) {
+    console.error('[agent-down]', e.message);
+  }
+}
+setInterval(() => { agentDownMonitor(); }, 30 * 60_000);
+setTimeout (() => { agentDownMonitor(); }, 22 * 60_000);  // first run 22min after boot
+
+// ═══════════════════════════════════════════════════════════════
 // ─── DARK SOC — APPROVAL EXPIRY WORKER (every 2 minutes) ───────
 // Scans isolation_approvals for any that have passed their expiry
 // time and auto-rejects them (marks as expired, no isolation fired).
@@ -3968,14 +4065,17 @@ async function _fetchLogSources() {
           },
         },
       }),
-      // Cloud group 7d counts
+      // Cloud group 7d counts + last_seen (fallback for sources silent in last 24h)
       osSearch({
         size: 0,
         query: { range: { '@timestamp': { gte: 'now-7d' } } },
         aggs: {
           by_cloud_group: {
             terms: { field: 'rule.groups', size: 100 },
-            aggs: { count_7d: { value_count: { field: '@timestamp' } } },
+            aggs: {
+              count_7d:  { value_count: { field: '@timestamp' } },
+              last_seen: { max: { field: '@timestamp' } },
+            },
           },
         },
       }),
@@ -4098,7 +4198,9 @@ async function _fetchLogSources() {
         event_count_24h: count24h,
         event_count_7d:  count7d,
         eps:             parseFloat((count24h / 86400).toFixed(3)),
-        last_seen:       c24h.last_seen ? new Date(c24h.last_seen).toISOString() : null,
+        last_seen:       c24h.last_seen
+          ? new Date(c24h.last_seen).toISOString()
+          : (b.last_seen?.value ? new Date(b.last_seen.value).toISOString() : null),
         first_seen_7d:   null,
         is_new:          false,
         confidence:      0.95,
