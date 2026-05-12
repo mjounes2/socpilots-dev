@@ -8121,9 +8121,15 @@ async function loadEntityGraph(){
   const statsEl=document.getElementById('ueba-graph-stats');
   if(statsEl)statsEl.textContent=`${graphNodesD.nodes.length} nodes · ${graphNodesD.edges.length} edges`;
 
+  // Show loading spinner in the graph container while browser reflows
+  const fc=document.getElementById('ueba-force-container');
+  if(fc)fc.innerHTML='<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#8ab0d0;font-family:var(--fm);font-size:11px;flex-direction:column;gap:10px"><div class="spin"></div><span>Building graph…</span></div>';
+
   // Store globally for filter/resize
   window._uebaGraph={nodes:graphNodesD.nodes, edges:graphNodesD.edges};
-  uebaFilter('all'); // renders into the inline container
+
+  // Delay 60ms so browser can reflow the newly-visible card before we measure clientWidth
+  setTimeout(()=>uebaFilter('all'), 60);
 }
 
 // ── D3 Force Graph ────────────────────────────────────────────
@@ -8152,10 +8158,18 @@ function flagsToTacticName(flags){
 
 function renderForceGraphD3(container, allNodes, allEdges, isFullscreen){
   if(typeof d3==='undefined'){ container.innerHTML='<div style="color:#ff9800;padding:20px;font-size:11px;font-family:var(--fm)">D3.js not loaded — check network.</div>'; return; }
+  if(!allNodes||!allNodes.length){ container.innerHTML='<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#4a6f8a;font-family:var(--fm);font-size:11px">No entities match the current filter</div>'; return; }
+
+  // Stop any existing simulation before clearing DOM
+  const simKey=isFullscreen?'_fsSim':'_inlineSim';
+  if(window._uebaGraph?.[simKey]){ try{window._uebaGraph[simKey].stop();}catch(_){} }
+
   container.innerHTML='';
 
-  const W=container.clientWidth||800;
-  const H=isFullscreen?(container.clientHeight||window.innerHeight-46):(container.clientHeight||520);
+  // getBoundingClientRect forces a synchronous layout — more reliable than clientWidth after display:none transition
+  const rect=container.getBoundingClientRect();
+  const W=rect.width>10?Math.round(rect.width):(container.offsetWidth||800);
+  const H=isFullscreen?Math.round(container.getBoundingClientRect().height||window.innerHeight-46):520;
 
   const NODE_COLORS={User:'#00e5ff',Host:'#66bb6a',IP:'#ff9800',Process:'#ab47bc',Unknown:'#8ab0d0'};
   const nodeColor=n=>{
@@ -8179,8 +8193,12 @@ function renderForceGraphD3(container, allNodes, allEdges, isFullscreen){
   const nodes=allNodes.map(n=>({...n}));
   const edges=allEdges.map(e=>({...e}));
 
+  // viewBox pins the simulation coordinate space — nodes won't be off-screen if CSS size differs from W×H
   const svg=d3.create('svg')
-    .attr('width','100%').attr('height','100%')
+    .attr('width',W).attr('height',H)
+    .attr('viewBox',`0 0 ${W} ${H}`)
+    .attr('preserveAspectRatio','xMidYMid meet')
+    .style('width','100%').style('height',isFullscreen?'100%':H+'px')
     .style('display','block').style('cursor','grab');
 
   // Defs — arrowhead markers (default + per-tactic)
@@ -8332,10 +8350,11 @@ function renderForceGraphD3(container, allNodes, allEdges, isFullscreen){
   legG.append('text').text('Shift+click = Ask AI').attr('x',8).attr('y',legH-4)
     .attr('fill','rgba(0,229,255,.4)').attr('font-size',7.5).attr('font-family','monospace');
 
-  // Force simulation
+  // Force simulation — alphaMin raised to 0.015 so it stabilizes faster on large graphs
   const sim=d3.forceSimulation(nodes)
+    .alphaMin(0.015)
     .force('link', d3.forceLink(edges).id(d=>d.id).distance(n=>120+nodeR(n.source||n)*2).strength(.5))
-    .force('charge', d3.forceManyBody().strength(-500))
+    .force('charge', d3.forceManyBody().strength(nodes.length>60?-300:-500))
     .force('center', d3.forceCenter(W/2,H/2).strength(.05))
     .force('collide', d3.forceCollide().radius(n=>nodeR(n)+14).strength(.8))
     .on('tick',()=>{
@@ -8344,6 +8363,21 @@ function renderForceGraphD3(container, allNodes, allEdges, isFullscreen){
       edgeLbl.attr('x',d=>(d.source.x+d.target.x)/2)
               .attr('y',d=>(d.source.y+d.target.y)/2-3);
       node.attr('transform',d=>`translate(${d.x},${d.y})`);
+    })
+    .on('end',()=>{
+      // Auto-fit: zoom to show all nodes with padding after simulation stabilizes
+      const xs=nodes.map(n=>n.x).filter(x=>isFinite(x));
+      const ys=nodes.map(n=>n.y).filter(y=>isFinite(y));
+      if(!xs.length)return;
+      const pad=60;
+      const minX=Math.min(...xs)-pad, maxX=Math.max(...xs)+pad;
+      const minY=Math.min(...ys)-pad, maxY=Math.max(...ys)+pad;
+      const bW=maxX-minX, bH=maxY-minY;
+      if(bW<1||bH<1)return;
+      const scale=Math.min(2, Math.min(W/bW, H/bH)*0.9);
+      const tx=W/2-(minX+bW/2)*scale;
+      const ty=H/2-(minY+bH/2)*scale;
+      svg.transition().duration(900).call(zoom.transform, d3.zoomIdentity.translate(tx,ty).scale(scale));
     });
 
   // Tooltip
@@ -8507,17 +8541,19 @@ function uebaExpandGraph(){
   const it=document.getElementById('ueba-graph-title'),is=document.getElementById('ueba-graph-stats');
   if(t&&it)t.textContent=it.textContent;
   if(s&&is)s.textContent=is.textContent;
-  // Sync active filter button
-  const active=document.querySelector('#ueba-graph-card .active-filter');
-  if(active){
-    const type=active.id.replace('filter-','');
-    uebaFilter(type,true);
-  } else {
-    const fn=window._uebaGraph._filteredNodes||window._uebaGraph.nodes;
-    const fe=window._uebaGraph._filteredEdges||window._uebaGraph.edges;
-    const c=document.getElementById('ueba-fs-container');
-    if(c)renderForceGraphD3(c,fn,fe,true);
-  }
+  // Delay render so browser can reflow the newly-visible overlay before measuring dimensions
+  setTimeout(()=>{
+    const active=document.querySelector('#ueba-graph-card .active-filter');
+    if(active){
+      const type=active.id.replace('filter-','');
+      uebaFilter(type,true);
+    } else {
+      const fn=window._uebaGraph._filteredNodes||window._uebaGraph.nodes;
+      const fe=window._uebaGraph._filteredEdges||window._uebaGraph.edges;
+      const c=document.getElementById('ueba-fs-container');
+      if(c)renderForceGraphD3(c,fn,fe,true);
+    }
+  }, 60);
 }
 
 function uebaCollapseGraph(){
