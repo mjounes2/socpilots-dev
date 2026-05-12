@@ -2125,6 +2125,32 @@ function _getAdjustedFp(ruleId, langchainFp) {
 setTimeout(() => refreshRuleFpCache(), 20000);
 setInterval(() => refreshRuleFpCache(), 600000);
 
+// ── Alert Suppression Cache ───────────────────────────────────────────────
+let _suppressionCache = [];
+
+async function refreshSuppressionCache() {
+  try {
+    _suppressionCache = await db.listSuppressions({ enabledOnly: true });
+  } catch(e) { console.warn('[SuppCache] Refresh failed:', e.message); }
+}
+
+function _checkSuppressed(alert) {
+  const now = Date.now();
+  for (const s of _suppressionCache) {
+    if (s.expires_at && new Date(s.expires_at).getTime() <= now) continue;
+    if (s.rule_id       && s.rule_id !== String(alert.ruleId || '')) continue;
+    if (s.agent_pattern && !(alert.agent || '').toLowerCase().includes(s.agent_pattern.toLowerCase())) continue;
+    if (s.src_ip_pattern && !(alert.srcIp || '').startsWith(s.src_ip_pattern)) continue;
+    if (s.min_level != null && (alert.level || 0) < s.min_level) continue;
+    if (s.max_level != null && (alert.level || 0) > s.max_level) continue;
+    return s;
+  }
+  return null;
+}
+
+setTimeout(() => refreshSuppressionCache(), 22000);
+setInterval(() => refreshSuppressionCache(), 300000);
+
 function _extractStructuredVerdict(triageData, alert, fpBlend = null) {
   const fpProb     = fpBlend ? fpBlend.adjusted_fp : (triageData?.false_positive_probability || 0);
   const confidence = Math.max(0, Math.min(100, 100 - fpProb));
@@ -2406,7 +2432,14 @@ async function triageFeeder() {
         const ts       = h._source['@timestamp'];
         const agent    = h._source.agent?.name || '';
         const srcIp    = h._source.data?.srcip || h._source.data?.src_ip || '';
+        const level    = h._source.rule?.level || 0;
         const alertKey = `${ruleId}_${ts}_${agent}_${srcIp}`;
+
+        const suppressed = _checkSuppressed({ ruleId, agent, srcIp, level });
+        if (suppressed) {
+          db.bumpSuppressionHit(suppressed.id).catch(() => {});
+          continue;
+        }
 
         await db.enqueueAlert({
           id:             h._id,
@@ -5097,6 +5130,39 @@ app.get('/api/fp-stats', authMW, async (req, res) => {
     console.error('[fp-stats]', e.message);
     res.status(502).json({ error: e.message });
   }
+});
+
+// ── Alert Suppressions ────────────────────────────────────────────────────
+app.get('/api/suppressions', authMW, async (req, res) => {
+  try {
+    const [rows, stats] = await Promise.all([db.listSuppressions(), db.getSuppressionStats()]);
+    res.json({ suppressions: rows, stats, total: rows.length });
+  } catch(e) { res.status(502).json({ error: e.message }); }
+});
+
+app.post('/api/suppressions', authMW, requireRole('l2'), async (req, res) => {
+  try {
+    const s = await db.createSuppression({ ...req.body, created_by: req.user.username });
+    refreshSuppressionCache().catch(() => {});
+    res.json({ suppression: s });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.patch('/api/suppressions/:id', authMW, requireRole('l2'), async (req, res) => {
+  try {
+    const s = await db.updateSuppression(parseInt(req.params.id), req.body);
+    if (!s) return res.status(404).json({ error: 'not found' });
+    refreshSuppressionCache().catch(() => {});
+    res.json({ suppression: s });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/suppressions/:id', authMW, requireRole('l2'), async (req, res) => {
+  try {
+    await db.deleteSuppression(parseInt(req.params.id));
+    refreshSuppressionCache().catch(() => {});
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 // ─── STATIC (must be last — after all /api routes) ──────────────

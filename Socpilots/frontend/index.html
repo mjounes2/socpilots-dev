@@ -2306,6 +2306,25 @@ sshd: Failed" style="min-height:80px"></textarea></div>
     </div>
   </div>
 
+  <!-- ALERT SUPPRESSIONS -->
+  <div class="card mb" style="border-left:3px solid rgba(0,229,255,.5)">
+    <div class="card-hd">
+      <div class="card-ttl" style="color:var(--c)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;vertical-align:middle;margin-right:5px"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>
+        ALERT SUPPRESSIONS
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <div id="supp-stats-bar" style="font-size:9px;font-family:var(--fm);color:var(--txt3)"></div>
+        <button class="btn btn-sm" onclick="loadSuppressions()">⟳ Refresh</button>
+        <button class="btn btn-sm" style="background:rgba(0,229,255,.1);color:var(--c);border:1px solid rgba(0,229,255,.25)" onclick="openAddSuppression()">+ Add Rule</button>
+      </div>
+    </div>
+    <div style="font-size:10px;color:var(--txt3);font-family:var(--fm);margin-bottom:10px;line-height:1.6">
+      Drop alerts matching these rules before they enter the triage queue. Kills recurring noise without tuning Wazuh rules. Hit counts confirm what each rule is actually suppressing.
+    </div>
+    <div id="suppressions-list"><div class="loading"><div class="spin"></div></div></div>
+  </div>
+
   <!-- PROTECTED ASSETS -->
   <div class="card mb" style="border-left:3px solid var(--y)">
     <div class="card-hd">
@@ -2738,6 +2757,62 @@ sshd: Failed" style="min-height:80px"></textarea></div>
     <div class="modal-hd"><div class="modal-ttl" id="modal-digest-title">UEBA Digest</div><button class="modal-x" onclick="closeModal('modal-digest')">✕</button></div>
     <div class="modal-body" id="modal-digest-body" style="overflow-y:auto;flex:1"></div>
     <div class="modal-ft"><button class="btn btn-h" onclick="closeModal('modal-digest')">Close</button></div>
+  </div>
+</div>
+
+<div class="modal-ov" id="modal-suppression-form">
+  <div class="modal" style="width:540px;max-height:90vh;overflow-y:auto">
+    <div class="modal-hd">
+      <div class="modal-ttl" id="modal-supp-title">ADD SUPPRESSION RULE</div>
+      <button class="modal-x" onclick="closeModal('modal-suppression-form')">✕</button>
+    </div>
+    <div class="modal-body" style="display:flex;flex-direction:column;gap:12px">
+      <input type="hidden" id="supp-form-id" value="">
+      <div>
+        <label style="font-size:10px;font-family:var(--fm);color:var(--txt3);display:block;margin-bottom:4px">NAME *</label>
+        <input id="supp-form-name" type="text" placeholder="e.g. Suppress noisy SSH scanner" style="width:100%;background:var(--bg);border:1px solid var(--b2);color:var(--txt);padding:7px 10px;border-radius:4px;font-size:12px;font-family:var(--fm);box-sizing:border-box">
+      </div>
+      <div>
+        <label style="font-size:10px;font-family:var(--fm);color:var(--txt3);display:block;margin-bottom:4px">DESCRIPTION</label>
+        <input id="supp-form-desc" type="text" placeholder="Why this noise exists" style="width:100%;background:var(--bg);border:1px solid var(--b2);color:var(--txt);padding:7px 10px;border-radius:4px;font-size:12px;font-family:var(--fm);box-sizing:border-box">
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div>
+          <label style="font-size:10px;font-family:var(--fm);color:var(--txt3);display:block;margin-bottom:4px">RULE ID — leave blank = any</label>
+          <input id="supp-form-ruleid" type="text" placeholder="e.g. 5710" style="width:100%;background:var(--bg);border:1px solid var(--b2);color:var(--txt);padding:7px 10px;border-radius:4px;font-size:12px;font-family:var(--fm);box-sizing:border-box">
+        </div>
+        <div>
+          <label style="font-size:10px;font-family:var(--fm);color:var(--txt3);display:block;margin-bottom:4px">AGENT CONTAINS — leave blank = any</label>
+          <input id="supp-form-agent" type="text" placeholder="e.g. scanner-host" style="width:100%;background:var(--bg);border:1px solid var(--b2);color:var(--txt);padding:7px 10px;font-family:var(--fm);font-size:12px;border-radius:4px;box-sizing:border-box">
+        </div>
+      </div>
+      <div>
+        <label style="font-size:10px;font-family:var(--fm);color:var(--txt3);display:block;margin-bottom:4px">SRC IP PREFIX — leave blank = any (e.g. 192.168.1.)</label>
+        <input id="supp-form-srcip" type="text" placeholder="e.g. 10.0.0." style="width:100%;background:var(--bg);border:1px solid var(--b2);color:var(--txt);padding:7px 10px;border-radius:4px;font-size:12px;font-family:var(--fm);box-sizing:border-box">
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div>
+          <label style="font-size:10px;font-family:var(--fm);color:var(--txt3);display:block;margin-bottom:4px">MIN LEVEL — leave blank = any</label>
+          <input id="supp-form-minlevel" type="number" min="0" max="15" placeholder="0" style="width:100%;background:var(--bg);border:1px solid var(--b2);color:var(--txt);padding:7px 10px;border-radius:4px;font-size:12px;font-family:var(--fm);box-sizing:border-box">
+        </div>
+        <div>
+          <label style="font-size:10px;font-family:var(--fm);color:var(--txt3);display:block;margin-bottom:4px">MAX LEVEL — leave blank = any</label>
+          <input id="supp-form-maxlevel" type="number" min="0" max="15" placeholder="15" style="width:100%;background:var(--bg);border:1px solid var(--b2);color:var(--txt);padding:7px 10px;border-radius:4px;font-size:12px;font-family:var(--fm);box-sizing:border-box">
+        </div>
+      </div>
+      <div>
+        <label style="font-size:10px;font-family:var(--fm);color:var(--txt3);display:block;margin-bottom:4px">EXPIRES AT — leave blank = never expires</label>
+        <input id="supp-form-expires" type="datetime-local" style="width:100%;background:var(--bg);border:1px solid var(--b2);color:var(--txt);padding:7px 10px;border-radius:4px;font-size:12px;font-family:var(--fm);box-sizing:border-box">
+      </div>
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+        <input type="checkbox" id="supp-form-enabled" checked style="accent-color:var(--g);width:14px;height:14px">
+        <span style="font-size:10px;font-family:var(--fm);color:var(--txt3)">Enabled</span>
+      </label>
+    </div>
+    <div class="modal-ft" style="gap:8px">
+      <button class="btn btn-h" onclick="closeModal('modal-suppression-form')">Cancel</button>
+      <button class="btn" style="background:rgba(0,229,255,.15);color:var(--c);border:1px solid rgba(0,229,255,.3)" onclick="saveSuppression()">Save Rule</button>
+    </div>
   </div>
 </div>
 
@@ -6775,6 +6850,116 @@ async function deletePlaybook(id, name){
   else { toast('Failed to delete playbook','err'); }
 }
 
+// ── Alert Suppressions ────────────────────────────────────────────────────
+
+async function loadSuppressions(){
+  const d = await G('/api/suppressions');
+  const listEl = document.getElementById('suppressions-list');
+  const statsEl = document.getElementById('supp-stats-bar');
+  if (!listEl) return;
+  if (statsEl && d?.stats) {
+    const st = d.stats;
+    statsEl.innerHTML = `Active: <span style="color:var(--g)">${st.active||0}</span> &nbsp;|&nbsp; Total hits: <span style="color:var(--c)">${st.total_hits||0}</span> &nbsp;|&nbsp; Fired today: <span style="color:var(--y)">${st.fired_today||0}</span>`;
+  }
+  if (!d?.suppressions?.length) {
+    listEl.innerHTML = '<div style="color:#8ab0d0;font-size:11px;font-family:var(--fm)">No suppression rules defined. Add rules to silence recurring noise before it enters the triage queue.</div>';
+    return;
+  }
+  const now = Date.now();
+  listEl.innerHTML = `<div style="display:flex;flex-direction:column;gap:5px">
+  ${d.suppressions.map(s => {
+    const isExpired = s.expires_at && new Date(s.expires_at).getTime() <= now;
+    const borderColor = !s.enabled ? 'var(--b1)' : isExpired ? 'rgba(255,152,0,.3)' : 'rgba(0,229,255,.2)';
+    const statusColor = !s.enabled ? 'var(--txt3)' : isExpired ? 'var(--o)' : 'var(--g)';
+    const statusTxt   = !s.enabled ? 'OFF' : isExpired ? 'EXPIRED' : 'ACTIVE';
+    const filters = [
+      s.rule_id       ? `rule:${esc(s.rule_id)}`       : null,
+      s.agent_pattern ? `agent~${esc(s.agent_pattern)}` : null,
+      s.src_ip_pattern? `srcip:${esc(s.src_ip_pattern)}`:'',
+      s.min_level!=null||s.max_level!=null ? `L${s.min_level??'*'}–${s.max_level??'*'}` : null,
+    ].filter(Boolean).join(' · ');
+    const expTxt = s.expires_at ? `Expires ${fmtDate(s.expires_at)}` : 'Never expires';
+    return `<div style="padding:8px 12px;background:var(--bg2);border:1px solid ${borderColor};border-radius:4px;display:grid;grid-template-columns:1fr auto;gap:8px;align-items:start;opacity:${!s.enabled?0.55:1}">
+      <div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:3px">
+          <span style="font-family:var(--fw);font-size:12px;font-weight:700;color:var(--txt)">${esc(s.name)}</span>
+          <span style="font-size:8px;padding:1px 5px;border-radius:2px;border:1px solid ${statusColor};color:${statusColor};font-family:var(--fm)">${statusTxt}</span>
+        </div>
+        ${s.description?`<div style="font-size:10px;color:var(--txt3);font-family:var(--fm);margin-bottom:4px">${esc(s.description)}</div>`:''}
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:9px;font-family:var(--fm)">
+          ${filters?`<span style="color:var(--c)">${filters}</span>`:'<span style="color:var(--txt3)">Match all</span>'}
+          <span style="color:var(--txt3)">${expTxt}</span>
+          <span style="color:var(--txt3)">Hits: <span style="color:${s.hit_count>0?'var(--g)':'var(--txt3)'}">${s.hit_count||0}</span></span>
+          ${s.last_hit_at?`<span style="color:var(--txt3)">Last: ${fmtDate(s.last_hit_at)}</span>`:''}
+          ${s.created_by?`<span style="color:var(--txt3)">By: ${esc(s.created_by)}</span>`:''}
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px;flex-shrink:0">
+        <label style="display:flex;align-items:center;gap:5px;cursor:pointer">
+          <input type="checkbox" ${s.enabled?'checked':''} onchange="toggleSuppression(${s.id},this.checked)" style="width:14px;height:14px;accent-color:var(--c);cursor:pointer">
+          <span style="font-size:9px;font-family:var(--fm);color:var(--txt3)">${s.enabled?'ON':'OFF'}</span>
+        </label>
+        <button class="btn btn-sm" style="font-size:9px;padding:2px 7px;background:rgba(255,23,68,.1);color:var(--r);border:1px solid rgba(255,23,68,.2)" onclick="deleteSuppression(${s.id},'${esc(s.name)}')">Delete</button>
+      </div>
+    </div>`;
+  }).join('')}
+  </div>`;
+}
+
+function openAddSuppression(){
+  document.getElementById('supp-form-id').value='';
+  document.getElementById('supp-form-name').value='';
+  document.getElementById('supp-form-desc').value='';
+  document.getElementById('supp-form-ruleid').value='';
+  document.getElementById('supp-form-agent').value='';
+  document.getElementById('supp-form-srcip').value='';
+  document.getElementById('supp-form-minlevel').value='';
+  document.getElementById('supp-form-maxlevel').value='';
+  document.getElementById('supp-form-expires').value='';
+  document.getElementById('supp-form-enabled').checked=true;
+  document.getElementById('modal-supp-title').textContent='ADD SUPPRESSION RULE';
+  openModal('modal-suppression-form');
+}
+
+async function saveSuppression(){
+  const id = document.getElementById('supp-form-id').value;
+  const name = document.getElementById('supp-form-name').value.trim();
+  if(!name){ toast('Name is required','err'); return; }
+  const minL = document.getElementById('supp-form-minlevel').value.trim();
+  const maxL = document.getElementById('supp-form-maxlevel').value.trim();
+  const exp  = document.getElementById('supp-form-expires').value;
+  const body = {
+    name,
+    description:    document.getElementById('supp-form-desc').value.trim() || null,
+    rule_id:        document.getElementById('supp-form-ruleid').value.trim() || null,
+    agent_pattern:  document.getElementById('supp-form-agent').value.trim() || null,
+    src_ip_pattern: document.getElementById('supp-form-srcip').value.trim() || null,
+    min_level:      minL===''?null:parseInt(minL),
+    max_level:      maxL===''?null:parseInt(maxL),
+    expires_at:     exp ? new Date(exp).toISOString() : null,
+    enabled:        document.getElementById('supp-form-enabled').checked,
+  };
+  const url    = id ? `/api/suppressions/${id}` : '/api/suppressions';
+  const method = id ? 'PATCH' : 'POST';
+  const res = await fetch(url,{method,headers:{'Content-Type':'application/json','Authorization':'Bearer '+TOK},body:JSON.stringify(body)});
+  const data = await res.json().catch(()=>({}));
+  if(res.ok){ toast(`Suppression ${id?'updated':'created'}`,'ok'); closeModal('modal-suppression-form'); loadSuppressions(); }
+  else { toast(data.error||'Failed to save suppression','err'); }
+}
+
+async function deleteSuppression(id, name){
+  if(!confirm(`Delete suppression "${name}"?`)) return;
+  const res = await fetch(`/api/suppressions/${id}`,{method:'DELETE',headers:{'Authorization':'Bearer '+TOK}});
+  if(res.ok){ toast('Suppression deleted','ok'); loadSuppressions(); }
+  else { toast('Failed to delete suppression','err'); }
+}
+
+async function toggleSuppression(id, enabled){
+  const res = await fetch(`/api/suppressions/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json','Authorization':'Bearer '+TOK},body:JSON.stringify({enabled})});
+  if(res.ok){ toast(`Suppression ${enabled?'enabled':'disabled'}`,'ok'); }
+  else { toast('Failed','err'); await loadSuppressions(); }
+}
+
 async function togglePlaybook(id, enabled){
   const res = await fetch('/api/playbooks/'+id, {
     method: 'PATCH',
@@ -8475,7 +8660,8 @@ async function loadDarkSocPage() {
   loadFpStats();
   loadActionApprovals();
 
-  // Load playbooks, protected assets, and pending isolation approvals
+  // Load suppressions, playbooks, protected assets, and pending isolation approvals
+  if (typeof loadSuppressions === 'function') loadSuppressions();
   if (typeof loadPlaybooks === 'function') loadPlaybooks();
   if (typeof loadProtectedAssets === 'function') loadProtectedAssets();
   if (typeof loadIsolationApprovals === 'function') loadIsolationApprovals();

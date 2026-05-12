@@ -484,6 +484,26 @@ async function initSchema() {
     // ── UEBA-triggered playbooks threshold ────────────────────────
     `ALTER TABLE playbooks ADD COLUMN IF NOT EXISTS ueba_risk_min INTEGER DEFAULT NULL`,
 
+    // ── Alert Suppression Engine ───────────────────────────────────
+    `CREATE TABLE IF NOT EXISTS alert_suppressions (
+      id              SERIAL PRIMARY KEY,
+      name            VARCHAR(100) NOT NULL,
+      description     TEXT,
+      rule_id         TEXT DEFAULT NULL,
+      agent_pattern   TEXT DEFAULT NULL,
+      src_ip_pattern  TEXT DEFAULT NULL,
+      min_level       INT  DEFAULT NULL,
+      max_level       INT  DEFAULT NULL,
+      expires_at      TIMESTAMPTZ DEFAULT NULL,
+      hit_count       BIGINT DEFAULT 0,
+      last_hit_at     TIMESTAMPTZ DEFAULT NULL,
+      created_by      TEXT DEFAULT NULL,
+      enabled         BOOLEAN DEFAULT true,
+      created_at      TIMESTAMPTZ DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_supp_enabled ON alert_suppressions(enabled)`,
+    `CREATE INDEX IF NOT EXISTS idx_supp_expires ON alert_suppressions(expires_at)`,
+
     // ── Action Approvals (human-in-the-loop gate for destructive actions) ──
     `CREATE TABLE IF NOT EXISTS action_approvals (
       id               SERIAL PRIMARY KEY,
@@ -929,6 +949,72 @@ async function updatePlaybook(id, fields) {
 
 async function deletePlaybook(id) {
   await pool.query(`DELETE FROM playbooks WHERE id=$1`, [id]);
+}
+
+// ── Alert Suppressions ────────────────────────────────────────
+
+async function listSuppressions({ enabledOnly = false } = {}) {
+  const where = enabledOnly
+    ? `WHERE enabled=true AND (expires_at IS NULL OR expires_at > NOW())`
+    : '';
+  const r = await pool.query(
+    `SELECT * FROM alert_suppressions ${where} ORDER BY created_at DESC`
+  );
+  return r.rows;
+}
+
+async function createSuppression({ name, description, rule_id, agent_pattern, src_ip_pattern, min_level, max_level, expires_at, created_by, enabled }) {
+  const r = await pool.query(
+    `INSERT INTO alert_suppressions(name,description,rule_id,agent_pattern,src_ip_pattern,min_level,max_level,expires_at,created_by,enabled)
+     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+    [
+      name, description || null,
+      rule_id    || null, agent_pattern  || null, src_ip_pattern || null,
+      min_level  ?? null, max_level      ?? null,
+      expires_at || null, created_by     || null,
+      enabled    ?? true,
+    ]
+  );
+  return r.rows[0];
+}
+
+async function updateSuppression(id, fields) {
+  const allowed = ['name','description','rule_id','agent_pattern','src_ip_pattern','min_level','max_level','expires_at','enabled'];
+  const sets = [], vals = [];
+  for (const [k, v] of Object.entries(fields)) {
+    if (!allowed.includes(k)) continue;
+    vals.push(v);
+    sets.push(`${k}=$${vals.length}`);
+  }
+  if (!sets.length) return null;
+  vals.push(id);
+  const r = await pool.query(
+    `UPDATE alert_suppressions SET ${sets.join(',')} WHERE id=$${vals.length} RETURNING *`, vals
+  );
+  return r.rows[0] || null;
+}
+
+async function deleteSuppression(id) {
+  await pool.query(`DELETE FROM alert_suppressions WHERE id=$1`, [id]);
+}
+
+async function bumpSuppressionHit(id) {
+  await pool.query(
+    `UPDATE alert_suppressions SET hit_count=hit_count+1, last_hit_at=NOW() WHERE id=$1`, [id]
+  );
+}
+
+async function getSuppressionStats() {
+  const r = await pool.query(
+    `SELECT
+       COUNT(*) FILTER (WHERE enabled=true AND (expires_at IS NULL OR expires_at > NOW())) AS active,
+       COUNT(*) FILTER (WHERE enabled=false) AS disabled,
+       COUNT(*) FILTER (WHERE expires_at IS NOT NULL AND expires_at <= NOW()) AS expired,
+       COALESCE(SUM(hit_count),0) AS total_hits,
+       COUNT(*) FILTER (WHERE last_hit_at > NOW() - INTERVAL '24 hours') AS fired_today
+     FROM alert_suppressions`
+  );
+  return r.rows[0];
 }
 
 async function getMatchingPlaybooks(ruleLevel, mitreTechniques = [], uebaRisk = 0) {
@@ -1738,6 +1824,13 @@ module.exports = {
   updatePlaybook,
   deletePlaybook,
   getMatchingPlaybooks,
+  // Alert Suppressions
+  listSuppressions,
+  createSuppression,
+  updateSuppression,
+  deleteSuppression,
+  bumpSuppressionHit,
+  getSuppressionStats,
   savePlaybookExecution,
   listPlaybookExecutions,
   getPlaybookExecStats,
