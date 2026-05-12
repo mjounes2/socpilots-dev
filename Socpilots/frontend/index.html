@@ -1920,42 +1920,47 @@ sshd: Failed" style="min-height:80px"></textarea></div>
     <div class="kpi cr"><div class="kpi-lbl">HIGH RISK</div><div class="kpi-val" id="ub-highrisk">—</div><div class="kpi-sub">users ≥70</div></div>
   </div>
 
-  <!-- Risk Leaderboard + Entity Lookup -->
-  <div class="g2" style="margin-bottom:14px">
-    <div class="card">
-      <div class="card-hd" style="flex-wrap:wrap;gap:6px">
-        <div style="display:flex;align-items:center;gap:8px;min-width:0">
-          <div class="card-ttl">RISK LEADERBOARD</div>
-          <span id="ueba-tf-label" style="font-size:10px;font-family:var(--fm);color:var(--txt3)">last 24h</span>
-        </div>
-        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-          <input id="lb-q" class="fi" placeholder="Search user…" style="width:120px;font-size:10px;padding:3px 7px" oninput="lbFilterDebounce()">
-          <div style="display:flex;align-items:center;gap:4px">
-            <span style="font-size:9px;font-family:var(--fm);color:var(--txt3);white-space:nowrap">Score ≥</span>
-            <input id="lb-min-score" type="number" min="0" max="100" value="0" class="fi" style="width:48px;font-size:10px;padding:3px 5px;text-align:center" oninput="lbFilterDebounce()">
-          </div>
-          <button class="btn btn-h btn-sm" onclick="lbResetFilters()" style="font-size:10px;padding:3px 8px">✕ Reset</button>
-        </div>
+  <!-- Risk Leaderboard — full width -->
+  <div class="card" style="margin-bottom:14px">
+    <div class="card-hd" style="flex-wrap:wrap;gap:6px">
+      <div style="display:flex;align-items:center;gap:8px;min-width:0">
+        <div class="card-ttl">RISK LEADERBOARD</div>
+        <span id="ueba-tf-label" style="font-size:10px;font-family:var(--fm);color:var(--txt3)">last 24h</span>
       </div>
-      <div id="ueba-leaderboard" style="font-size:12px;color:#8ab0d0;font-family:var(--fm)"><div class="loading"><div class="spin"></div></div></div>
+      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+        <input id="lb-q" class="fi" placeholder="Search user…" style="width:130px;font-size:10px;padding:3px 7px" oninput="lbFilterDebounce()">
+        <div style="display:flex;align-items:center;gap:4px">
+          <span style="font-size:9px;font-family:var(--fm);color:var(--txt3);white-space:nowrap">Score ≥</span>
+          <input id="lb-min-score" type="number" min="0" max="100" value="0" class="fi" style="width:48px;font-size:10px;padding:3px 5px;text-align:center" oninput="lbFilterDebounce()">
+        </div>
+        <button class="btn btn-h btn-sm" onclick="lbResetFilters()" style="font-size:10px;padding:3px 8px">✕ Reset</button>
+        <button class="btn btn-sm" id="btn-ueba-purge" style="display:none;background:rgba(255,23,68,.1);color:var(--r);border:1px solid rgba(255,23,68,.25);font-size:10px;padding:3px 8px" onclick="openUebaPurgeModal()">🗑 Clear Old Data</button>
+      </div>
     </div>
-    <div class="card">
-      <div class="card-hd"><div class="card-ttl">ENTITY LOOKUP</div></div>
-      <div style="display:flex;gap:10px;margin-bottom:10px">
-        <input class="fi" id="ueba-entity" placeholder="username / hostname / IP address..." style="flex:1" onkeydown="if(event.key==='Enter')loadEntityGraph()">
-        <button class="btn btn-p" onclick="loadEntityGraph()">Graph</button>
+    <div id="ueba-leaderboard" style="font-size:12px;color:#8ab0d0;font-family:var(--fm)"><div class="loading"><div class="spin"></div></div></div>
+  </div>
+
+  <!-- Entity Lookup — full width below leaderboard -->
+  <div class="card" style="margin-bottom:14px">
+    <div class="card-hd"><div class="card-ttl">ENTITY LOOKUP</div></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+      <div>
+        <div style="display:flex;gap:8px;margin-bottom:10px">
+          <input class="fi" id="ueba-entity" placeholder="username / hostname / IP address..." style="flex:1" onkeydown="if(event.key==='Enter')loadEntityGraph()">
+          <button class="btn btn-p" onclick="loadEntityGraph()">Graph</button>
+        </div>
+        <div id="ueba-graph-result" style="font-size:12px;color:#8ab0d0;font-family:var(--fm)"></div>
+        <div id="lb-exp-profile" style="display:none">
+          <div id="lb-exp-profile-content" style="margin-top:8px;padding:10px 14px;background:rgba(156,39,176,.05);border-left:3px solid rgba(156,39,176,.5);font-size:12px;color:var(--txt2);line-height:1.6;border-radius:0 4px 4px 0"></div>
+        </div>
+        <div id="ueba-baseline-result" style="display:none;margin-top:10px"></div>
       </div>
-      <div id="ueba-graph-result" style="font-size:12px;color:#8ab0d0;font-family:var(--fm)"></div>
-      <div id="lb-exp-profile" style="display:none">
-        <div id="lb-exp-profile-content" style="margin-top:8px;padding:10px 14px;background:rgba(156,39,176,.05);border-left:3px solid rgba(156,39,176,.5);font-size:12px;color:var(--txt2);line-height:1.6;border-radius:0 4px 4px 0"></div>
-      </div>
-      <div id="ueba-baseline-result" style="display:none;margin-top:10px"></div>
-      <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--b1)">
+      <div>
         <div style="font-size:10px;color:var(--txt3);font-family:var(--fm);letter-spacing:.8px;margin-bottom:7px">🎯 ATTACK PATH FINDER</div>
-        <div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap">
+        <div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
           <input class="fi" id="path-from" placeholder="From entity…" style="flex:1;min-width:100px;font-size:11px" onkeydown="if(event.key==='Enter')findAttackPath()">
           <svg viewBox="0 0 24 24" fill="none" stroke="rgba(255,215,0,.6)" stroke-width="2" style="width:14px;height:14px;flex-shrink:0"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-          <input class="fi" id="path-to"   placeholder="To entity…"   style="flex:1;min-width:100px;font-size:11px" onkeydown="if(event.key==='Enter')findAttackPath()">
+          <input class="fi" id="path-to" placeholder="To entity…" style="flex:1;min-width:100px;font-size:11px" onkeydown="if(event.key==='Enter')findAttackPath()">
           <button class="btn btn-sm" onclick="findAttackPath()" style="background:rgba(255,215,0,.1);border-color:rgba(255,215,0,.4);color:#ffd700;white-space:nowrap">Find Path</button>
         </div>
         <div id="entity-path-result" style="display:none;margin-top:10px"></div>
@@ -2776,6 +2781,30 @@ sshd: Failed" style="min-height:80px"></textarea></div>
     <div class="modal-hd"><div class="modal-ttl" id="modal-digest-title">UEBA Digest</div><button class="modal-x" onclick="closeModal('modal-digest')">✕</button></div>
     <div class="modal-body" id="modal-digest-body" style="overflow-y:auto;flex:1"></div>
     <div class="modal-ft"><button class="btn btn-h" onclick="closeModal('modal-digest')">Close</button></div>
+  </div>
+</div>
+
+<div class="modal-ov" id="modal-ueba-purge">
+  <div class="modal" style="width:420px">
+    <div class="modal-hd">
+      <div class="modal-ttl" style="color:var(--r)">🗑 CLEAR OLD UEBA DATA</div>
+      <button class="modal-x" onclick="closeModal('modal-ueba-purge')">✕</button>
+    </div>
+    <div class="modal-body" style="display:flex;flex-direction:column;gap:12px">
+      <div style="font-size:11px;color:var(--txt2);font-family:var(--fm);line-height:1.6">
+        Removes old relationships, orphaned Process/IP nodes, and resets risk scores for inactive entities. <strong style="color:var(--txt)">Does not delete User or Host nodes</strong> — only their stale data.
+      </div>
+      <div>
+        <label style="font-size:10px;font-family:var(--fm);color:var(--txt3);display:block;margin-bottom:4px">DELETE DATA OLDER THAN (days)</label>
+        <input id="purge-days" type="number" min="1" max="365" value="30" style="width:100%;background:var(--bg);border:1px solid var(--b2);color:var(--txt);padding:7px 10px;border-radius:4px;font-size:12px;font-family:var(--fm);box-sizing:border-box">
+        <div style="font-size:9px;color:var(--txt3);margin-top:4px;font-family:var(--fm)">Recommended: 30 days for active environments, 7 days if graph is very large.</div>
+      </div>
+      <div id="purge-result" style="display:none;font-size:11px;font-family:var(--fm);padding:8px 10px;background:rgba(0,230,118,.06);border:1px solid rgba(0,230,118,.2);border-radius:4px;color:var(--g)"></div>
+    </div>
+    <div class="modal-ft" style="gap:8px">
+      <button class="btn btn-h" onclick="closeModal('modal-ueba-purge')">Cancel</button>
+      <button class="btn" style="background:rgba(255,23,68,.15);color:var(--r);border:1px solid rgba(255,23,68,.3)" onclick="runUebaPurge()">Purge Data</button>
+    </div>
   </div>
 </div>
 
@@ -7443,6 +7472,29 @@ function lbResetFilters(){
   const s=document.getElementById('lb-min-score');if(s)s.value='0';
   _lbPage=1;loadUebaLeaderboard();
 }
+
+function openUebaPurgeModal(){
+  document.getElementById('purge-days').value='30';
+  const r=document.getElementById('purge-result');if(r){r.style.display='none';r.textContent='';}
+  openModal('modal-ueba-purge');
+}
+async function runUebaPurge(){
+  const days=parseInt(document.getElementById('purge-days').value)||30;
+  const btn=document.querySelector('#modal-ueba-purge .modal-ft .btn:last-child');
+  if(btn){btn.disabled=true;btn.textContent='Purging…';}
+  const res=await fetch(`/api/ueba/data?older_than_days=${days}`,{method:'DELETE',headers:{'Authorization':'Bearer '+TOK}});
+  if(btn){btn.disabled=false;btn.textContent='Purge Data';}
+  const d=await res.json().catch(()=>({}));
+  const r=document.getElementById('purge-result');
+  if(res.ok&&r){
+    r.style.display='block';
+    r.innerHTML=`Done — Relationships removed: <b>${d.relationships||0}</b> · Nodes removed: <b>${d.nodes||0}</b> · Risk scores reset: <b>${d.risk_scores_reset||0}</b>`;
+    loadUebaLeaderboard();
+  } else if(r){
+    r.style.display='block';r.style.color='var(--r)';r.style.borderColor='rgba(255,23,68,.2)';
+    r.textContent=d.error||'Purge failed';
+  }
+}
 async function loadUebaLeaderboard(page){
   if(page!==undefined) _lbPage=page;
   const q=encodeURIComponent((document.getElementById('lb-q')?.value||'').trim());
@@ -7573,6 +7625,9 @@ async function loadUebaAnomalies(){
 function renderLeaderboard(users, total){
   const el=document.getElementById('ueba-leaderboard');
   if(!el)return;
+  // Show purge button for admins
+  const purgeBtn=document.getElementById('btn-ueba-purge');
+  if(purgeBtn) purgeBtn.style.display = CU?.role==='admin' ? 'inline-block' : 'none';
   if(!users.length){el.innerHTML='<div style="color:#8ab0d0;padding:8px 0">No behavioral data yet. Feed Wazuh alerts via POST /api/ueba/event or wait for auto-ingest.</div>';return;}
   const offset=(_lbPage-1)*_lbPageSize;
   const pgn=buildPaginator(_lbPage,_lbPageSize,total||users.length,
@@ -7580,26 +7635,37 @@ function renderLeaderboard(users, total){
     'setLbPageSize(this)');
   const rows=users.map((u,i)=>{
     const uid=`lb-exp-${_lbPage}-${i}`;
+    const hosts=(u.recent_hosts||[]).slice(0,3).join(', ')+(u.recent_hosts?.length>3?` +${u.recent_hosts.length-3}`:'');
     return `<tr>
-      <td style="color:#8ab0d0">${offset+i+1}</td>
-      <td style="cursor:pointer;color:var(--c)" onclick="uebaLookup('${esc(u.user)}')">${esc(u.user)}${u.baseline_computed_at?` <span title="Behavioral baseline computed ${new Date(u.baseline_computed_at).toLocaleString()}" style="font-size:9px;color:var(--g);vertical-align:middle;cursor:default">📊</span>`:''}</td>
-      <td>${riskBadge(u.risk_score)}</td>
-      <td style="color:#8ab0d0">${u.anomaly_count||0}</td>
-      <td style="color:#8ab0d0">${u.events_period||0}</td>
-      <td style="font-size:10px;color:var(--txt2)">${(u.recent_hosts||[]).join(', ')||'—'}</td>
-      <td style="white-space:nowrap">
-        <button class="btn btn-sm" onclick="uebaExplainRisk('${esc(u.user)}','${uid}')" style="padding:4px 8px;background:rgba(156,39,176,.1);border:1px solid rgba(156,39,176,.4);color:#ce93d8;font-size:10px" title="AI risk narrative">🧠 Explain</button>
-        <button class="btn btn-sm" onclick="uebaLookup('${esc(u.user)}');setTimeout(()=>loadEntityBaseline('${esc(u.user)}'),400)" style="padding:4px 7px;font-size:10px;margin-left:3px;background:rgba(0,230,118,.08);border:1px solid rgba(0,230,118,.25);color:var(--g)" title="30-day behavioral baseline">📊</button>
-        <button class="btn btn-sm btn-h" onclick="go('copilot');askAIAboutUeba('${esc(u.user)}',${u.risk_score})" style="padding:4px 7px;font-size:10px;margin-left:3px" title="Ask SOCPilots AI">💬</button>
+      <td style="color:var(--txt3);font-family:var(--fm);font-size:11px;width:32px">${offset+i+1}</td>
+      <td style="cursor:pointer" onclick="uebaLookup('${esc(u.user)}')">
+        <span style="color:var(--c);font-weight:600">${esc(u.user)}</span>
+        ${u.baseline_computed_at?`<span title="Baseline computed" style="font-size:9px;color:var(--g);margin-left:4px">📊</span>`:''}
+        ${hosts?`<div style="font-size:9px;color:var(--txt3);margin-top:2px;font-family:var(--fm)">${esc(hosts)}</div>`:''}
+      </td>
+      <td style="width:90px">${riskBadge(u.risk_score)}</td>
+      <td style="color:var(--r);font-family:var(--fm);font-size:11px;text-align:center;width:70px">${u.anomaly_count||0}</td>
+      <td style="color:#8ab0d0;font-family:var(--fm);font-size:11px;text-align:center;width:70px">${u.events_period||0}</td>
+      <td style="width:180px;white-space:nowrap">
+        <button class="btn btn-sm" onclick="uebaExplainRisk('${esc(u.user)}','${uid}')" style="padding:3px 7px;background:rgba(156,39,176,.1);border:1px solid rgba(156,39,176,.4);color:#ce93d8;font-size:10px" title="AI risk explanation">🧠</button>
+        <button class="btn btn-sm" onclick="uebaLookup('${esc(u.user)}');setTimeout(()=>loadEntityBaseline('${esc(u.user)}'),400)" style="padding:3px 7px;font-size:10px;margin-left:3px;background:rgba(0,230,118,.08);border:1px solid rgba(0,230,118,.25);color:var(--g)" title="Behavioral baseline">📊</button>
+        <button class="btn btn-sm btn-h" onclick="go('copilot');askAIAboutUeba('${esc(u.user)}',${u.risk_score})" style="padding:3px 7px;font-size:10px;margin-left:3px" title="Ask AI">💬</button>
       </td>
     </tr>
     <tr id="${uid}" style="display:none">
-      <td colspan="7" style="padding:0">
+      <td colspan="6" style="padding:0">
         <div id="${uid}-content" style="padding:10px 14px;background:rgba(156,39,176,.05);border-left:3px solid rgba(156,39,176,.5);font-size:12px;color:var(--txt2);line-height:1.6"></div>
       </td>
     </tr>`;
   }).join('');
-  el.innerHTML=`<div class="tbl"><table><thead><tr><th>#</th><th>USER</th><th>RISK</th><th>ANOMALIES</th><th>EVENTS (${_uebaTfLabel().replace('last ','')})</th><th>RECENT HOSTS</th><th>ACTIONS</th></tr></thead><tbody>${rows}</tbody></table></div>${pgn}`;
+  el.innerHTML=`<table style="width:100%;border-collapse:collapse"><thead><tr>
+    <th style="width:32px">#</th>
+    <th>ENTITY</th>
+    <th style="width:90px">RISK</th>
+    <th style="width:70px;text-align:center">ANOMALIES</th>
+    <th style="width:70px;text-align:center">EVENTS</th>
+    <th style="width:180px">ACTIONS</th>
+  </tr></thead><tbody>${rows}</tbody></table>${pgn}`;
 }
 
 async function uebaExplainRisk(entity, rowId){

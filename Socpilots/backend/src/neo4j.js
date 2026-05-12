@@ -1084,6 +1084,45 @@ async function getAttackPath(fromEntity, toEntity) {
   return { nodes: pathNodes, edges: pathEdges, hops, maxDeviation, from: fromEntity, to: toEntity };
 }
 
+async function purgeOldData(daysOld = 30) {
+  const cutoff = new Date(Date.now() - daysOld * 86400_000).toISOString();
+  const results = {};
+
+  // Delete relationships older than cutoff
+  const relDel = await run(
+    `MATCH ()-[r]->()
+     WHERE r.timestamp IS NOT NULL AND r.timestamp < $cutoff
+     WITH r LIMIT 50000
+     DELETE r RETURN count(r) AS deleted`,
+    { cutoff }
+  );
+  results.relationships = relDel[0]?.deleted?.toNumber?.() ?? 0;
+
+  // Delete orphaned non-User nodes (Process, IP nodes with no recent activity)
+  const nodeDel = await run(
+    `MATCH (n)
+     WHERE NOT n:User AND NOT n:Host
+       AND (n.last_seen < $cutoff OR (n.last_seen IS NULL AND n.first_seen < $cutoff))
+     WITH n LIMIT 10000
+     DETACH DELETE n RETURN count(n) AS deleted`,
+    { cutoff }
+  );
+  results.nodes = nodeDel[0]?.deleted?.toNumber?.() ?? 0;
+
+  // Reset risk scores to 0 for users/hosts with no recent activity
+  const resetDel = await run(
+    `MATCH (n)
+     WHERE (n:User OR n:Host)
+       AND n.last_seen < $cutoff
+     SET n.risk_score = 0, n.anomaly_count = 0
+     RETURN count(n) AS reset`,
+    { cutoff }
+  );
+  results.risk_scores_reset = resetDel[0]?.reset?.toNumber?.() ?? 0;
+
+  return results;
+}
+
 module.exports = {
   initSchema, ingestEvent, recalcBaselines, backfillRiskScores,
   getRiskLeaderboard, getUserProfile,
@@ -1092,6 +1131,7 @@ module.exports = {
   detectMultiStageAttack, detectSharedCredentials,
   getGraphNodes, getAttackPath,
   computeEntityBaseline, assessEntityFP,
+  purgeOldData,
   ANOMALY_WEIGHTS,
 };
 

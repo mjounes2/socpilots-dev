@@ -4080,6 +4080,15 @@ app.get('/api/ueba/digest/:id', authMW, async (req, res) => {
   }
 });
 
+app.delete('/api/ueba/data', authMW, requireRole('admin'), async (req, res) => {
+  try {
+    const daysOld = Math.max(1, parseInt(req.query.older_than_days) || 30);
+    const result = await ueba.purgeOldData(daysOld);
+    console.log(`[UEBA] Purge by ${req.user.username}: >=${daysOld}d old — rels=${result.relationships} nodes=${result.nodes} resets=${result.risk_scores_reset}`);
+    res.json({ ok: true, days_old: daysOld, ...result });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 app.post('/api/ueba/digest/generate', authMW, requireRole('admin'), async (req, res) => {
   try {
     // Reset last-run timestamp so scheduler fires immediately
