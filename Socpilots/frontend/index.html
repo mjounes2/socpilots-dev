@@ -248,12 +248,7 @@ tr.xrow.open .xcaret{transform:rotate(180deg);color:var(--c)}
 .mtt{position:fixed;background:var(--bg3);border:1px solid var(--b2);border-radius:4px;padding:6px 10px;font-size:10px;font-family:var(--fm);color:var(--txt);z-index:50;display:none;pointer-events:none;box-shadow:0 4px 16px rgba(0,0,0,.5);white-space:nowrap}
 
 /* ─── CORRELATION GRAPH ───────────── */
-#corr-graph{width:100%;min-height:400px;background:var(--bg2);border-radius:4px;border:1px solid var(--b1);position:relative;overflow:hidden}
-.cg-node{position:absolute;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer;z-index:5}
-.cg-circle{border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;border:2px solid;transition:all .2s}
-.cg-circle:hover{transform:scale(1.2);filter:brightness(1.3)}
-.cg-lbl{font-size:8px;font-family:var(--fm);color:var(--txt2);text-align:center;max-width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:rgba(5,11,20,.8);padding:2px 4px;border-radius:2px}
-#corr-svg{position:absolute;inset:0;pointer-events:none}
+#corr-graph{width:100%;min-height:440px;background:var(--bg2);border-radius:4px;border:1px solid var(--b1);overflow:hidden}
 
 /* ─── IOC ─────────────────────────── */
 .ioc-section{padding:8px 10px;background:var(--bg2);border:1px solid var(--b1);border-radius:4px;margin-bottom:7px}
@@ -1156,9 +1151,7 @@ if(localStorage.getItem("soc_dim")==="1")document.body.classList.add("dim");
     <!-- Visual Correlation Graph -->
     <div class="card mb">
       <div class="card-hd"><div class="card-ttl">CORRELATION GRAPH</div><div style="font-size:9px;font-family:var(--fm);color:#8ab0d0" id="cg-hint">Drag nodes to rearrange</div></div>
-      <div id="corr-graph">
-        <svg id="corr-svg" style="position:absolute;inset:0;width:100%;height:100%"></svg>
-      </div>
+      <div id="corr-graph"></div>
     </div>
     <div class="card"><div class="card-hd"><div class="card-ttl">SOCPilots AI REPORT</div></div><div id="corr-ai" class="ai-txt"></div></div>
   </div>
@@ -5611,73 +5604,174 @@ async function doCorrelate(){
 
 function buildCorrGraph(indicator,siemHits,hiveHits){
   const el=document.getElementById('corr-graph'); if(!el)return;
-  const W=el.offsetWidth||800, H=400;
-  el.style.height=H+'px';
-  const svg=document.getElementById('corr-svg');
-  svg.innerHTML='';
-  // Clear old nodes
-  el.querySelectorAll('.cg-node').forEach(n=>n.remove());
+  if(typeof d3==='undefined')return;
 
-  const nodes=[];
-  const addNode=(id,label,type,x,y)=>{nodes.push({id,label,type,x,y});};
+  // Stop any previous simulation
+  if(window._corrSim){ try{window._corrSim.stop();}catch(_){} }
+  el.innerHTML='';
 
-  // Central node: the indicator
-  addNode('center',indicator,'indicator',W/2,H/2);
+  const W=el.getBoundingClientRect().width||800, H=440;
 
-  // SIEM hits as nodes
-  siemHits.slice(0,5).forEach((h,i)=>{
-    const angle=(i/(Math.max(siemHits.length,1)))*Math.PI*2-Math.PI/2;
-    const r=120;
-    addNode(`siem-${i}`,h.agent||h.desc?.slice(0,20)||`Alert ${i+1}`,'siem',W/2+Math.cos(angle)*r,H/2+Math.sin(angle)*r);
+  const TYPE_CFG={
+    indicator:{r:26,color:'#00e5ff',fill:'rgba(0,229,255,.12)',icon:'⊙'},
+    siem:     {r:20,color:'#ff6d00',fill:'rgba(255,109,0,.10)',icon:'⚠'},
+    hive:     {r:20,color:'#d500f9',fill:'rgba(213,0,249,.10)',icon:'▣'},
+    mitre:    {r:18,color:'#ffab00',fill:'rgba(255,171,0,.10)',icon:'◈'},
+    timeline: {r:18,color:'#00e676',fill:'rgba(0,230,118,.10)',icon:'◷'},
+  };
+
+  // Build node + edge data
+  const nodes=[{id:'center',label:indicator,type:'indicator',fx:W/2,fy:H/2}];
+  const edges=[];
+  siemHits.slice(0,6).forEach((h,i)=>{
+    const id=`siem-${i}`;
+    nodes.push({id,label:h.agent||h.desc?.slice(0,22)||`Alert ${i+1}`,type:'siem',sub:h.desc?.slice(0,60)||''});
+    edges.push({source:'center',target:id,rel:'SIEM hit',dashed:false});
   });
-
-  // SP-CM cases as nodes
-  hiveHits.slice(0,4).forEach((h,i)=>{
-    const angle=(i/(Math.max(hiveHits.length,1)))*Math.PI*2+Math.PI/4;
-    const r=160;
-    addNode(`hive-${i}`,h.title?.slice(0,25)||`Case ${i+1}`,'hive',W/2+Math.cos(angle)*r,H/2+Math.sin(angle)*r+60);
+  hiveHits.slice(0,5).forEach((h,i)=>{
+    const id=`hive-${i}`;
+    nodes.push({id,label:h.title?.slice(0,25)||`Case ${i+1}`,type:'hive',sub:h.status||''});
+    edges.push({source:'center',target:id,rel:'Case',dashed:false});
   });
-
-  // Add static threat intel nodes
-  if(siemHits.length>0||hiveHits.length>0){
-    addNode('mitre','MITRE ATT&CK','mitre',W*0.15,H*0.3);
-    addNode('timeline','Timeline','timeline',W*0.85,H*0.3);
+  if(nodes.length>1){
+    nodes.push({id:'mitre',label:'MITRE ATT&CK',type:'mitre',sub:'Technique mapping'});
+    nodes.push({id:'tl',label:'Timeline',type:'timeline',sub:'Chronological view'});
+    edges.push({source:'center',target:'mitre',rel:'mapped to',dashed:true});
+    edges.push({source:'center',target:'tl',rel:'ordered by',dashed:true});
   }
 
-  // Draw SVG edges
-  const defColor={'indicator':'#00e5ff','siem':'#ff6d00','hive':'#d500f9','mitre':'#ffab00','timeline':'#00e676'};
-  svg.innerHTML=nodes.filter(n=>n.id!=='center').map(n=>{
-    const c=nodes[0];
-    return `<line x1="${c.x}" y1="${c.y}" x2="${n.x}" y2="${n.y}" stroke="${defColor[n.type]||'#1a2f4a'}" stroke-width="1" stroke-opacity=".5" stroke-dasharray="${n.type==='mitre'?'4,3':'0'}"/>`;
-  }).join('');
+  const svg=d3.create('svg').attr('width',W).attr('height',H)
+    .attr('viewBox',`0 0 ${W} ${H}`).attr('preserveAspectRatio','xMidYMid meet')
+    .style('width','100%').style('height',H+'px').style('display','block').style('cursor','grab');
 
-  // Add node elements
-  nodes.forEach(n=>{
-    const typeConfig={
-      indicator:{size:50,bg:'rgba(0,229,255,.15)',border:'#00e5ff',icon:'⊙',color:'var(--c)'},
-      siem:{size:38,bg:'rgba(255,109,0,.1)',border:'#ff6d00',icon:'⚠',color:'var(--o)'},
-      hive:{size:38,bg:'rgba(213,0,249,.1)',border:'#d500f9',icon:'📋',color:'var(--p)'},
-      mitre:{size:36,bg:'rgba(255,171,0,.1)',border:'#ffab00',icon:'🎯',color:'var(--y)'},
-      timeline:{size:36,bg:'rgba(0,230,118,.1)',border:'#00e676',icon:'⏱',color:'var(--g)'},
-    };
-    const cfg=typeConfig[n.type]||typeConfig.siem;
-    const div=document.createElement('div');
-    div.className='cg-node'; div.style.left=n.x+'px'; div.style.top=n.y+'px';
-    div.innerHTML=`<div class="cg-circle" style="width:${cfg.size}px;height:${cfg.size}px;background:${cfg.bg};border-color:${cfg.border};font-size:${cfg.size>40?16:12}px">${cfg.icon}</div><div class="cg-lbl" style="color:${cfg.color}">${esc(n.label)}</div>`;
-    // Drag support
-    let ox,oy,dragging=false;
-    div.addEventListener('mousedown',e=>{dragging=true;ox=e.clientX-n.x;oy=e.clientY-n.y;});
-    document.addEventListener('mousemove',e=>{if(!dragging)return;n.x=e.clientX-ox;n.y=e.clientY-oy;div.style.left=n.x+'px';div.style.top=n.y+'px';updateEdges();});
-    document.addEventListener('mouseup',()=>{dragging=false;});
-    el.appendChild(div);
+  // Arrowhead markers per node type
+  const defs=svg.append('defs');
+  Object.entries(TYPE_CFG).forEach(([type,{color}])=>{
+    defs.append('marker').attr('id',`cg-arr-${type}`).attr('viewBox','0 -4 8 8').attr('refX',2).attr('refY',0)
+      .attr('markerWidth',5).attr('markerHeight',5).attr('orient','auto')
+      .append('path').attr('d','M0,-4L8,0L0,4').attr('fill',color+'88');
   });
 
-  function updateEdges(){
-    svg.innerHTML=nodes.filter(n=>n.id!=='center').map(n=>{
-      const c=nodes[0];
-      return`<line x1="${c.x}" y1="${c.y}" x2="${n.x}" y2="${n.y}" stroke="${defColor[n.type]||'#1a2f4a'}" stroke-width="1" stroke-opacity=".5" stroke-dasharray="${n.type==='mitre'?'4,3':'0'}"/>`;
-    }).join('');
-  }
+  const g=svg.append('g');
+  const zoomBeh=d3.zoom().scaleExtent([0.1,8]).on('zoom',ev=>{
+    g.attr('transform',ev.transform);
+    const hint=document.getElementById('cg-hint');
+    if(hint)hint.textContent=`Zoom: ${ev.transform.k.toFixed(2)}x — drag to pan`;
+  });
+  svg.call(zoomBeh).on('dblclick.zoom',null);
+
+  // Bezier path helper — perpendicular offset for curve
+  const cgPath=d=>{
+    const sx=d.source.x||0, sy=d.source.y||0;
+    const tx=d.target.x||0, ty=d.target.y||0;
+    const dx=tx-sx, dy=ty-sy, dist=Math.sqrt(dx*dx+dy*dy)||1;
+    const mx=(sx+tx)/2+dy*0.2, my=(sy+ty)/2-dx*0.2;
+    const sr=(TYPE_CFG[d.source.type||'siem']?.r||20)+2;
+    const tr=(TYPE_CFG[d.target.type||'siem']?.r||20)+4;
+    return`M${sx+dx/dist*sr},${sy+dy/dist*sr}Q${mx},${my} ${tx-dx/dist*tr},${ty-dy/dist*tr}`;
+  };
+
+  // Layers
+  const linkG=g.append('g');
+  const lblG=g.append('g');
+  const nodeG=g.append('g');
+
+  // Edges
+  const link=linkG.selectAll('path.cg-edge').data(edges).join('path')
+    .attr('class','cg-edge').attr('fill','none')
+    .attr('stroke',d=>{ const cfg=TYPE_CFG[d.target.type||'siem']; return cfg?cfg.color+'55':'rgba(138,176,208,.3)'; })
+    .attr('stroke-width',d=>d.dashed?1:1.5)
+    .attr('stroke-dasharray',d=>d.dashed?'5,3':'none')
+    .attr('marker-end',d=>`url(#cg-arr-${d.target.type||'siem'})`);
+
+  const linkHov=linkG.selectAll('path.cg-lhov').data(edges).join('path')
+    .attr('class','cg-lhov').attr('fill','none').attr('stroke','transparent').attr('stroke-width',14);
+
+  const edgeLbl=lblG.selectAll('text').data(edges).join('text')
+    .text(e=>e.rel).attr('fill','rgba(138,176,208,.9)').attr('font-size',8)
+    .attr('font-family','monospace').attr('text-anchor','middle')
+    .style('pointer-events','none').style('user-select','none').style('opacity',0);
+
+  linkHov.on('mouseover',(ev,d)=>{ edgeLbl.filter(e=>e===d).style('opacity',1); })
+         .on('mouseout', (ev,d)=>{ edgeLbl.filter(e=>e===d).style('opacity',0); });
+
+  // Nodes with tooltip via shared #ueba-tooltip
+  const node=nodeG.selectAll('g').data(nodes).join('g')
+    .style('cursor','pointer')
+    .call(d3.drag()
+      .on('start',(ev,d)=>{ if(!ev.active)sim.alphaTarget(.3).restart(); d.fx=d.x;d.fy=d.y; })
+      .on('drag', (ev,d)=>{ d.fx=ev.x;d.fy=ev.y; })
+      .on('end',  (ev,d)=>{ if(!ev.active)sim.alphaTarget(0); if(d.type!=='indicator'){d.fx=null;d.fy=null;} }))
+    .on('mouseover',(ev,d)=>{
+      const t=document.getElementById('ueba-tooltip'); if(!t)return;
+      const cfg=TYPE_CFG[d.type]||TYPE_CFG.siem;
+      t.innerHTML=`<div style="font-size:9px;color:#8ab0d0;margin-bottom:3px;letter-spacing:1px">${(d.type||'').toUpperCase()}</div><div style="font-size:13px;font-weight:700;color:${cfg.color};margin-bottom:5px">${esc(d.label)}</div>${d.sub?`<div style="font-size:10px;font-family:var(--fm);color:var(--txt2)">${esc(d.sub)}</div>`:''}`;
+      t.style.display='block';
+      const x=ev.clientX+16, y=ev.clientY-10;
+      const r=t.getBoundingClientRect();
+      t.style.left=(x+r.width>window.innerWidth?ev.clientX-r.width-16:x)+'px';
+      t.style.top =(y+r.height>window.innerHeight?ev.clientY-r.height-10:y)+'px';
+    })
+    .on('mousemove',(ev)=>{
+      const t=document.getElementById('ueba-tooltip'); if(!t||t.style.display==='none')return;
+      const x=ev.clientX+16, y=ev.clientY-10;
+      const r=t.getBoundingClientRect();
+      t.style.left=(x+r.width>window.innerWidth?ev.clientX-r.width-16:x)+'px';
+      t.style.top =(y+r.height>window.innerHeight?ev.clientY-r.height-10:y)+'px';
+    })
+    .on('mouseout',()=>{ const t=document.getElementById('ueba-tooltip'); if(t)t.style.display='none'; });
+
+  // Draw circles + icons + labels per node
+  node.each(function(d){
+    const ng=d3.select(this);
+    const cfg=TYPE_CFG[d.type]||TYPE_CFG.siem;
+    ng.append('circle').attr('r',cfg.r).attr('fill',cfg.fill)
+      .attr('stroke',cfg.color).attr('stroke-width',d.type==='indicator'?2.5:1.5)
+      .style('filter',d.type==='indicator'?`drop-shadow(0 0 8px ${cfg.color})`:'none');
+    ng.append('text').text(cfg.icon).attr('text-anchor','middle').attr('dy','0.35em')
+      .attr('font-size',d.type==='indicator'?16:12).attr('fill',cfg.color)
+      .style('pointer-events','none').style('user-select','none');
+    const maxL=d.type==='indicator'?30:22;
+    const lbl=d.label.length>maxL?d.label.slice(0,maxL-1)+'…':d.label;
+    ng.append('text').text(lbl).attr('text-anchor','middle').attr('dy',cfg.r+13)
+      .attr('font-size',9).attr('font-family','monospace').attr('fill',cfg.color+'cc')
+      .style('pointer-events','none').style('user-select','none');
+  });
+
+  // Force simulation
+  const sim=d3.forceSimulation(nodes)
+    .alphaMin(0.015)
+    .force('link',d3.forceLink(edges).id(d=>d.id).distance(160).strength(.5))
+    .force('charge',d3.forceManyBody().strength(-400))
+    .force('center',d3.forceCenter(W/2,H/2).strength(.08))
+    .force('collide',d3.forceCollide().radius(d=>(TYPE_CFG[d.type]?.r||20)+22).strength(.85))
+    .on('tick',()=>{
+      link.attr('d',cgPath);
+      linkHov.attr('d',cgPath);
+      edgeLbl.attr('x',d=>(d.source.x+d.target.x)/2+(d.target.y-d.source.y)*0.2)
+              .attr('y',d=>(d.source.y+d.target.y)/2-(d.target.x-d.source.x)*0.2-3);
+      node.attr('transform',d=>`translate(${d.x||0},${d.y||0})`);
+    })
+    .on('end',()=>{
+      const xs=nodes.map(n=>n.x).filter(x=>isFinite(x));
+      const ys=nodes.map(n=>n.y).filter(y=>isFinite(y));
+      if(!xs.length)return;
+      const pad=50, minX=Math.min(...xs)-pad, maxX=Math.max(...xs)+pad;
+      const minY=Math.min(...ys)-pad, maxY=Math.max(...ys)+pad;
+      const bW=maxX-minX, bH=maxY-minY;
+      if(bW<1||bH<1)return;
+      const scale=Math.min(2,Math.min(W/bW,H/bH)*0.9);
+      const tx=W/2-(minX+bW/2)*scale, ty=H/2-(minY+bH/2)*scale;
+      svg.transition().duration(800).call(zoomBeh.transform,d3.zoomIdentity.translate(tx,ty).scale(scale));
+      const hint=document.getElementById('cg-hint');
+      if(hint)hint.textContent='Drag nodes · Scroll to zoom · Hover edges for labels';
+    });
+
+  // Release center pin after 1.5 s so graph can breathe
+  setTimeout(()=>{ const c=nodes.find(n=>n.type==='indicator'); if(c){c.fx=null;c.fy=null;} sim.alpha(.3).restart(); },1500);
+
+  el.appendChild(svg.node());
+  window._corrSim=sim; window._corrSvg=svg; window._corrZoom=zoomBeh;
 }
 
 // ─── LIVE THREAT MAP ──────────────────────────────────────────
@@ -8203,7 +8297,7 @@ function renderForceGraphD3(container, allNodes, allEdges, isFullscreen){
 
   // Defs — arrowhead markers (default + per-tactic)
   const defs=svg.append('defs');
-  const addMarker=(id,color)=>defs.append('marker').attr('id',id).attr('viewBox','0 -4 8 8').attr('refX',8).attr('refY',0)
+  const addMarker=(id,color)=>defs.append('marker').attr('id',id).attr('viewBox','0 -4 8 8').attr('refX',2).attr('refY',0)
     .attr('markerWidth',6).attr('markerHeight',6).attr('orient','auto')
     .append('path').attr('d','M0,-4L8,0L0,4').attr('fill',color);
   addMarker('arr','rgba(138,176,208,.4)');
@@ -8231,20 +8325,37 @@ function renderForceGraphD3(container, allNodes, allEdges, isFullscreen){
     return'url(#arr)';
   };
 
-  // Links
-  const link=linkG.selectAll('line').data(edges).join('line')
-    .attr('stroke',edgeColor)
-    .attr('stroke-width',edgeWidth)
-    .attr('marker-end',edgeMarker)
-    .attr('class','ueba-edge');
+  // Bezier curve path helper — slight perpendicular offset makes parallel edges distinguishable
+  const linkPath=d=>{
+    const sx=d.source.x||0, sy=d.source.y||0;
+    const tx=d.target.x||0, ty=d.target.y||0;
+    const dx=tx-sx, dy=ty-sy, dist=Math.sqrt(dx*dx+dy*dy)||1;
+    const mx=(sx+tx)/2+dy*0.15, my=(sy+ty)/2-dx*0.15;
+    const sr=nodeR(d.source), tr=nodeR(d.target)+4;
+    return`M${sx+dx/dist*sr},${sy+dy/dist*sr}Q${mx},${my} ${tx-dx/dist*tr},${ty-dy/dist*tr}`;
+  };
 
-  // Edge labels (rel type + tactic if available)
+  // Visible curved edges
+  const link=linkG.selectAll('path.ueba-edge').data(edges).join('path')
+    .attr('class','ueba-edge').attr('fill','none')
+    .attr('stroke',edgeColor).attr('stroke-width',edgeWidth)
+    .attr('marker-end',edgeMarker);
+
+  // Invisible wide paths for hover detection
+  const linkHov=linkG.selectAll('path.ueba-lhov').data(edges).join('path')
+    .attr('class','ueba-lhov').attr('fill','none')
+    .attr('stroke','transparent').attr('stroke-width',14)
+    .style('cursor','default');
+
+  // Edge labels — hidden by default, revealed on edge hover
   const edgeLbl=labelG.selectAll('text').data(edges).join('text')
     .text(e=>{ const t=flagsToTacticName(e.flags); return t?`${e.rel} · ${t}`:e.rel; })
-    .attr('fill',e=>{ const tc=flagsToTacticColor(e.flags); return tc?tc.color+'99':'#3a5f7a'; })
-    .attr('font-size',8)
-    .attr('font-family','monospace').attr('text-anchor','middle')
-    .style('pointer-events','none').style('user-select','none');
+    .attr('fill',e=>{ const tc=flagsToTacticColor(e.flags); return tc?tc.color+'cc':'#4a7a9a'; })
+    .attr('font-size',8).attr('font-family','monospace').attr('text-anchor','middle')
+    .style('pointer-events','none').style('user-select','none').style('opacity',0);
+
+  linkHov.on('mouseover',(ev,d)=>{ edgeLbl.filter(e=>e===d).style('opacity',1); })
+         .on('mouseout', (ev,d)=>{ edgeLbl.filter(e=>e===d).style('opacity',0); });
 
   // Node groups
   const node=nodeG.selectAll('g').data(nodes).join('g')
@@ -8288,6 +8399,9 @@ function renderForceGraphD3(container, allNodes, allEdges, isFullscreen){
     .attr('fill',n=>nodeColor(n)+'99').attr('font-size',7)
     .attr('font-family','monospace').attr('text-anchor','middle')
     .style('pointer-events','none').style('user-select','none');
+
+  // Dense graphs: hide all node text to reduce clutter — tooltip still shows detail on hover
+  if(nodes.length>80){ node.selectAll('text').style('display','none'); }
 
   // ── Persistent legend box (bottom-left, glassmorphism) ────────────────
   const tacticsSeen=[...new Set(edges.flatMap(e=>e.flags||[]).filter(f=>MITRE_TACTIC_COLORS[f]))]
@@ -8353,15 +8467,15 @@ function renderForceGraphD3(container, allNodes, allEdges, isFullscreen){
   // Force simulation — alphaMin raised to 0.015 so it stabilizes faster on large graphs
   const sim=d3.forceSimulation(nodes)
     .alphaMin(0.015)
-    .force('link', d3.forceLink(edges).id(d=>d.id).distance(n=>120+nodeR(n.source||n)*2).strength(.5))
-    .force('charge', d3.forceManyBody().strength(nodes.length>60?-300:-500))
+    .force('link', d3.forceLink(edges).id(d=>d.id).distance(n=>150+nodeR(n.source||n)*3).strength(.4))
+    .force('charge', d3.forceManyBody().strength(nodes.length>60?-350:-600))
     .force('center', d3.forceCenter(W/2,H/2).strength(.05))
-    .force('collide', d3.forceCollide().radius(n=>nodeR(n)+14).strength(.8))
+    .force('collide', d3.forceCollide().radius(n=>nodeR(n)+20).strength(.85))
     .on('tick',()=>{
-      link.attr('x1',d=>d.source.x).attr('y1',d=>d.source.y)
-          .attr('x2',d=>d.target.x).attr('y2',d=>d.target.y);
-      edgeLbl.attr('x',d=>(d.source.x+d.target.x)/2)
-              .attr('y',d=>(d.source.y+d.target.y)/2-3);
+      link.attr('d',linkPath);
+      linkHov.attr('d',linkPath);
+      edgeLbl.attr('x',d=>(d.source.x+d.target.x)/2+(d.target.y-d.source.y)*0.15)
+              .attr('y',d=>(d.source.y+d.target.y)/2-(d.target.x-d.source.x)*0.15-3);
       node.attr('transform',d=>`translate(${d.x},${d.y})`);
     })
     .on('end',()=>{
