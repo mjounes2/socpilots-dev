@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -22,7 +23,8 @@ func NewTheHiveClient(baseURL, apiKey string) *TheHiveClient {
 	client := resty.New().
 		SetBaseURL(baseURL).
 		SetHeader("Authorization", "Bearer "+apiKey).
-		SetHeader("Content-Type", "application/json")
+		SetHeader("Content-Type", "application/json").
+		SetTLSClientConfig(&tls.Config{InsecureSkipVerify: true})
 
 	return &TheHiveClient{client: client}
 }
