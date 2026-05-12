@@ -1447,25 +1447,7 @@ sshd: Failed" style="min-height:80px"></textarea></div>
       <input type="checkbox" id="auto-triage-toggle" onchange="toggleAutoTriage()" style="width:18px;height:18px;cursor:pointer;accent-color:var(--c)">
       <span id="auto-triage-status" style="font-family:var(--fm);font-size:12px;color:var(--txt2)">Disabled</span>
     </label>
-    <div style="display:flex;align-items:center;gap:6px;font-family:var(--fm);font-size:11px;color:var(--txt3)">
-      <span>Min Level:</span>
-      <select id="auto-triage-level" onchange="updateAutoTriageSettings()" class="fs" style="width:80px">
-        <option value="8">8 (High)</option>
-        <option value="10">10</option>
-        <option value="12" selected>12 (Critical)</option>
-        <option value="14">14</option>
-      </select>
-      <span style="margin-left:10px">Interval:</span>
-      <select id="auto-triage-interval" onchange="updateAutoTriageSettings()" class="fs" style="width:90px">
-        <option value="60">60s</option>
-        <option value="120">2 min</option>
-        <option value="300" selected>5 min</option>
-        <option value="600">10 min</option>
-      </select>
-    </div>
-    <div id="auto-triage-info" style="margin-left:auto;font-family:var(--fm);font-size:10px;color:var(--txt3)">
-      <span id="auto-triage-status-detail"></span>
-    </div>
+    <span style="font-family:var(--fm);font-size:10px;color:var(--txt3);margin-left:auto">Feeder 60s · Processor 15s · All severity levels</span>
   </div>
 
   <!-- Tabs -->
@@ -4763,18 +4745,7 @@ async function toggleAutoTriage(){
   document.getElementById('auto-triage-status').textContent = enabled?'Enabled':'Disabled';
   document.getElementById('auto-triage-status').style.color = enabled?'var(--g)':'var(--txt2)';
   await P('/api/settings', { auto_triage_enabled: String(enabled) });
-  toast(enabled?'Auto-triage enabled — AI will investigate new H+C alerts':'Auto-triage disabled', enabled?'ok':'info');
-  if(enabled) updateAutoTriageStatusDetail();
-}
-
-async function updateAutoTriageSettings(){
-  const minLevel = document.getElementById('auto-triage-level').value;
-  const interval = document.getElementById('auto-triage-interval').value;
-  await P('/api/settings', {
-    auto_triage_min_level: minLevel,
-    auto_triage_interval_sec: interval,
-  });
-  toast('Auto-triage settings saved', 'ok');
+  toast(enabled ? 'Auto-triage enabled — all severity levels queued' : 'Auto-triage disabled', enabled ? 'ok' : 'info');
 }
 
 async function loadAutoTriageSettings(){
@@ -4782,18 +4753,8 @@ async function loadAutoTriageSettings(){
   if(!s||s.error) return;
   const enabled = s.auto_triage_enabled === 'true';
   document.getElementById('auto-triage-toggle').checked = enabled;
-  document.getElementById('auto-triage-status').textContent = enabled?'Enabled':'Disabled';
-  document.getElementById('auto-triage-status').style.color = enabled?'var(--g)':'var(--txt2)';
-  if(s.auto_triage_min_level)
-    document.getElementById('auto-triage-level').value = s.auto_triage_min_level;
-  if(s.auto_triage_interval_sec)
-    document.getElementById('auto-triage-interval').value = s.auto_triage_interval_sec;
-  if(enabled) updateAutoTriageStatusDetail();
-}
-
-function updateAutoTriageStatusDetail(){
-  const el=document.getElementById('auto-triage-status-detail');
-  if(el) el.innerHTML='<span style="color:var(--g)">●</span> Running every ' + document.getElementById('auto-triage-interval').value + 's';
+  document.getElementById('auto-triage-status').textContent = enabled ? 'Enabled' : 'Disabled';
+  document.getElementById('auto-triage-status').style.color = enabled ? 'var(--g)' : 'var(--txt2)';
 }
 
 async function loadInvHistory(page){
