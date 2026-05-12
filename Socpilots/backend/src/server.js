@@ -2273,9 +2273,17 @@ async function _executePlaybooks(alert, report, savedId, fpProbability, playbook
 
 // ── Route playbook actions through approval gate or execute immediately ──
 async function _routeActionsOrApproval(alert, report, savedId, fpProbability, verdict) {
+  let uebaRisk = 0;
+  if (alert.agent) {
+    try {
+      const profile = await ueba.getUserProfile(alert.agent);
+      uebaRisk = profile?.risk_score || 0;
+    } catch (_) {}
+  }
   const matched = await db.getMatchingPlaybooks(
     alert.level || alert.rule_level || 0,
-    alert.mitre || []
+    alert.mitre || [],
+    uebaRisk
   );
   if (!matched.length) return;
 
@@ -2313,12 +2321,13 @@ async function _routeActionsOrApproval(alert, report, savedId, fpProbability, ve
       expires_at:          approval.expires_at,
       created_at:          approval.created_at,
     });
+    const uebaNote = uebaRisk >= 50 ? ` [UEBA risk: ${uebaRisk}]` : '';
     db.createNotification(
       'playbook', 'Action Approval Required',
-      `Triage for rule ${alert.ruleId||alert.rule_id} on ${alert.agent} recommends ${(verdict.recommended_actions||[]).join(', ')} — awaiting analyst approval.`,
-      'warning', null, { approval_id: approval.id, investigation_id: savedId }
+      `Triage for rule ${alert.ruleId||alert.rule_id} on ${alert.agent}${uebaNote} recommends ${(verdict.recommended_actions||[]).join(', ')} — awaiting analyst approval.`,
+      'warning', null, { approval_id: approval.id, investigation_id: savedId, ueba_risk: uebaRisk }
     ).catch(() => {});
-    console.log(`[TriageProcessor] APPROVAL QUEUED inv#${savedId} → approval#${approval.id}`);
+    console.log(`[TriageProcessor] APPROVAL QUEUED inv#${savedId} → approval#${approval.id} (ueba_risk=${uebaRisk})`);
   } else {
     await _executePlaybooks(alert, report, savedId, fpProbability, matched);
   }
@@ -2547,6 +2556,35 @@ ${prose.slice(0, 2000)}`;
         await db.markQueueItemFailed(item.id, e.message);
       }
     }
+
+    // ── Low tier: UEBA promotion check before bulk suppress ─────
+    try {
+      const allPlaybooks = await db.listPlaybooks({ enabledOnly: true });
+      const uebaPlaybooks = allPlaybooks.filter(pb => pb.ueba_risk_min != null);
+      if (uebaPlaybooks.length > 0 && darkSoc === 'true') {
+        const minUebaThreshold = Math.min(...uebaPlaybooks.map(pb => pb.ueba_risk_min));
+        const pendingLow = await db.pool.query(
+          `SELECT id, rule_id, agent, alert_data FROM triage_queue WHERE status='pending' AND triage_tier='low'`
+        );
+        const toPromote = [];
+        for (const item of pendingLow.rows) {
+          const agentName = item.agent;
+          if (!agentName) continue;
+          try {
+            const profile = await ueba.getUserProfile(agentName);
+            const risk = profile?.risk_score || 0;
+            if (risk >= minUebaThreshold) toPromote.push(item.id);
+          } catch (_) {}
+        }
+        if (toPromote.length > 0) {
+          await db.pool.query(
+            `UPDATE triage_queue SET triage_tier='medium' WHERE id = ANY($1::int[])`,
+            [toPromote]
+          );
+          console.log(`[TriageProcessor] UEBA promoted ${toPromote.length} low→medium items`);
+        }
+      }
+    } catch(e) { console.warn('[TriageProcessor] UEBA low-tier promotion error:', e.message); }
 
     // ── Low tier: bulk suppress immediately ─────────────────────
     const suppressed = await db.claimAllPendingLowTier();

@@ -481,6 +481,9 @@ async function initSchema() {
     `ALTER TABLE investigations ADD COLUMN IF NOT EXISTS triage_tier VARCHAR(20)`,
     `ALTER TABLE investigations ADD COLUMN IF NOT EXISTS structured_verdict JSONB`,
 
+    // ── UEBA-triggered playbooks threshold ────────────────────────
+    `ALTER TABLE playbooks ADD COLUMN IF NOT EXISTS ueba_risk_min INTEGER DEFAULT NULL`,
+
     // ── Action Approvals (human-in-the-loop gate for destructive actions) ──
     `CREATE TABLE IF NOT EXISTS action_approvals (
       id               SERIAL PRIMARY KEY,
@@ -891,10 +894,10 @@ async function getPlaybookById(id) {
   return r.rows[0] || null;
 }
 
-async function createPlaybook({ name, description, mitre_techniques, min_rule_level, fp_confidence_max, actions, require_consensus, enabled }) {
+async function createPlaybook({ name, description, mitre_techniques, min_rule_level, fp_confidence_max, actions, require_consensus, enabled, ueba_risk_min }) {
   const r = await pool.query(`
-    INSERT INTO playbooks(name,description,mitre_techniques,min_rule_level,fp_confidence_max,actions,require_consensus,enabled)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *
+    INSERT INTO playbooks(name,description,mitre_techniques,min_rule_level,fp_confidence_max,actions,require_consensus,enabled,ueba_risk_min)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *
   `, [
     name, description || '',
     mitre_techniques || [],
@@ -903,12 +906,13 @@ async function createPlaybook({ name, description, mitre_techniques, min_rule_le
     JSON.stringify(actions || []),
     require_consensus ?? false,
     enabled ?? true,
+    ueba_risk_min ?? null,
   ]);
   return r.rows[0];
 }
 
 async function updatePlaybook(id, fields) {
-  const allowed = ['name','description','mitre_techniques','min_rule_level','fp_confidence_max','actions','require_consensus','enabled'];
+  const allowed = ['name','description','mitre_techniques','min_rule_level','fp_confidence_max','actions','require_consensus','enabled','ueba_risk_min'];
   const sets = [], vals = [];
   for (const [k, v] of Object.entries(fields)) {
     if (!allowed.includes(k)) continue;
@@ -927,16 +931,23 @@ async function deletePlaybook(id) {
   await pool.query(`DELETE FROM playbooks WHERE id=$1`, [id]);
 }
 
-async function getMatchingPlaybooks(ruleLevel, mitreTechniques = []) {
+async function getMatchingPlaybooks(ruleLevel, mitreTechniques = [], uebaRisk = 0) {
   const r = await pool.query(
-    `SELECT * FROM playbooks WHERE enabled=true AND min_rule_level <= $1 ORDER BY min_rule_level DESC, id`,
-    [ruleLevel || 0]
+    `SELECT * FROM playbooks WHERE enabled=true AND (
+       min_rule_level <= $1
+       OR ($2::int > 0 AND ueba_risk_min IS NOT NULL AND ueba_risk_min <= $2::int)
+     ) ORDER BY min_rule_level DESC, id`,
+    [ruleLevel || 0, uebaRisk || 0]
   );
   return r.rows.filter(pb => {
     const pbMitre = pb.mitre_techniques || [];
     if (!pbMitre.length) return true;
     return pbMitre.some(t => (mitreTechniques || []).includes(t));
-  });
+  }).map(pb => ({
+    ...pb,
+    _triggered_by: (uebaRisk > 0 && pb.ueba_risk_min != null && uebaRisk >= pb.ueba_risk_min)
+      ? 'ueba' : 'rule_level',
+  }));
 }
 
 // ── Dark SOC — Playbook Executions ───────────────────────────
