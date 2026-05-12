@@ -481,6 +481,24 @@ async function initSchema() {
     `ALTER TABLE investigations ADD COLUMN IF NOT EXISTS triage_tier VARCHAR(20)`,
     `ALTER TABLE investigations ADD COLUMN IF NOT EXISTS structured_verdict JSONB`,
 
+    // ── AI-generated Draft Detection Rules ────────────────────────
+    `CREATE TABLE IF NOT EXISTS draft_rules (
+      id               SERIAL PRIMARY KEY,
+      investigation_id INT REFERENCES investigations(id) ON DELETE CASCADE,
+      rule_id          TEXT,
+      agent            TEXT,
+      severity         TEXT,
+      description      TEXT,
+      mitre_techniques TEXT[] DEFAULT '{}',
+      wazuh_xml        TEXT,
+      sigma_yaml       TEXT,
+      status           TEXT DEFAULT 'pending_review',
+      generated_by     TEXT DEFAULT 'ai',
+      created_at       TIMESTAMPTZ DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_draft_rules_inv ON draft_rules(investigation_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_draft_rules_status ON draft_rules(status)`,
+
     // ── UEBA-triggered playbooks threshold ────────────────────────
     `ALTER TABLE playbooks ADD COLUMN IF NOT EXISTS ueba_risk_min INTEGER DEFAULT NULL`,
 
@@ -1013,6 +1031,61 @@ async function getSuppressionStats() {
        COALESCE(SUM(hit_count),0) AS total_hits,
        COUNT(*) FILTER (WHERE last_hit_at > NOW() - INTERVAL '24 hours') AS fired_today
      FROM alert_suppressions`
+  );
+  return r.rows[0];
+}
+
+// ── Draft Detection Rules (AI-generated after TP confirmation) ───
+
+async function saveDraftRule({ investigationId, ruleId, agent, severity, description, mitreT, wazuhXml, sigmaYaml }) {
+  const r = await pool.query(
+    `INSERT INTO draft_rules(investigation_id,rule_id,agent,severity,description,mitre_techniques,wazuh_xml,sigma_yaml)
+     VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+    [investigationId||null, ruleId||null, agent||null, severity||null,
+     (description||'').slice(0,1000), mitreT||[], wazuhXml||null, sigmaYaml||null]
+  );
+  return r.rows[0];
+}
+
+async function listDraftRules({ status, page = 1, page_size = 20 } = {}) {
+  const params = [];
+  let where = '';
+  if (status) { params.push(status); where = `WHERE status=$${params.length}`; }
+  const offset = (page - 1) * page_size;
+  params.push(page_size, offset);
+  const r = await pool.query(
+    `SELECT dr.*, i.rule_level, i.report_short,
+       COUNT(*) OVER() AS total_count
+     FROM draft_rules dr
+     LEFT JOIN investigations i ON i.id = dr.investigation_id
+     ${where}
+     ORDER BY dr.created_at DESC
+     LIMIT $${params.length - 1} OFFSET $${params.length}`,
+    params
+  );
+  const total = r.rows[0]?.total_count ? parseInt(r.rows[0].total_count) : 0;
+  return { rows: r.rows.map(({ total_count, ...row }) => row), total };
+}
+
+async function updateDraftRuleStatus(id, status) {
+  const r = await pool.query(
+    `UPDATE draft_rules SET status=$1 WHERE id=$2 RETURNING *`, [status, id]
+  );
+  return r.rows[0] || null;
+}
+
+async function deleteDraftRule(id) {
+  await pool.query(`DELETE FROM draft_rules WHERE id=$1`, [id]);
+}
+
+async function getDraftRuleStats() {
+  const r = await pool.query(
+    `SELECT
+       COUNT(*) FILTER (WHERE status='pending_review') AS pending,
+       COUNT(*) FILTER (WHERE status='approved')       AS approved,
+       COUNT(*) FILTER (WHERE status='dismissed')      AS dismissed,
+       COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '7 days') AS generated_7d
+     FROM draft_rules`
   );
   return r.rows[0];
 }
@@ -1824,6 +1897,12 @@ module.exports = {
   updatePlaybook,
   deletePlaybook,
   getMatchingPlaybooks,
+  // Draft Detection Rules
+  saveDraftRule,
+  listDraftRules,
+  updateDraftRuleStatus,
+  deleteDraftRule,
+  getDraftRuleStats,
   // Alert Suppressions
   listSuppressions,
   createSuppression,

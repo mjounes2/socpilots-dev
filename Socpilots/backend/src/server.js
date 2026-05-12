@@ -79,6 +79,8 @@ const KNOWLEDGE_URL     = process.env.KNOWLEDGE_URL    || 'http://knowledge-inge
 const LANGCHAIN_TOKEN   = process.env.LANGCHAIN_INTERNAL_TOKEN || '';
 const MCP_WAZUH_URL     = process.env.MCP_WAZUH_URL    || 'http://mcp-wazuh:3001';
 const OTX_API_KEY       = process.env.OTX_API_KEY      || '';
+const OPENAI_API_KEY    = process.env.OPENAI_API_KEY   || '';
+const MISTRAL_API_KEY   = process.env.MISTRAL_API_KEY  || '';
 
 // Skip SSL verify (Wazuh self-signed cert)
 const httpsAgent = new https.Agent({ rejectUnauthorized: false });
@@ -1878,6 +1880,11 @@ app.post('/api/investigations/:id/tp-status', authMW, async (req, res) => {
       refreshRuleFpCache().catch(() => {});
     }
 
+    // Async: generate draft detection rule for every confirmed TP
+    if (tp_status === 'confirmed_tp' && investigation) {
+      generateDraftRule(investigation).catch(() => {});
+    }
+
     res.json({ ok: true, status: updated });
   } catch(e) {
     res.status(500).json({ error: e.message });
@@ -2150,6 +2157,92 @@ function _checkSuppressed(alert) {
 
 setTimeout(() => refreshSuppressionCache(), 22000);
 setInterval(() => refreshSuppressionCache(), 300000);
+
+// ── AI Detection Rule Generator ───────────────────────────────────────────
+async function generateDraftRule(investigation) {
+  if (!OPENAI_API_KEY && !MISTRAL_API_KEY) return;
+  try {
+    const mitreList = (() => {
+      try { return (Array.isArray(investigation.mitre) ? investigation.mitre : JSON.parse(investigation.mitre || '[]')).join(', ') || 'N/A'; }
+      catch { return 'N/A'; }
+    })();
+    const reportExcerpt = (investigation.report || '').slice(0, 2000);
+    const prompt = `You are a detection engineer. A security incident has been confirmed as a TRUE POSITIVE.
+Generate detection rules to catch this attack pattern in the future.
+
+Investigation context:
+- Rule ID fired: ${investigation.rule_id || 'N/A'}
+- Severity: ${investigation.severity || 'N/A'}
+- Agent/Host: ${investigation.agent || 'N/A'}
+- Alert description: ${investigation.description || 'N/A'}
+- MITRE ATT&CK: ${mitreList}
+- Investigation summary: ${reportExcerpt}
+
+Generate:
+1. A Wazuh XML detection rule (use rule id 199000-199999, valid XML with <group>, <rule>, <description>, <group name>, <mitre> tags)
+2. A Sigma rule in YAML format (title, status, description, logsource, detection, condition, tags)
+
+Return ONLY valid JSON with exactly these two fields (no markdown fences):
+{"wazuh_xml":"...","sigma_yaml":"..."}`;
+
+    let content = null;
+    if (OPENAI_API_KEY) {
+      const r = await axios.post('https://api.openai.com/v1/chat/completions', {
+        model: 'gpt-4o',
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0,
+      }, { headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, 'Content-Type': 'application/json' }, timeout: 60000 });
+      content = r.data.choices[0]?.message?.content;
+    } else if (MISTRAL_API_KEY) {
+      const r = await axios.post('https://api.mistral.ai/v1/chat/completions', {
+        model: 'mistral-large-latest',
+        messages: [
+          { role: 'system', content: 'You are a detection engineer. Return only valid JSON.' },
+          { role: 'user', content: prompt },
+        ],
+        temperature: 0,
+      }, { headers: { Authorization: `Bearer ${MISTRAL_API_KEY}`, 'Content-Type': 'application/json' }, timeout: 60000 });
+      content = r.data.choices[0]?.message?.content;
+    }
+
+    if (!content) return;
+    // Strip markdown fences if present
+    const cleaned = content.replace(/^```(?:json)?\n?/,'').replace(/\n?```$/,'').trim();
+    let parsed;
+    try { parsed = JSON.parse(cleaned); } catch {
+      // Last-resort: extract JSON block from the response
+      const m = cleaned.match(/\{[\s\S]*\}/);
+      if (!m) return;
+      try { parsed = JSON.parse(m[0]); } catch { return; }
+    }
+    if (!parsed.wazuh_xml && !parsed.sigma_yaml) return;
+
+    const mitreArr = (() => {
+      try { return Array.isArray(investigation.mitre) ? investigation.mitre : JSON.parse(investigation.mitre || '[]'); }
+      catch { return []; }
+    })();
+
+    const draft = await db.saveDraftRule({
+      investigationId: investigation.id,
+      ruleId:      investigation.rule_id,
+      agent:       investigation.agent,
+      severity:    investigation.severity,
+      description: investigation.description,
+      mitreT:      mitreArr,
+      wazuhXml:    parsed.wazuh_xml,
+      sigmaYaml:   parsed.sigma_yaml,
+    });
+
+    db.createNotification(
+      'investigation', 'Draft Detection Rule Generated',
+      `AI generated a draft Wazuh + Sigma rule for TP investigation on rule ${investigation.rule_id} (${investigation.agent}). Review in Dark SOC.`,
+      'low', null, { draft_rule_id: draft.id, investigation_id: investigation.id }
+    ).catch(() => {});
+    console.log(`[DraftRules] Generated draft rule #${draft.id} for inv#${investigation.id}`);
+  } catch(e) {
+    console.warn(`[DraftRules] Generation failed for inv#${investigation?.id}:`, e.message);
+  }
+}
 
 function _extractStructuredVerdict(triageData, alert, fpBlend = null) {
   const fpProb     = fpBlend ? fpBlend.adjusted_fp : (triageData?.false_positive_probability || 0);
@@ -5130,6 +5223,50 @@ app.get('/api/fp-stats', authMW, async (req, res) => {
     console.error('[fp-stats]', e.message);
     res.status(502).json({ error: e.message });
   }
+});
+
+// ── Draft Detection Rules ─────────────────────────────────────────────────
+app.get('/api/draft-rules', authMW, async (req, res) => {
+  try {
+    const page      = Math.max(parseInt(req.query.page) || 1, 1);
+    const page_size = Math.min(parseInt(req.query.page_size) || 20, 100);
+    const status    = req.query.status || null;
+    const [{ rows, total }, stats] = await Promise.all([
+      db.listDraftRules({ status, page, page_size }),
+      db.getDraftRuleStats(),
+    ]);
+    res.json({ rules: rows, stats, total, page, page_size, has_more: page * page_size < total });
+  } catch(e) { res.status(502).json({ error: e.message }); }
+});
+
+app.patch('/api/draft-rules/:id/status', authMW, requireRole('l2'), async (req, res) => {
+  try {
+    const { status } = req.body;
+    if (!['pending_review','approved','dismissed'].includes(status)) {
+      return res.status(400).json({ error: 'invalid status' });
+    }
+    const r = await db.updateDraftRuleStatus(parseInt(req.params.id), status);
+    if (!r) return res.status(404).json({ error: 'not found' });
+    res.json({ rule: r });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/draft-rules/:id', authMW, requireRole('l2'), async (req, res) => {
+  try {
+    await db.deleteDraftRule(parseInt(req.params.id));
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Manual trigger: regenerate draft rule for a specific investigation
+app.post('/api/draft-rules/generate/:inv_id', authMW, requireRole('l2'), async (req, res) => {
+  try {
+    const inv = await db.getInvestigationById(parseInt(req.params.inv_id));
+    if (!inv) return res.status(404).json({ error: 'investigation not found' });
+    if (!OPENAI_API_KEY && !MISTRAL_API_KEY) return res.status(503).json({ error: 'no AI key configured' });
+    generateDraftRule(inv).catch(() => {});
+    res.json({ ok: true, message: 'rule generation triggered asynchronously' });
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 // ── Alert Suppressions ────────────────────────────────────────────────────

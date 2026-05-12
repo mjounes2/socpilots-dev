@@ -2282,6 +2282,25 @@ sshd: Failed" style="min-height:80px"></textarea></div>
     </div>
   </div>
 
+  <!-- DRAFT DETECTION RULES -->
+  <div class="card mb" style="border-left:3px solid rgba(0,230,118,.5)">
+    <div class="card-hd">
+      <div class="card-ttl" style="color:var(--g)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;vertical-align:middle;margin-right:5px"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+        DRAFT DETECTION RULES
+        <span id="draft-rules-pending-badge" style="display:none;margin-left:8px;background:rgba(0,230,118,.12);color:var(--g);border:1px solid rgba(0,230,118,.3);font-size:9px;padding:2px 7px;border-radius:8px;font-family:var(--fm)"></span>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <div id="draft-rules-stats-bar" style="font-size:9px;font-family:var(--fm);color:var(--txt3)"></div>
+        <button class="btn btn-sm" onclick="loadDraftRules()">⟳ Refresh</button>
+      </div>
+    </div>
+    <div style="font-size:10px;color:var(--txt3);font-family:var(--fm);margin-bottom:10px;line-height:1.6">
+      Auto-generated after each confirmed true positive. AI drafts a Wazuh XML rule + Sigma rule based on the investigation. Review, copy, and tune before deploying.
+    </div>
+    <div id="draft-rules-list"><div class="loading"><div class="spin"></div></div></div>
+  </div>
+
   <!-- RESPONSE PLAYBOOKS -->
   <div class="card mb">
     <div class="card-hd">
@@ -6960,6 +6979,106 @@ async function toggleSuppression(id, enabled){
   else { toast('Failed','err'); await loadSuppressions(); }
 }
 
+// ── Draft Detection Rules ─────────────────────────────────────────────────
+
+let _drPage = 1, _drFilter = 'pending_review';
+
+async function loadDraftRules(page) {
+  if (page !== undefined) _drPage = page;
+  const d = await G(`/api/draft-rules?page=${_drPage}&page_size=10&status=${_drFilter}`);
+  const listEl = document.getElementById('draft-rules-list');
+  const statsEl = document.getElementById('draft-rules-stats-bar');
+  const badge   = document.getElementById('draft-rules-pending-badge');
+  if (!listEl) return;
+  if (d?.stats) {
+    const st = d.stats;
+    if (statsEl) statsEl.innerHTML = `Pending: <span style="color:var(--g)">${st.pending||0}</span> &nbsp;|&nbsp; Approved: <span style="color:var(--c)">${st.approved||0}</span> &nbsp;|&nbsp; Last 7d: <span style="color:var(--txt2)">${st.generated_7d||0}</span>`;
+    if (badge) {
+      const p = parseInt(st.pending)||0;
+      badge.textContent = p > 0 ? `${p} pending` : '';
+      badge.style.display = p > 0 ? 'inline' : 'none';
+    }
+  }
+  if (!d?.rules?.length) {
+    listEl.innerHTML = `<div style="font-family:var(--fm);font-size:11px;color:var(--txt3);padding:12px 0">
+      No ${_drFilter==='pending_review'?'pending':''}draft rules.
+      ${_drFilter==='pending_review'?'They are auto-generated when you mark an investigation as True Positive.':''}
+    </div>`;
+    return;
+  }
+  const filters = ['pending_review','approved','dismissed'].map(f =>
+    `<button class="btn btn-sm" style="font-size:9px;${_drFilter===f?'background:rgba(0,229,255,.15);color:var(--c);border-color:rgba(0,229,255,.3)':''}" onclick="_drFilter='${f}';_drPage=1;loadDraftRules()">${f.replace('_',' ')}</button>`
+  ).join('');
+  const pgn = d.total > 10 ? buildPaginator(_drPage, 10, d.total, `loadDraftRules(${_drPage-1})`, `loadDraftRules(${_drPage+1})`, null) : '';
+  listEl.innerHTML = `<div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">${filters}</div>
+  <div style="display:flex;flex-direction:column;gap:10px">
+  ${d.rules.map(r => {
+    const mitreStr = (r.mitre_techniques||[]).join(', ');
+    const statusColor = r.status==='approved'?'var(--g)':r.status==='dismissed'?'var(--txt3)':'var(--y)';
+    return `<div style="padding:12px;background:var(--bg2);border:1px solid var(--b1);border-radius:4px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:6px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="badge ${esc(r.severity||'low')}">${esc(r.severity||'?')}</span>
+          <span style="font-family:var(--fw);font-size:12px;color:var(--txt)">Rule ${esc(r.rule_id||'?')}</span>
+          <span style="font-size:9px;color:var(--txt3);font-family:var(--fm)">${esc(r.agent||'')}</span>
+          ${mitreStr?`<span style="font-size:9px;color:var(--c);font-family:var(--fm)">${esc(mitreStr)}</span>`:''}
+          <span style="font-size:8px;padding:1px 5px;border-radius:2px;border:1px solid ${statusColor};color:${statusColor};font-family:var(--fm)">${r.status.replace('_',' ').toUpperCase()}</span>
+        </div>
+        <div style="display:flex;gap:6px">
+          ${r.status==='pending_review'?`
+            <button class="btn btn-sm" style="background:rgba(0,230,118,.12);color:var(--g);border:1px solid rgba(0,230,118,.3);font-size:9px" onclick="setDraftStatus(${r.id},'approved')">Approve</button>
+            <button class="btn btn-sm" style="background:rgba(255,193,7,.08);color:var(--y);border:1px solid rgba(255,193,7,.2);font-size:9px" onclick="setDraftStatus(${r.id},'dismissed')">Dismiss</button>
+          `:''}
+          <button class="btn btn-sm" style="background:rgba(255,23,68,.08);color:var(--r);border:1px solid rgba(255,23,68,.2);font-size:9px" onclick="deleteDraftRule(${r.id})">Delete</button>
+        </div>
+      </div>
+      ${r.description?`<div style="font-size:10px;color:var(--txt3);font-family:var(--fm);margin-bottom:8px">${esc(r.description.slice(0,120))}</div>`:''}
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        ${r.wazuh_xml?`
+        <div>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+            <span style="font-size:9px;font-family:var(--fm);color:var(--txt3);letter-spacing:1px">WAZUH XML</span>
+            <button class="btn btn-sm" style="font-size:8px;padding:1px 6px" onclick="copyToClipboard(${r.id},'wazuh')">Copy</button>
+          </div>
+          <pre id="wazuh-pre-${r.id}" style="background:var(--bg);border:1px solid var(--b1);border-radius:3px;padding:8px;font-size:9px;font-family:var(--fm);color:#8ab0d0;overflow-x:auto;max-height:200px;white-space:pre-wrap;word-break:break-all;margin:0">${esc(r.wazuh_xml)}</pre>
+        </div>`:'<div></div>'}
+        ${r.sigma_yaml?`
+        <div>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+            <span style="font-size:9px;font-family:var(--fm);color:var(--txt3);letter-spacing:1px">SIGMA YAML</span>
+            <button class="btn btn-sm" style="font-size:8px;padding:1px 6px" onclick="copyToClipboard(${r.id},'sigma')">Copy</button>
+          </div>
+          <pre id="sigma-pre-${r.id}" style="background:var(--bg);border:1px solid var(--b1);border-radius:3px;padding:8px;font-size:9px;font-family:var(--fm);color:#8ab0d0;overflow-x:auto;max-height:200px;white-space:pre-wrap;word-break:break-all;margin:0">${esc(r.sigma_yaml)}</pre>
+        </div>`:'<div></div>'}
+      </div>
+      <div style="font-size:9px;color:var(--txt3);font-family:var(--fm);margin-top:6px">Generated ${fmtDate(r.created_at)}${r.investigation_id?` · <a href="#" onclick="openInv(${r.investigation_id})" style="color:var(--c);text-decoration:none">View investigation</a>`:''}</div>
+    </div>`;
+  }).join('')}
+  </div>${pgn}`;
+}
+
+function copyToClipboard(ruleId, type) {
+  const el = document.getElementById(`${type==='wazuh'?'wazuh':'sigma'}-pre-${ruleId}`);
+  if (!el) return;
+  navigator.clipboard.writeText(el.textContent).then(() => toast('Copied to clipboard','ok')).catch(() => toast('Copy failed','err'));
+}
+
+async function setDraftStatus(id, status) {
+  const res = await fetch(`/api/draft-rules/${id}/status`, {
+    method:'PATCH', headers:{'Content-Type':'application/json','Authorization':'Bearer '+TOK},
+    body: JSON.stringify({ status })
+  });
+  if (res.ok) { toast(`Rule ${status}`,'ok'); loadDraftRules(); }
+  else { toast('Failed','err'); }
+}
+
+async function deleteDraftRule(id) {
+  if (!confirm('Delete this draft rule?')) return;
+  const res = await fetch(`/api/draft-rules/${id}`, { method:'DELETE', headers:{'Authorization':'Bearer '+TOK} });
+  if (res.ok) { toast('Deleted','ok'); loadDraftRules(); }
+  else { toast('Failed','err'); }
+}
+
 async function togglePlaybook(id, enabled){
   const res = await fetch('/api/playbooks/'+id, {
     method: 'PATCH',
@@ -8660,7 +8779,8 @@ async function loadDarkSocPage() {
   loadFpStats();
   loadActionApprovals();
 
-  // Load suppressions, playbooks, protected assets, and pending isolation approvals
+  // Load draft rules, suppressions, playbooks, protected assets, pending isolation approvals
+  if (typeof loadDraftRules === 'function') loadDraftRules();
   if (typeof loadSuppressions === 'function') loadSuppressions();
   if (typeof loadPlaybooks === 'function') loadPlaybooks();
   if (typeof loadProtectedAssets === 'function') loadProtectedAssets();
