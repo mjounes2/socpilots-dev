@@ -2040,224 +2040,379 @@ app.get('/api/system-events', authMW, async (req, res) => {
   }
 });
 
-// ── AUTO-TRIAGE WORKER ──
-let _lastAutoTriageRun = 0;
-let _autoTriageRunning = false;
+// ── TRIAGE QUEUE — FEEDER + PROCESSOR ──────────────────────────────────
+// Feeder: enqueues ALL alert levels every 60s (last 2h, paginated).
+// Processor: runs every 15s, dispatches by tier:
+//   critical (≥12) → LangChain /investigate (direct, no n8n)
+//   high     (9-11) → LangChain /triage (direct)
+//   medium   (6-8)  → template assembly from rule history
+//   low      (<6)   → bulk suppressed + 15min batch notifications
 
-async function autoTriageWorker() {
-  if (_autoTriageRunning) return;
-  _autoTriageRunning = true;
-  try {
-    const enabled = await db.getSetting('auto_triage_enabled');
-    if (enabled !== 'true') { _autoTriageRunning = false; return; }
+const LOW_BATCH_WINDOW_MIN = parseInt(process.env.LOW_BATCH_WINDOW_MIN || '240'); // 4 hours
+const LOW_BATCH_MIN_COUNT  = parseInt(process.env.LOW_BATCH_MIN_COUNT  || '5');
 
-    const minLevel = parseInt(await db.getSetting('auto_triage_min_level') || '12');
-    const intervalSec = parseInt(await db.getSetting('auto_triage_interval_sec') || '60');
+let _feederRunning    = false;
+let _processorRunning = false;
+let _lastLowBatch     = 0;
 
-    // Don't run more often than configured
-    if (Date.now() - _lastAutoTriageRun < intervalSec * 1000) {
-      _autoTriageRunning = false;
-      return;
-    }
-    _lastAutoTriageRun = Date.now();
+// ── Shared: save investigation + side-effects ─────────────────────────
+async function _saveTriageInvestigation({ alert, report, tier, durationMs, queueId }) {
+  const saved = await db.saveInvestigation({
+    alertId:     alert.id,
+    ruleId:      alert.ruleId,
+    level:       alert.level,
+    severity:    alert.severity,
+    agent:       alert.agent,
+    srcIp:       alert.srcIp,
+    description: alert.description,
+    mitre:       alert.mitre,
+    timestamp:   alert.alertTimestamp || alert.timestamp,
+    report,
+    user:        'auto-triage',
+    autoTriaged: true,
+    durationMs:  durationMs || 0,
+    rawAlert:    alert.raw || alert,
+  });
 
-    console.log(`[AutoTriage] Running (minLevel=${minLevel})`);
+  // Tag the investigations row with tier
+  db.pool.query(
+    `UPDATE investigations SET triage_tier=$1 WHERE id=$2`,
+    [tier, saved.id]
+  ).catch(() => {});
 
-    // Fetch recent high+critical alerts (last 30 min)
-    const body = {
-      size: 20,
-      sort: [{ '@timestamp': { order: 'desc' } }],
-      query: {
-        bool: {
-          filter: [
-            { range: { 'rule.level': { gte: minLevel } } },
-            { range: { '@timestamp': { gte: 'now-30m' } } },
-          ],
-        },
-      },
-    };
+  // Cross-investigation RAG memory (non-blocking)
+  const mitreTags = (alert.mitre || []).join(', ');
+  const kHeaders  = process.env.RAG_API_KEY ? { 'X-API-Key': process.env.RAG_API_KEY } : {};
+  axios.post(`${KNOWLEDGE_URL}/add_document`, {
+    item_id:     `inv_${saved.id}`,
+    title:       `Investigation: ${alert.ruleId} on ${alert.agent} (${alert.severity})`,
+    description: `Rule ${alert.ruleId} triggered on agent ${alert.agent}. Severity: ${alert.severity}. ` +
+                 `Src IP: ${alert.srcIp || 'N/A'}. MITRE: ${mitreTags || 'N/A'}. ` +
+                 `Description: ${alert.description || ''}. Report excerpt: ${report.slice(0, 400)}`,
+    item_type:   'past_investigation',
+    source:      'investigation',
+    metadata:    { investigation_id: saved.id, rule_id: alert.ruleId, agent: alert.agent,
+                   severity: alert.severity, src_ip: alert.srcIp || null, mitre: alert.mitre || [] },
+  }, { headers: kHeaders, timeout: 15000 }).catch(() => {});
 
-    const r = await osSearch(body, IDX);
-    const alerts = (r.hits?.hits || []).map(h => ({
-      id:          h._id,
-      timestamp:   h._source['@timestamp'],
-      ruleId:      String(h._source.rule?.id || ''),
-      level:       h._source.rule?.level || 0,
-      severity:    h._source.rule?.level >= 12 ? 'critical' : 'high',
-      description: h._source.rule?.description || '',
-      agent:       h._source.agent?.name || '',
-      srcIp:       h._source.data?.srcip || h._source.data?.src_ip || '',
-      mitre:       h._source.rule?.mitre?.id || [],
-      fullLog:     (h._source.full_log || '').slice(0, 500),
-    }));
+  // Notification
+  db.createNotification(
+    'alert', 'New Investigation Auto-Triaged',
+    `Alert ${alert.ruleId} (${alert.severity}) on ${alert.agent} was auto-investigated [${tier}].`,
+    alert.severity === 'critical' ? 'critical' : 'warning',
+    null, { investigation_id: saved.id, rule_id: alert.ruleId, agent: alert.agent, triage_tier: tier }
+  ).catch(() => {});
 
-    let triaged = 0;
-    for (const alert of alerts) {
-      const alertKey = `${alert.ruleId}_${alert.timestamp}_${alert.agent}_${alert.srcIp||''}`;
-      const existing = await db.getInvestigationByAlertKey(alertKey);
-      if (existing) continue; // Already investigated
+  // Email (only critical + high to avoid noise)
+  if (tier === 'critical' || tier === 'high') {
+    email.sendToRecipients(
+      `[SOCPilots] Auto-Triaged Investigation: ${alert.ruleId} on ${alert.agent}`,
+      email.generateAutoTriageEmail({
+        rule_id: alert.ruleId, agent: alert.agent, src_ip: alert.srcIp,
+        severity: alert.severity, description: alert.description,
+      })
+    ).catch(() => {});
+  }
 
-      console.log(`[AutoTriage] Investigating ${alert.ruleId} (${alert.severity})`);
+  return saved;
+}
 
-      try {
-        const start   = Date.now();
-        const darkSoc = await db.getSetting('darksoc_enabled');
-
-        const prompt = `Auto-investigate this alert. Provide concise analysis with executive summary, MITRE mapping, risk assessment, and recommended actions.
-
-Alert:
-- Timestamp: ${alert.timestamp}
-- Rule: ${alert.ruleId} (level ${alert.level})
-- Description: ${alert.description}
-- Agent: ${alert.agent}
-- Source IP: ${alert.srcIp}
-- MITRE: ${(alert.mitre||[]).join(', ')}
-
-Use markdown tables. Be concise.`;
-
-        // ── Step 1: Deep investigation via n8n ──────────────────
-        const r = await axios.post(N8N_INV, {
-          action: 'investigate',
-          message: prompt,
-          alert,
-          session_id: `auto_${alert.ruleId}_${Date.now()}`,
-          _user: 'auto-triage',
-          _role: 'system',
-        }, { timeout: 180000, validateStatus: () => true });
-
-        const text = r.data?.response || r.data?.output || r.data?.text || '';
-        if (!text) continue;
-
-        // ── Step 2: Save investigation ──────────────────────────
-        let savedId = null;
-        try {
-          const saved = await db.saveInvestigation({
-            alertId:      alert.id,
-            ruleId:       alert.ruleId,
-            level:        alert.level,
-            severity:     alert.severity,
-            agent:        alert.agent,
-            srcIp:        alert.srcIp,
-            description:  alert.description,
-            mitre:        alert.mitre,
-            timestamp:    alert.timestamp,
-            report:       text,
-            user:         'auto-triage',
-            autoTriaged:  true,
-            durationMs:   Date.now() - start,
-            rawAlert:     alert,
-          });
-          savedId = saved.id;
-          triaged++;
-
-          // Cross-investigation memory (non-blocking)
-          (() => {
-            const mitreTags = (alert.mitre || []).join(', ');
-            const kHeaders  = process.env.RAG_API_KEY ? { 'X-API-Key': process.env.RAG_API_KEY } : {};
-            axios.post(`${KNOWLEDGE_URL}/add_document`, {
-              item_id:     `inv_${savedId}`,
-              title:       `Investigation: ${alert.ruleId} on ${alert.agent} (${alert.severity})`,
-              description: `Rule ${alert.ruleId} triggered on agent ${alert.agent}. Severity: ${alert.severity}. Src IP: ${alert.srcIp || 'N/A'}. MITRE: ${mitreTags || 'N/A'}. Description: ${alert.description || ''}. Report excerpt: ${text.slice(0, 400)}`,
-              item_type:   'past_investigation',
-              source:      'investigation',
-              metadata:    { investigation_id: savedId, rule_id: alert.ruleId, agent: alert.agent, severity: alert.severity, src_ip: alert.srcIp || null, mitre: alert.mitre || [] },
-            }, { headers: kHeaders, timeout: 15000 }).catch(() => {});
-          })();
-
-          // Notify + email about auto-triaged investigation
-          db.createNotification(
-            'alert', 'New Investigation Auto-Triaged',
-            `Alert ${alert.ruleId} (${alert.severity}) on ${alert.agent} was auto-investigated.`,
-            alert.severity === 'critical' ? 'critical' : 'warning',
-            null, { investigation_id: savedId, rule_id: alert.ruleId, agent: alert.agent }
-          ).catch(() => {});
-          email.sendToRecipients(
-            `[SOCPilots] Auto-Triaged Investigation: ${alert.ruleId} on ${alert.agent}`,
-            email.generateAutoTriageEmail({
-              rule_id: alert.ruleId, agent: alert.agent, src_ip: alert.srcIp,
-              severity: alert.severity, description: alert.description,
-            })
-          ).catch(() => {});
-        } catch(e) { console.warn('[AutoTriage] DB save failed:', e.message); }
-
-        // ── Step 3: Dark SOC — Triage + Playbook execution ──────
-        if (darkSoc !== 'true') continue;
-
-        let fpProbability = 0;
-        let triageResult  = null;
-        try {
-          const triageResp = await axios.post(`${LANGCHAIN_URL}/triage`,
-            { alert },
-            { timeout: 45000, headers: { Authorization: `Bearer ${LANGCHAIN_TOKEN}` }, validateStatus: () => true }
-          );
-          if (triageResp.status < 400 && triageResp.data) {
-            triageResult   = triageResp.data;
-            fpProbability  = triageResult.false_positive_probability || 0;
-            console.log(`[DarkSOC] Triage for ${alert.ruleId}: FP=${fpProbability}%, action=${triageResult.recommended_action}`);
-          }
-        } catch(e) { console.warn('[DarkSOC] Triage call failed:', e.message); }
-
-        // Match and run playbooks
-        const matchedPlaybooks = await db.getMatchingPlaybooks(alert.level, alert.mitre || []);
-        for (const pb of matchedPlaybooks) {
-          console.log(`[DarkSOC] Running playbook "${pb.name}" for alert ${alert.ruleId}`);
-          try {
-            const execResult = await playbook.runPlaybook(pb, alert, text, fpProbability, savedId);
-            const outcome    = execResult.skipped ? 'skipped' : 'executed';
-
-            await db.savePlaybookExecution({
-              playbookId:        pb.id,
-              playbookName:      pb.name,
-              investigationId:   savedId,
-              alertKey:          `${alert.ruleId}_${alert.timestamp}_${alert.agent}_${alert.srcIp||''}`,
-              agent:             alert.agent,
-              srcIp:             alert.srcIp,
-              ruleId:            alert.ruleId,
-              severity:          alert.severity,
-              fpProbability,
-              consensusApproved: execResult.consensusApproved,
-              actionsTaken:      execResult.actionsTaken || [],
-              results:           execResult.results      || [],
-              outcome,
-              error:             execResult.error || null,
-            });
-            if (outcome === 'executed') {
-              db.createNotification(
-                'playbook', `Playbook Executed: ${pb.name}`,
-                `Playbook "${pb.name}" ran on alert ${alert.ruleId} (${alert.agent}).`,
-                'warning', null, { playbook_name: pb.name, investigation_id: savedId }
-              ).catch(() => {});
-              io.emit('darksoc:action', {
-                playbook:       pb.name,
-                investigation_id: savedId,
-                rule_id:        alert.ruleId,
-                agent:          alert.agent,
-                src_ip:         alert.srcIp,
-                actions_taken:  execResult.actionsTaken || [],
-                timestamp:      new Date().toISOString(),
-              });
-            }
-          } catch(e) {
-            console.error(`[DarkSOC] Playbook "${pb.name}" execution error:`, e.message);
-          }
-        }
-      } catch(e) {
-        console.warn(`[AutoTriage] Failed ${alert.ruleId}: ${e.message}`);
+// ── Shared: run DarkSOC playbooks after investigation ─────────────────
+async function _runDarkSocPlaybooks(alert, report, savedId, fpProbability) {
+  const matchedPlaybooks = await db.getMatchingPlaybooks(alert.level, alert.mitre || []);
+  for (const pb of matchedPlaybooks) {
+    try {
+      const execResult = await playbook.runPlaybook(pb, alert, report, fpProbability, savedId);
+      const outcome    = execResult.skipped ? 'skipped' : 'executed';
+      await db.savePlaybookExecution({
+        playbookId:        pb.id,
+        playbookName:      pb.name,
+        investigationId:   savedId,
+        alertKey:          alert.alertKey,
+        agent:             alert.agent,
+        srcIp:             alert.srcIp,
+        ruleId:            alert.ruleId,
+        severity:          alert.severity,
+        fpProbability,
+        consensusApproved: execResult.consensusApproved,
+        actionsTaken:      execResult.actionsTaken || [],
+        results:           execResult.results      || [],
+        outcome,
+        error:             execResult.error || null,
+      });
+      if (outcome === 'executed') {
+        db.createNotification(
+          'playbook', `Playbook Executed: ${pb.name}`,
+          `Playbook "${pb.name}" ran on alert ${alert.ruleId} (${alert.agent}).`,
+          'warning', null, { playbook_name: pb.name, investigation_id: savedId }
+        ).catch(() => {});
+        io.emit('darksoc:action', {
+          playbook: pb.name, investigation_id: savedId,
+          rule_id: alert.ruleId, agent: alert.agent, src_ip: alert.srcIp,
+          actions_taken: execResult.actionsTaken || [], timestamp: new Date().toISOString(),
+        });
       }
+    } catch(e) {
+      console.error(`[DarkSOC] Playbook "${pb.name}" error:`, e.message);
     }
-
-    if (triaged > 0) console.log(`[AutoTriage] Investigated ${triaged} new alerts`);
-  } catch(e) {
-    console.error('[AutoTriage] Error:', e.message);
-  } finally {
-    _autoTriageRunning = false;
   }
 }
 
-// Run auto-triage every 60s (only investigates if enabled in DB)
-setInterval(() => { autoTriageWorker(); }, 60000);
-// Run once at startup after 30s
-setTimeout(() => { autoTriageWorker(); }, 30000);
+// ── Medium tier: build report from OpenSearch rule history (no LLM) ──
+async function _buildMediumReport(alert) {
+  let total7d = 0, topAgents = '';
+  try {
+    const agg = await osSearch({
+      size: 0,
+      query: { bool: { filter: [
+        { term: { 'rule.id': alert.ruleId } },
+        { range: { '@timestamp': { gte: 'now-7d' } } },
+      ]}},
+      aggs: { agents: { terms: { field: 'agent.name', size: 10 } } },
+    });
+    total7d   = agg.hits?.total?.value || 0;
+    topAgents = (agg.aggregations?.agents?.buckets || []).map(b => `${b.key} (${b.doc_count})`).join(', ');
+  } catch(e) { /* non-fatal */ }
+
+  return `## Pattern Analysis — Rule ${alert.ruleId}
+
+| Field | Value |
+|---|---|
+| Rule ID | ${alert.ruleId} |
+| Level | ${alert.level} (medium tier, 6–8) |
+| Description | ${alert.description || 'N/A'} |
+| Agent | ${alert.agent || 'N/A'} |
+| Source IP | ${alert.srcIp || 'N/A'} |
+| MITRE | ${(alert.mitre || []).join(', ') || 'None mapped'} |
+| Alert Time | ${alert.alertTimestamp || 'N/A'} |
+
+## Historical Pattern (Last 7 Days)
+
+| Metric | Value |
+|---|---|
+| Total occurrences | ${total7d} |
+| Top affected agents | ${topAgents || 'N/A'} |
+
+## Assessment
+
+Triaged by **pattern analysis** (no AI). Rule level ${alert.level} falls in the medium tier.
+
+**Recommended Action:** Analyst review required. Verify frequency trend, affected scope, and whether rule level should be promoted to high/critical.`;
+}
+
+// ── FEEDER: OpenSearch → triage_queue ────────────────────────────────
+async function triageFeeder() {
+  if (_feederRunning) return;
+  const enabled = await db.getSetting('auto_triage_enabled');
+  if (enabled !== 'true') return;
+  _feederRunning = true;
+  try {
+    let enqueued = 0;
+    let searchAfter = null;
+    const batchSize = 100;
+
+    // Paginate up to 500 alerts from the last 2h (all levels)
+    for (let page = 0; page < 5; page++) {
+      const body = {
+        size: batchSize,
+        sort: [{ '@timestamp': { order: 'desc' } }, { '_id': { order: 'desc' } }],
+        query: {
+          bool: { filter: [{ range: { '@timestamp': { gte: 'now-2h' } } }] },
+        },
+        ...(searchAfter ? { search_after: searchAfter } : {}),
+      };
+
+      const r = await osSearch(body, IDX);
+      const hits = r.hits?.hits || [];
+      if (!hits.length) break;
+
+      for (const h of hits) {
+        const ruleId   = String(h._source.rule?.id || '');
+        const ts       = h._source['@timestamp'];
+        const agent    = h._source.agent?.name || '';
+        const srcIp    = h._source.data?.srcip || h._source.data?.src_ip || '';
+        const alertKey = `${ruleId}_${ts}_${agent}_${srcIp}`;
+
+        await db.enqueueAlert({
+          id:             h._id,
+          alertKey,
+          ruleId,
+          level:          h._source.rule?.level || 0,
+          severity:       h._source.rule?.level >= 12 ? 'critical'
+                        : h._source.rule?.level >= 9  ? 'high'
+                        : h._source.rule?.level >= 6  ? 'medium' : 'low',
+          description:    h._source.rule?.description || '',
+          agent,
+          srcIp,
+          mitre:          h._source.rule?.mitre?.id || [],
+          fullLog:        (h._source.full_log || '').slice(0, 500),
+          alertTimestamp: ts,
+          timestamp:      ts,
+          raw:            h._source,
+        });
+        enqueued++;
+      }
+
+      if (hits.length < batchSize) break;
+      const last = hits[hits.length - 1];
+      searchAfter = last.sort;
+    }
+
+    if (enqueued > 0) console.log(`[TriageFeeder] Enqueued up to ${enqueued} alerts (deduplicated by DB)`);
+  } catch(e) {
+    console.error('[TriageFeeder] Error:', e.message);
+  } finally {
+    _feederRunning = false;
+  }
+}
+
+// ── PROCESSOR: triage_queue → investigations ──────────────────────────
+async function triageProcessor() {
+  if (_processorRunning) return;
+  const enabled = await db.getSetting('auto_triage_enabled');
+  if (enabled !== 'true') return;
+  _processorRunning = true;
+
+  try {
+    // Reaper: reset stuck processing rows
+    const reaped = await db.resetStuckQueueItems();
+    if (reaped > 0) console.log(`[TriageProcessor] Reaped ${reaped} stuck items`);
+
+    const darkSoc = await db.getSetting('darksoc_enabled');
+
+    // ── Critical tier: LangChain /investigate (direct) ──────────
+    const critItems = await db.claimNextQueueItems('critical', 3);
+    for (const item of critItems) {
+      const alert = { ...item, alertKey: item.alert_key, ruleId: item.rule_id,
+                      level: item.rule_level, alertTimestamp: item.alert_timestamp,
+                      mitre: item.mitre || [], fullLog: item.full_log };
+      const start = Date.now();
+      try {
+        const prompt = `Auto-investigate this alert. Provide concise analysis with executive summary, MITRE mapping, risk assessment, and recommended actions.\n\nAlert:\n- Timestamp: ${item.alert_timestamp}\n- Rule: ${item.rule_id} (level ${item.rule_level})\n- Description: ${item.description}\n- Agent: ${item.agent}\n- Source IP: ${item.src_ip || 'N/A'}\n- MITRE: ${(item.mitre||[]).join(', ')}\n\nUse markdown tables. Be concise.`;
+
+        const resp = await axios.post(`${LANGCHAIN_URL}/investigate`,
+          { message: prompt, alert, session_id: `triage_crit_${item.rule_id}_${Date.now()}` },
+          { timeout: 90000, headers: { Authorization: `Bearer ${LANGCHAIN_TOKEN}` }, validateStatus: () => true }
+        );
+        const text = resp.data?.result || resp.data?.answer || resp.data?.response || resp.data?.text || '';
+        if (!text) { await db.markQueueItemFailed(item.id, 'empty LangChain response'); continue; }
+
+        let fpProbability = 0;
+        if (darkSoc === 'true') {
+          try {
+            const tr = await axios.post(`${LANGCHAIN_URL}/triage`, { alert },
+              { timeout: 30000, headers: { Authorization: `Bearer ${LANGCHAIN_TOKEN}` }, validateStatus: () => true });
+            if (tr.status < 400) fpProbability = tr.data?.false_positive_probability || 0;
+          } catch(e) { /* non-fatal */ }
+        }
+
+        const saved = await _saveTriageInvestigation({ alert, report: text, tier: 'critical', durationMs: Date.now()-start, queueId: item.id });
+        await db.markQueueItemDone(item.id, saved.id);
+        if (darkSoc === 'true') await _runDarkSocPlaybooks(alert, text, saved.id, fpProbability);
+        console.log(`[TriageProcessor] CRITICAL ${item.rule_id} → inv#${saved.id} (${Date.now()-start}ms)`);
+      } catch(e) {
+        console.warn(`[TriageProcessor] CRITICAL ${item.rule_id} failed:`, e.message);
+        await db.markQueueItemFailed(item.id, e.message);
+      }
+    }
+
+    // ── High tier: LangChain /triage (direct) ───────────────────
+    const highItems = await db.claimNextQueueItems('high', 3);
+    for (const item of highItems) {
+      const alert = { ...item, alertKey: item.alert_key, ruleId: item.rule_id,
+                      level: item.rule_level, alertTimestamp: item.alert_timestamp,
+                      mitre: item.mitre || [], fullLog: item.full_log };
+      const start = Date.now();
+      try {
+        const resp = await axios.post(`${LANGCHAIN_URL}/triage`,
+          { alert },
+          { timeout: 30000, headers: { Authorization: `Bearer ${LANGCHAIN_TOKEN}` }, validateStatus: () => true }
+        );
+        const raw = resp.status < 400 ? resp.data : null;
+        const prose = raw?.result || raw?.answer || raw?.response || raw?.text || raw?.summary || '';
+        if (!prose) { await db.markQueueItemFailed(item.id, 'empty triage response'); continue; }
+
+        const fpProbability = raw?.false_positive_probability || 0;
+        const action        = raw?.recommended_action || 'review';
+        const mitreTech     = raw?.mitre_technique   || '';
+        const indicators    = (raw?.key_indicators || []).slice(0, 5).join(', ');
+        const report = `## AI Triage Assessment — Rule ${item.rule_id}
+
+| Field | Value |
+|---|---|
+| Severity | ${raw?.severity || item.severity} |
+| FP Probability | ${fpProbability}% |
+| MITRE Technique | ${mitreTech || 'N/A'} |
+| Recommended Action | ${action} |
+| Key Indicators | ${indicators || 'N/A'} |
+
+### Summary
+
+${prose.slice(0, 2000)}`;
+        const saved = await _saveTriageInvestigation({ alert, report, tier: 'high', durationMs: Date.now()-start, queueId: item.id });
+        await db.markQueueItemDone(item.id, saved.id);
+        if (darkSoc === 'true') await _runDarkSocPlaybooks(alert, report, saved.id, fpProbability);
+        console.log(`[TriageProcessor] HIGH ${item.rule_id} → inv#${saved.id} (${Date.now()-start}ms)`);
+      } catch(e) {
+        console.warn(`[TriageProcessor] HIGH ${item.rule_id} failed:`, e.message);
+        await db.markQueueItemFailed(item.id, e.message);
+      }
+    }
+
+    // ── Medium tier: pattern template (no LLM) ──────────────────
+    const medItems = await db.claimNextQueueItems('medium', 5);
+    for (const item of medItems) {
+      const alert = { ...item, alertKey: item.alert_key, ruleId: item.rule_id,
+                      level: item.rule_level, alertTimestamp: item.alert_timestamp,
+                      mitre: item.mitre || [], fullLog: item.full_log };
+      const start = Date.now();
+      try {
+        const report = await _buildMediumReport(alert);
+        const saved  = await _saveTriageInvestigation({ alert, report, tier: 'medium', durationMs: Date.now()-start, queueId: item.id });
+        await db.markQueueItemDone(item.id, saved.id);
+        console.log(`[TriageProcessor] MEDIUM ${item.rule_id} → inv#${saved.id} (${Date.now()-start}ms)`);
+      } catch(e) {
+        console.warn(`[TriageProcessor] MEDIUM ${item.rule_id} failed:`, e.message);
+        await db.markQueueItemFailed(item.id, e.message);
+      }
+    }
+
+    // ── Low tier: bulk suppress immediately ─────────────────────
+    const suppressed = await db.claimAllPendingLowTier();
+    if (suppressed.length > 0) console.log(`[TriageProcessor] Suppressed ${suppressed.length} low-tier items`);
+
+    // ── Low tier: batch notification (every 15 min) ──────────────
+    if (Date.now() - _lastLowBatch > 900_000) {
+      _lastLowBatch = Date.now();
+      try {
+        const groups = await db.getPendingLowTierGroups(LOW_BATCH_WINDOW_MIN, LOW_BATCH_MIN_COUNT);
+        for (const g of groups) {
+          await db.createNotification(
+            'alert',
+            `Low-Severity Batch: ${g.count} events from ${g.agent || 'unknown'}`,
+            `${g.count} low-severity events matching rule ${g.rule_id || 'N/A'} on agent ${g.agent || 'N/A'} in the last ${LOW_BATCH_WINDOW_MIN/60}h. Review in Alerts.`,
+            'low', null,
+            { rule_id: g.rule_id, agent: g.agent, count: g.count, triage_tier: 'low' }
+          );
+          await db.markLowTierGroupNotified(g.rule_id, g.agent, LOW_BATCH_WINDOW_MIN);
+        }
+        if (groups.length > 0) console.log(`[TriageProcessor] Sent ${groups.length} low-tier batch notifications`);
+      } catch(e) { console.warn('[TriageProcessor] Low batch error:', e.message); }
+    }
+  } catch(e) {
+    console.error('[TriageProcessor] Error:', e.message);
+  } finally {
+    _processorRunning = false;
+  }
+}
+
+// Feeder: every 60s
+setInterval(() => { triageFeeder(); }, 60000);
+// Processor: every 15s
+setInterval(() => { triageProcessor(); }, 15000);
+// Boot delay: feeder after 30s, processor after 45s
+setTimeout(() => { triageFeeder(); }, 30000);
+setTimeout(() => { triageProcessor(); }, 45000);
 
 // ── UEBA AUTO-INGEST from Wazuh/OpenSearch ─────────────────────────
 // Polls OpenSearch every 2 min, maps alert fields → UEBA events
@@ -4600,6 +4755,17 @@ app.get('/api/investigations/:id/feedback', authMW, async (req, res) => {
     res.json(summary);
   } catch (e) {
     console.error('[investigation/feedback/get]', e.message);
+    res.status(502).json({ error: e.message });
+  }
+});
+
+// ── TRIAGE QUEUE ──
+app.get('/api/triage-queue/stats', authMW, async (req, res) => {
+  try {
+    const stats = await db.getQueueStats();
+    res.json(stats);
+  } catch(e) {
+    console.error('[triage-queue/stats]', e.message);
     res.status(502).json({ error: e.message });
   }
 });

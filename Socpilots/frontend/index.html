@@ -2188,6 +2188,37 @@ sshd: Failed" style="min-height:80px"></textarea></div>
       <div class="kpi cl"><div class="kpi-lbl">Logins Today</div><div class="kpi-val" id="sa-logins">—</div></div>
     </div>
   </div>
+
+  <!-- TRIAGE QUEUE STATUS -->
+  <div class="card mb" style="border-left:3px solid var(--c)">
+    <div class="card-hd">
+      <div class="card-ttl" style="color:var(--c)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px;margin-right:5px;vertical-align:middle"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+        TRIAGE QUEUE
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <span id="tq-queued-1h" style="font-size:9px;font-family:var(--fm);color:var(--txt3)"></span>
+        <button class="btn btn-sm" onclick="loadTriageQueueStats()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:10px;height:10px"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg> Refresh
+        </button>
+      </div>
+    </div>
+    <div id="tq-stats-grid" style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:10px">
+      <div class="kpi cr"><div class="kpi-lbl">Pending</div><div class="kpi-val" id="tq-pending">—</div></div>
+      <div class="kpi co"><div class="kpi-lbl">Processing</div><div class="kpi-val" id="tq-processing">—</div></div>
+      <div class="kpi cg"><div class="kpi-lbl">Done</div><div class="kpi-val" id="tq-done">—</div></div>
+      <div class="kpi cy"><div class="kpi-lbl">Suppressed</div><div class="kpi-val" id="tq-suppressed">—</div></div>
+      <div class="kpi cp"><div class="kpi-lbl">Failed</div><div class="kpi-val" id="tq-failed">—</div></div>
+    </div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap" id="tq-tier-badges">
+      <span style="font-size:9px;font-family:var(--fm);color:var(--txt3)">Pending by tier:</span>
+      <span id="tq-crit-badge"  class="badge critical" style="font-size:9px;display:none"></span>
+      <span id="tq-high-badge"  class="badge high"     style="font-size:9px;display:none"></span>
+      <span id="tq-med-badge"   class="badge medium"   style="font-size:9px;display:none"></span>
+      <span id="tq-low-badge"   class="badge low"      style="font-size:9px;display:none"></span>
+      <span id="tq-tier-none"   style="font-size:9px;font-family:var(--fm);color:var(--g)">Queue clear</span>
+    </div>
+  </div>
   <div class="card mb">
     <div class="card-hd">
       <div class="card-ttl"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>AUDIT LOG — RECENT ACTIONS</div>
@@ -8313,10 +8344,48 @@ async function loadDarkSocPage() {
   // Load audit log + system activity
   await loadAuditLog();
 
+  // Load triage queue stats
+  loadTriageQueueStats();
+
   // Load playbooks, protected assets, and pending isolation approvals
   if (typeof loadPlaybooks === 'function') loadPlaybooks();
   if (typeof loadProtectedAssets === 'function') loadProtectedAssets();
   if (typeof loadIsolationApprovals === 'function') loadIsolationApprovals();
+}
+
+async function loadTriageQueueStats() {
+  const d = await G('/api/triage-queue/stats');
+  if (!d) return;
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  set('tq-pending',    d.pending);
+  set('tq-processing', d.processing);
+  set('tq-done',       d.done);
+  set('tq-suppressed', d.suppressed);
+  set('tq-failed',     d.failed);
+
+  const hdr = document.getElementById('tq-queued-1h');
+  if (hdr) hdr.textContent = `${d.queued_1h} queued last 1h · ${d.queued_24h} last 24h`;
+
+  const badges = [
+    { id: 'tq-crit-badge', count: d.pending_critical, label: 'CRITICAL' },
+    { id: 'tq-high-badge', count: d.pending_high,     label: 'HIGH' },
+    { id: 'tq-med-badge',  count: d.pending_medium,   label: 'MEDIUM' },
+    { id: 'tq-low-badge',  count: d.pending_low,      label: 'LOW' },
+  ];
+  let anyPending = false;
+  for (const b of badges) {
+    const el = document.getElementById(b.id);
+    if (!el) continue;
+    if (b.count > 0) {
+      el.textContent = `${b.count} ${b.label}`;
+      el.style.display = '';
+      anyPending = true;
+    } else {
+      el.style.display = 'none';
+    }
+  }
+  const noneEl = document.getElementById('tq-tier-none');
+  if (noneEl) noneEl.style.display = anyPending ? 'none' : '';
 }
 
 async function loadAuditLog() {

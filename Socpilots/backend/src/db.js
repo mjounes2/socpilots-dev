@@ -446,6 +446,39 @@ async function initSchema() {
       emailed          BOOL DEFAULT false
     )`,
     `CREATE INDEX IF NOT EXISTS idx_ueba_digests_at ON ueba_digests(generated_at DESC)`,
+
+    // ── Triage Queue ───────────────────────────────────────────────
+    `CREATE TABLE IF NOT EXISTS triage_queue (
+      id               SERIAL PRIMARY KEY,
+      alert_id         TEXT NOT NULL,
+      alert_key        VARCHAR(255) NOT NULL,
+      rule_id          TEXT,
+      rule_level       INT DEFAULT 0,
+      severity         TEXT,
+      triage_tier      TEXT,
+      agent            TEXT,
+      src_ip           TEXT,
+      description      TEXT,
+      mitre            TEXT[],
+      full_log         TEXT,
+      alert_timestamp  TIMESTAMPTZ,
+      priority_score   NUMERIC(6,2) DEFAULT 0,
+      status           TEXT DEFAULT 'pending',
+      claimed_at       TIMESTAMPTZ,
+      queued_at        TIMESTAMPTZ DEFAULT NOW(),
+      processed_at     TIMESTAMPTZ,
+      investigation_id INTEGER REFERENCES investigations(id),
+      error_msg        TEXT,
+      notified         BOOLEAN DEFAULT false,
+      raw_alert        JSONB,
+      UNIQUE(alert_key)
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_tq_claim  ON triage_queue(status, priority_score DESC, queued_at)`,
+    `CREATE INDEX IF NOT EXISTS idx_tq_tier   ON triage_queue(triage_tier, status)`,
+    `CREATE INDEX IF NOT EXISTS idx_tq_queued ON triage_queue(queued_at DESC)`,
+
+    // triage_tier column on investigations for visibility
+    `ALTER TABLE investigations ADD COLUMN IF NOT EXISTS triage_tier VARCHAR(20)`,
   ];
 
   for (const q of queries) {
@@ -1381,6 +1414,152 @@ async function markUebaDigestEmailed(id) {
   await pool.query(`UPDATE ueba_digests SET emailed=true WHERE id=$1`, [id]);
 }
 
+// ── Triage Queue ─────────────────────────────────────────────
+
+function _triageTier(level) {
+  if (level >= 12) return 'critical';
+  if (level >= 9)  return 'high';
+  if (level >= 6)  return 'medium';
+  return 'low';
+}
+
+async function enqueueAlert(alert) {
+  const tier = _triageTier(alert.level || 0);
+  const score = (alert.level || 0) * 6;
+  await pool.query(
+    `INSERT INTO triage_queue
+       (alert_id, alert_key, rule_id, rule_level, severity, triage_tier, agent, src_ip,
+        description, mitre, full_log, alert_timestamp, priority_score, raw_alert)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+     ON CONFLICT (alert_key) DO NOTHING`,
+    [
+      alert.id || '',
+      alert.alertKey,
+      alert.ruleId || null,
+      alert.level || 0,
+      alert.severity || tier,
+      tier,
+      alert.agent || null,
+      alert.srcIp || null,
+      (alert.description || '').slice(0, 1000),
+      alert.mitre || [],
+      (alert.fullLog || '').slice(0, 500),
+      alert.timestamp ? new Date(alert.timestamp) : new Date(),
+      score,
+      alert.raw || null,
+    ]
+  );
+}
+
+async function claimNextQueueItems(tier, limit) {
+  const r = await pool.query(
+    `WITH claimed AS (
+       SELECT id FROM triage_queue
+       WHERE status = 'pending' AND triage_tier = $1
+       ORDER BY priority_score DESC, queued_at ASC
+       LIMIT $2
+       FOR UPDATE SKIP LOCKED
+     )
+     UPDATE triage_queue SET status='processing', claimed_at=NOW()
+     WHERE id IN (SELECT id FROM claimed)
+     RETURNING *`,
+    [tier, limit]
+  );
+  return r.rows;
+}
+
+async function claimAllPendingLowTier() {
+  const r = await pool.query(
+    `UPDATE triage_queue SET status='suppressed', processed_at=NOW()
+     WHERE status='pending' AND triage_tier='low'
+     RETURNING id, rule_id, agent`
+  );
+  return r.rows;
+}
+
+async function markQueueItemDone(id, investigationId) {
+  await pool.query(
+    `UPDATE triage_queue SET status='done', processed_at=NOW(), investigation_id=$2 WHERE id=$1`,
+    [id, investigationId || null]
+  );
+}
+
+async function markQueueItemFailed(id, errorMsg) {
+  await pool.query(
+    `UPDATE triage_queue SET status='failed', processed_at=NOW(), error_msg=$2 WHERE id=$1`,
+    [id, (errorMsg || '').slice(0, 500)]
+  );
+}
+
+async function resetStuckQueueItems() {
+  const r = await pool.query(
+    `UPDATE triage_queue SET status='pending', claimed_at=NULL
+     WHERE status='processing' AND claimed_at < NOW() - INTERVAL '10 minutes'
+     RETURNING id`
+  );
+  return r.rowCount;
+}
+
+async function getQueueStats() {
+  const r = await pool.query(
+    `SELECT
+       COUNT(*) FILTER (WHERE status='pending')    AS pending,
+       COUNT(*) FILTER (WHERE status='processing') AS processing,
+       COUNT(*) FILTER (WHERE status='done')       AS done,
+       COUNT(*) FILTER (WHERE status='failed')     AS failed,
+       COUNT(*) FILTER (WHERE status='suppressed' OR status='batched') AS suppressed,
+       COUNT(*) FILTER (WHERE status='pending' AND triage_tier='critical') AS pending_critical,
+       COUNT(*) FILTER (WHERE status='pending' AND triage_tier='high')     AS pending_high,
+       COUNT(*) FILTER (WHERE status='pending' AND triage_tier='medium')   AS pending_medium,
+       COUNT(*) FILTER (WHERE status='pending' AND triage_tier='low')      AS pending_low,
+       COUNT(*) FILTER (WHERE queued_at > NOW() - INTERVAL '1 hour')       AS queued_1h,
+       COUNT(*) FILTER (WHERE queued_at > NOW() - INTERVAL '24 hours')     AS queued_24h
+     FROM triage_queue`
+  );
+  const row = r.rows[0];
+  return {
+    pending:          parseInt(row.pending) || 0,
+    processing:       parseInt(row.processing) || 0,
+    done:             parseInt(row.done) || 0,
+    failed:           parseInt(row.failed) || 0,
+    suppressed:       parseInt(row.suppressed) || 0,
+    pending_critical: parseInt(row.pending_critical) || 0,
+    pending_high:     parseInt(row.pending_high) || 0,
+    pending_medium:   parseInt(row.pending_medium) || 0,
+    pending_low:      parseInt(row.pending_low) || 0,
+    queued_1h:        parseInt(row.queued_1h) || 0,
+    queued_24h:       parseInt(row.queued_24h) || 0,
+  };
+}
+
+async function getPendingLowTierGroups(windowMinutes, minCount) {
+  const r = await pool.query(
+    `SELECT rule_id, agent, COUNT(*) AS count
+     FROM triage_queue
+     WHERE triage_tier='low' AND status='suppressed' AND notified=false
+       AND queued_at > NOW() - ($1 || ' minutes')::INTERVAL
+     GROUP BY rule_id, agent
+     HAVING COUNT(*) >= $2
+     ORDER BY count DESC`,
+    [windowMinutes, minCount]
+  );
+  return r.rows.map(row => ({
+    rule_id: row.rule_id,
+    agent:   row.agent,
+    count:   parseInt(row.count),
+  }));
+}
+
+async function markLowTierGroupNotified(ruleId, agent, windowMinutes) {
+  await pool.query(
+    `UPDATE triage_queue SET notified=true
+     WHERE triage_tier='low' AND status='suppressed' AND notified=false
+       AND rule_id=$1 AND agent=$2
+       AND queued_at > NOW() - ($3 || ' minutes')::INTERVAL`,
+    [ruleId, agent, windowMinutes]
+  );
+}
+
 // ── Health check ─────────────────────────────────────────────
 async function ping() {
   try {
@@ -1496,6 +1675,16 @@ module.exports = {
   // UEBA Digests
   createUebaDigest,
   listUebaDigests,
+  // Triage Queue
+  enqueueAlert,
+  claimNextQueueItems,
+  claimAllPendingLowTier,
+  markQueueItemDone,
+  markQueueItemFailed,
+  resetStuckQueueItems,
+  getQueueStats,
+  getPendingLowTierGroups,
+  markLowTierGroupNotified,
   getUebaDigest,
   getLatestUebaDigest,
   markUebaDigestEmailed,
