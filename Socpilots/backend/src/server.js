@@ -1581,36 +1581,34 @@ app.post('/api/ai/investigate', authMW, async (req, res) => {
     });
   }
   
-  // Use dedicated investigation webhook
   const message = prompt || `Investigate alert: ${JSON.stringify(alert)}`;
-  
+
+  // Fire n8n in background for any automation pipelines — non-blocking, result ignored
+  axios.post(N8N_INV, {
+    action: 'investigate', message, alert: alert || null,
+    session_id: session_id || `inv_${Date.now()}`,
+    _user: req.user?.username || 'system', _role: req.user?.role || 'analyst',
+  }, { timeout: 60_000, headers: { 'Content-Type': 'application/json' }, validateStatus: () => true })
+    .catch(() => {});
+
   try {
-    const r = await axios.post(N8N_INV, {
-      action: 'investigate',
+    // Primary: LangChain ReAct agent via /chat (accepts plain message, no schema mismatch)
+    const r = await axios.post(`${LANGCHAIN_URL}/chat`, {
       message,
-      alert: alert || null,
-      session_id: session_id || `inv_${Date.now()}`,
-      _user: req.user?.username || 'system',
-      _role: req.user?.role || 'analyst',
+      history:  [],
+      username: req.user?.username || 'system',
+      role:     req.user?.role || 'analyst',
     }, {
-      timeout: 180000, // 3 minutes for deep investigation
-      headers: { 'Content-Type': 'application/json' },
-      validateStatus: () => true,
+      timeout: 180_000,
+      headers: { Authorization: `Bearer ${LANGCHAIN_TOKEN}` },
     });
-    
+
     const d = r.data;
-    
-    // Handle 429
-    const bodyStr = JSON.stringify(d || '');
-    if (r.status === 429 || bodyStr.includes('Rate limit') || bodyStr.includes('rate_limited')) {
-      return res.status(429).json({ error: 'Rate limit on investigation engine. Wait 60s.' });
-    }
-    
-    const text = d?.response || d?.output || d?.text || d?.message ||
+    const text = d?.response || d?.output || d?.text || d?.report || d?.message ||
       (Array.isArray(d) ? (d[0]?.response || d[0]?.output || '') : '') || '';
-    
+
     if (!text) {
-      return res.status(502).json({ error: 'Empty response from investigation webhook. Check workflow is active.' });
+      return res.status(502).json({ error: 'LangChain agent returned an empty response. Check langchain-agent logs.' });
     }
 
     // Save to DB
@@ -1709,11 +1707,12 @@ app.post('/api/ai/investigate', authMW, async (req, res) => {
     res.json({ response: text, ok: true, investigation_id: savedId, cached: false });
     
   } catch (e) {
-    const isTimeout = e.code === 'ECONNABORTED' || e.message.includes('timeout');
+    const isTimeout = e.code === 'ECONNABORTED' || e.message?.includes('timeout');
     const isRefused = e.code === 'ECONNREFUSED';
-    let msg = e.message;
-    if (isTimeout) msg = 'Investigation timed out (>3min). Try again or check n8n.';
-    if (isRefused) msg = 'Investigation webhook refused — is socpilots-investigation workflow active?';
+    let msg = e.response?.data?.detail || e.message;
+    if (isTimeout) msg = 'Investigation timed out (>3min). The alert may be complex — try again.';
+    if (isRefused) msg = 'LangChain agent unreachable — check socpilots-langchain container.';
+    console.error('[investigate]', msg);
     res.status(502).json({ error: msg });
   }
 });
