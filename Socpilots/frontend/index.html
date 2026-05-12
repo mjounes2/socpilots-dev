@@ -1094,24 +1094,6 @@ if(localStorage.getItem("soc_dim")==="1")document.body.classList.add("dim");
 <div class="page" id="page-correlate">
   <div class="ph"><h1>CORRELATION</h1><p>Cross-platform indicator analysis — SIEM + UEBA + SP-CM + SOCPilots AI</p></div>
 
-  <!-- UEBA Auto-Correlations -->
-  <div class="g2 mb">
-    <div class="card">
-      <div class="card-hd">
-        <div class="card-ttl" style="color:#ff9800">⚡ MULTI-STAGE ATTACKS</div>
-        <button class="btn btn-sm" onclick="loadUebaCorrelations()">↻ Refresh</button>
-      </div>
-      <div id="corr-multistage"><div class="loading"><div class="spin"></div></div></div>
-    </div>
-    <div class="card">
-      <div class="card-hd">
-        <div class="card-ttl" style="color:#f06292">🔑 SHARED CREDENTIALS</div>
-        <button class="btn btn-sm" onclick="loadUebaCorrelations()">↻ Refresh</button>
-      </div>
-      <div id="corr-sharedcreds"><div class="loading"><div class="spin"></div></div></div>
-    </div>
-  </div>
-
   <!-- Live UEBA↔SIEM correlation feed -->
   <div class="card mb" style="border-left:3px solid #f06292">
     <div class="card-hd">
@@ -3331,7 +3313,7 @@ const LOAD_MAP={dashboard:loadDashboard,agents:loadAgents,alerts:loadAlerts,rule
   ioc:()=>{loadIOCQuick();loadOtxFeed();},reports:loadReportMetrics,
   assets:()=>{loadSubnets();loadAssets();loadScanStatus();},
   ueba:()=>{loadUebaStats();loadUebaAnomalies();loadUebaDigests();},
-  correlate:()=>{loadUebaCorrelations();loadAlertGroups();renderCorrLiveFeed();},
+  correlate:()=>{loadAlertGroups();renderCorrLiveFeed();},
   darksoc:()=>loadDarkSocPage(),
   langchain:()=>{lcCheckHealth();},
   settings:loadSmtpSettings,
@@ -3343,6 +3325,7 @@ function go(p){
   document.getElementById(`page-${p}`)?.classList.add('active');
   document.querySelectorAll('.sbi').forEach(x=>{if(x.getAttribute('onclick')?.includes(`'${p}'`))x.classList.add('on');});
   CUR=p; LOAD_MAP[p]?.();
+  sessionStorage.setItem('soc_page',p);
 }
 function refresh(){LOAD_MAP[CUR]?.();}
 
@@ -8792,7 +8775,11 @@ function toggleDim(){
 
 // ─── STARTUP ──────────────────────────────────────────────────
 checkStatus();
-loadDashboard();
+(()=>{
+  const saved=sessionStorage.getItem('soc_page');
+  if(saved && saved!=='dashboard' && document.getElementById(`page-${saved}`)) go(saved);
+  else loadDashboard();
+})();
 setInterval(()=>{checkStatus();if(CUR==='dashboard')loadDashboard();if(CUR==='threatmap')loadThreatMap();},90000);
 </script>
 <script>

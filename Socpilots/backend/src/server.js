@@ -1418,22 +1418,35 @@ app.post('/api/correlate', authMW, async (req, res) => {
   const { indicator } = req.body;
   if (!indicator) return res.status(400).json({ error: 'indicator required' });
 
-  const [osR, hiveR, aiR] = await Promise.allSettled([
-    // OpenSearch search
+  const corrPrompt = `Correlate indicator "${indicator}" across Wazuh SIEM and SP-CM. Provide: timeline of events, risk score (0-100), relevant MITRE ATT&CK techniques, attack chain analysis, and recommended response actions.`;
+
+  const [osR, hiveR] = await Promise.allSettled([
     osSearch({
       size: 20, sort: [{ '@timestamp': 'desc' }],
       query: { multi_match: { query: indicator, fields: ['data.srcip', 'data.dstuser', 'full_log', 'rule.description', 'agent.name'] } },
     }),
-    // SP-CM search
     hiveQuery([{ _name: 'listCase' }, { _name: 'filter', _field: 'title', _like: indicator }]),
-    // AI correlation
-    n8nAsk(`Correlate indicator "${indicator}" across Wazuh and SP-CM. Provide timeline, risk score, MITRE techniques, attack chain analysis.`, 'soc-correlate', req.user),
   ]);
+
+  // AI correlation — LangChain primary, n8n fallback
+  let aiAnalysis = 'Analysis unavailable — AI services unreachable';
+  try {
+    const r = await axios.post(`${LANGCHAIN_URL}/chat`, {
+      message: corrPrompt, history: [],
+      username: req.user?.username || 'system', role: req.user?.role || 'l2',
+    }, { timeout: 60_000 });
+    if (r.data?.response) aiAnalysis = r.data.response;
+  } catch (_) {
+    try {
+      const n = await n8nAsk(corrPrompt, 'soc-correlate', req.user);
+      if (n?.text) aiAnalysis = n.text;
+    } catch (_) {}
+  }
 
   res.json({
     wazuhHits:  osR.value?.hits?.hits?.map(h => ({ id: h._id, ts: h._source['@timestamp'], desc: h._source.rule?.description, agent: h._source.agent?.name })) || [],
     hiveHits:   Array.isArray(hiveR.value) ? hiveR.value.map(c => ({ id: c._id, title: c.title, status: c.status })) : [],
-    aiAnalysis: aiR.value?.text || 'AI unavailable',
+    aiAnalysis,
   });
 });
 
