@@ -1590,6 +1590,27 @@ async function markLowTierGroupNotified(ruleId, agent, windowMinutes) {
   );
 }
 
+// ── Rule FP Rate Statistics ───────────────────────────────────
+// Aggregates confirmed_fp / confirmed_tp markings per rule.
+// Returns rows only for rules with at least 1 labelled investigation.
+async function getRuleFpRates() {
+  const r = await pool.query(
+    `SELECT
+       rule_id,
+       COUNT(*)                                                              AS total_labelled,
+       COUNT(CASE WHEN tp_status = 'confirmed_fp' THEN 1 END)               AS fp_count,
+       COUNT(CASE WHEN tp_status = 'confirmed_tp' THEN 1 END)               AS tp_count,
+       ROUND(100.0 * COUNT(CASE WHEN tp_status = 'confirmed_fp' THEN 1 END)
+             / NULLIF(COUNT(*), 0), 1)                                      AS fp_rate_raw
+     FROM investigations
+     WHERE tp_status IN ('confirmed_fp', 'confirmed_tp')
+       AND rule_id IS NOT NULL
+     GROUP BY rule_id
+     ORDER BY fp_rate_raw DESC`
+  );
+  return r.rows;
+}
+
 // ── Action Approvals ─────────────────────────────────────────
 
 async function createActionApproval({
@@ -1625,7 +1646,7 @@ async function listActionApprovals({ status } = {}) {
   const where  = status ? `WHERE aa.status=$1` : `WHERE aa.status='pending' AND aa.expires_at > NOW()`;
   const params = status ? [status] : [];
   const r = await pool.query(
-    `SELECT aa.*, i.report AS investigation_report
+    `SELECT aa.*, i.report AS investigation_report, i.structured_verdict AS investigation_verdict
      FROM action_approvals aa
      LEFT JOIN investigations i ON i.id = aa.investigation_id
      ${where}
@@ -1777,6 +1798,8 @@ module.exports = {
   // UEBA Digests
   createUebaDigest,
   listUebaDigests,
+  // FP Rate Stats
+  getRuleFpRates,
   // Action Approvals
   createActionApproval,
   getActionApproval,

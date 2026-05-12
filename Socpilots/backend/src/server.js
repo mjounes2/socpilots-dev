@@ -1873,6 +1873,11 @@ app.post('/api/investigations/:id/tp-status', authMW, async (req, res) => {
       }
     }
 
+    // Invalidate FP cache so next triage cycle picks up the new ground truth
+    if (tp_status === 'confirmed_tp' || tp_status === 'confirmed_fp') {
+      refreshRuleFpCache().catch(() => {});
+    }
+
     res.json({ ok: true, status: updated });
   } catch(e) {
     res.status(500).json({ error: e.message });
@@ -2069,8 +2074,59 @@ const ACTION_MAP = {
   create_case: ['create_case'],
 };
 
-function _extractStructuredVerdict(triageData, alert) {
-  const fpProb     = triageData?.false_positive_probability || 0;
+// ── Per-rule FP rate cache ────────────────────────────────────────────────
+// Refreshed from `investigations` table every 10 min.
+// Blended with LangChain's real-time FP probability using Beta smoothing.
+let _ruleFpCache = new Map(); // ruleId → { fp_count, tp_count, total_labelled }
+let _ruleFpCacheTime = 0;
+
+async function refreshRuleFpCache() {
+  try {
+    const rows = await db.getRuleFpRates();
+    const next  = new Map();
+    for (const r of rows) {
+      next.set(String(r.rule_id), {
+        fp_count:       parseInt(r.fp_count)       || 0,
+        tp_count:       parseInt(r.tp_count)       || 0,
+        total_labelled: parseInt(r.total_labelled) || 0,
+        fp_rate_raw:    parseFloat(r.fp_rate_raw)  || 0,
+      });
+    }
+    _ruleFpCache     = next;
+    _ruleFpCacheTime = Date.now();
+    console.log(`[FpCache] Refreshed — ${next.size} rules with ground truth`);
+  } catch(e) {
+    console.warn('[FpCache] Refresh failed:', e.message);
+  }
+}
+
+// Beta smoothing + linear ramp blend.
+// Prior: α=3, β=7 (30% FP with 10 pseudo-observations)
+// Historical weight ramps from 0 → 0.7 as sample count grows 0 → 30.
+function _getAdjustedFp(ruleId, langchainFp) {
+  const entry = _ruleFpCache.get(String(ruleId));
+  if (!entry || entry.total_labelled < 1) {
+    return { adjusted_fp: langchainFp, langchain_fp: langchainFp, historical_rate: null, sample_count: 0, weight: 0 };
+  }
+  const { fp_count, total_labelled } = entry;
+  const posteriorFp   = ((3 + fp_count) / (10 + total_labelled)) * 100;
+  const w_hist        = Math.min(total_labelled / 30, 1) * 0.7;
+  const adjusted_fp   = Math.round(w_hist * posteriorFp + (1 - w_hist) * langchainFp);
+  return {
+    adjusted_fp,
+    langchain_fp:    langchainFp,
+    historical_rate: Math.round(posteriorFp),
+    sample_count:    total_labelled,
+    weight:          Math.round(w_hist * 100),
+  };
+}
+
+// Start: load on boot (after 20s so DB is ready) + every 10 min
+setTimeout(() => refreshRuleFpCache(), 20000);
+setInterval(() => refreshRuleFpCache(), 600000);
+
+function _extractStructuredVerdict(triageData, alert, fpBlend = null) {
+  const fpProb     = fpBlend ? fpBlend.adjusted_fp : (triageData?.false_positive_probability || 0);
   const confidence = Math.max(0, Math.min(100, 100 - fpProb));
   const verdict    = fpProb >= 70 ? 'false_positive'
                    : confidence >= 65 ? 'true_positive'
@@ -2084,6 +2140,7 @@ function _extractStructuredVerdict(triageData, alert) {
     verdict,
     confidence,
     fp_probability:       fpProb,
+    fp_blend_info:        fpBlend || null,
     mitre_techniques:     mitre,
     recommended_actions:  actions,
     summary:              (triageData?.summary || `Rule ${alert.ruleId||alert.rule_id} on ${alert.agent}`).slice(0, 300),
@@ -2092,11 +2149,13 @@ function _extractStructuredVerdict(triageData, alert) {
   };
 }
 
-function _buildMediumVerdict(alert) {
+function _buildMediumVerdict(alert, fpBlend = null) {
+  const fpProb = fpBlend ? fpBlend.adjusted_fp : 60;
   return {
-    verdict:             'needs_review',
-    confidence:          40,
-    fp_probability:      60,
+    verdict:             fpProb >= 70 ? 'false_positive' : 'needs_review',
+    confidence:          Math.max(0, Math.min(100, 100 - fpProb)),
+    fp_probability:      fpProb,
+    fp_blend_info:       fpBlend || null,
     mitre_techniques:    Array.isArray(alert.mitre) ? alert.mitre : [],
     recommended_actions: ['create_case'],
     summary:             `Pattern match — rule ${alert.ruleId||alert.rule_id} on ${alert.agent} (level ${alert.level||alert.rule_level})`.slice(0, 300),
@@ -2412,10 +2471,11 @@ async function triageProcessor() {
           if (tr.status < 400) { triageData = tr.data; fpProbability = triageData?.false_positive_probability || 0; }
         } catch(e) { /* non-fatal */ }
 
-        const verdict = _extractStructuredVerdict(triageData, alert);
+        const fpBlend = _getAdjustedFp(item.rule_id, fpProbability);
+        const verdict = _extractStructuredVerdict(triageData, alert, fpBlend);
         const saved   = await _saveTriageInvestigation({ alert, report: text, tier: 'critical', durationMs: Date.now()-start, queueId: item.id, structuredVerdict: verdict });
         await db.markQueueItemDone(item.id, saved.id);
-        if (darkSoc === 'true') await _routeActionsOrApproval(alert, text, saved.id, fpProbability, verdict);
+        if (darkSoc === 'true') await _routeActionsOrApproval(alert, text, saved.id, fpBlend.adjusted_fp, verdict);
         console.log(`[TriageProcessor] CRITICAL ${item.rule_id} → inv#${saved.id} verdict=${verdict.verdict} (${Date.now()-start}ms)`);
       } catch(e) {
         console.warn(`[TriageProcessor] CRITICAL ${item.rule_id} failed:`, e.message);
@@ -2439,7 +2499,8 @@ async function triageProcessor() {
         const prose = raw?.result || raw?.answer || raw?.response || raw?.text || raw?.summary || '';
         if (!prose) { await db.markQueueItemFailed(item.id, 'empty triage response'); continue; }
 
-        const verdict    = _extractStructuredVerdict(raw, alert);
+        const fpBlend    = _getAdjustedFp(item.rule_id, raw?.false_positive_probability || 0);
+        const verdict    = _extractStructuredVerdict(raw, alert, fpBlend);
         const mitreTech  = raw?.mitre_technique || '';
         const indicators = (raw?.key_indicators || []).slice(0, 5).join(', ');
         const report = `## AI Triage Assessment — Rule ${item.rule_id}
@@ -2458,7 +2519,7 @@ async function triageProcessor() {
 ${prose.slice(0, 2000)}`;
         const saved = await _saveTriageInvestigation({ alert, report, tier: 'high', durationMs: Date.now()-start, queueId: item.id, structuredVerdict: verdict });
         await db.markQueueItemDone(item.id, saved.id);
-        if (darkSoc === 'true') await _routeActionsOrApproval(alert, report, saved.id, verdict.fp_probability, verdict);
+        if (darkSoc === 'true') await _routeActionsOrApproval(alert, report, saved.id, fpBlend.adjusted_fp, verdict);
         console.log(`[TriageProcessor] HIGH ${item.rule_id} → inv#${saved.id} verdict=${verdict.verdict} (${Date.now()-start}ms)`);
       } catch(e) {
         console.warn(`[TriageProcessor] HIGH ${item.rule_id} failed:`, e.message);
@@ -2474,11 +2535,12 @@ ${prose.slice(0, 2000)}`;
                       mitre: item.mitre || [], fullLog: item.full_log };
       const start = Date.now();
       try {
-        const verdict = _buildMediumVerdict(alert);
+        const fpBlend = _getAdjustedFp(item.rule_id, 60);
+        const verdict = _buildMediumVerdict(alert, fpBlend);
         const report  = await _buildMediumReport(alert);
         const saved   = await _saveTriageInvestigation({ alert, report, tier: 'medium', durationMs: Date.now()-start, queueId: item.id, structuredVerdict: verdict });
         await db.markQueueItemDone(item.id, saved.id);
-        if (darkSoc === 'true') await _routeActionsOrApproval(alert, report, saved.id, verdict.fp_probability, verdict);
+        if (darkSoc === 'true') await _routeActionsOrApproval(alert, report, saved.id, fpBlend.adjusted_fp, verdict);
         console.log(`[TriageProcessor] MEDIUM ${item.rule_id} → inv#${saved.id} (${Date.now()-start}ms)`);
       } catch(e) {
         console.warn(`[TriageProcessor] MEDIUM ${item.rule_id} failed:`, e.message);
@@ -4966,6 +5028,35 @@ app.get('/api/triage-queue/stats', authMW, async (req, res) => {
     res.json(stats);
   } catch(e) {
     console.error('[triage-queue/stats]', e.message);
+    res.status(502).json({ error: e.message });
+  }
+});
+
+app.get('/api/fp-stats', authMW, async (req, res) => {
+  try {
+    const rows = await db.getRuleFpRates();
+    const enriched = rows.map(r => {
+      const fp_count       = parseInt(r.fp_count)       || 0;
+      const total_labelled = parseInt(r.total_labelled) || 0;
+      const posteriorFp    = ((3 + fp_count) / (10 + total_labelled)) * 100;
+      const w_hist         = Math.min(total_labelled / 30, 1) * 0.7;
+      return {
+        rule_id:         r.rule_id,
+        fp_count,
+        tp_count:        parseInt(r.tp_count) || 0,
+        total_labelled,
+        fp_rate_raw:     parseFloat(r.fp_rate_raw) || 0,
+        fp_rate_adjusted: Math.round(posteriorFp * 10) / 10,
+        hist_weight_pct: Math.round(w_hist * 100),
+      };
+    });
+    res.json({
+      items:          enriched,
+      cache_age_min:  _ruleFpCacheTime ? Math.round((Date.now() - _ruleFpCacheTime) / 60000) : null,
+      total_rules:    enriched.length,
+    });
+  } catch(e) {
+    console.error('[fp-stats]', e.message);
     res.status(502).json({ error: e.message });
   }
 });

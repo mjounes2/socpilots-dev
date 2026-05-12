@@ -2223,6 +2223,28 @@ sshd: Failed" style="min-height:80px"></textarea></div>
     </div>
   </div>
 
+  <!-- FP RATE STATS -->
+  <div class="card mb" style="border-left:3px solid var(--y)" id="fp-stats-card">
+    <div class="card-hd">
+      <div class="card-ttl" style="color:var(--y)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px;margin-right:5px;vertical-align:middle"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        FP RATE LEARNING — PER-RULE GROUND TRUTH
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <span id="fp-stats-cache-age" style="font-size:9px;font-family:var(--fm);color:var(--txt3)"></span>
+        <button class="btn btn-sm" onclick="loadFpStats()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:10px;height:10px"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg> Refresh
+        </button>
+      </div>
+    </div>
+    <div style="font-size:10px;color:var(--txt3);font-family:var(--fm);margin-bottom:8px;line-height:1.5">
+      Analyst TP/FP labels feed Beta-smoothed per-rule rates. Blended with LangChain AI using a linear ramp (0→70% historical weight as samples grow 0→30).
+    </div>
+    <div id="fp-stats-list">
+      <div class="loading"><div class="spin"></div></div>
+    </div>
+  </div>
+
   <!-- PENDING ACTION APPROVALS -->
   <div class="card mb" style="border-left:3px solid var(--o)" id="approvals-card">
     <div class="card-hd">
@@ -8327,8 +8349,9 @@ async function loadDarkSocPage() {
   // Load audit log + system activity
   await loadAuditLog();
 
-  // Load triage queue stats + action approvals
+  // Load triage queue stats, FP stats + action approvals
   loadTriageQueueStats();
+  loadFpStats();
   loadActionApprovals();
 
   // Load playbooks, protected assets, and pending isolation approvals
@@ -8372,6 +8395,48 @@ async function loadTriageQueueStats() {
   if (noneEl) noneEl.style.display = anyPending ? 'none' : '';
 }
 
+async function loadFpStats() {
+  const listEl = document.getElementById('fp-stats-list');
+  if (!listEl) return;
+  const d = await G('/api/fp-stats');
+  if (!d) { listEl.innerHTML = '<div style="font-size:10px;color:var(--r);padding:12px;font-family:var(--fm)">Failed to load</div>'; return; }
+
+  const cacheEl = document.getElementById('fp-stats-cache-age');
+  if (cacheEl) cacheEl.textContent = d.cache_age_min !== null ? `cache ${d.cache_age_min}m old` : '';
+
+  const items = d.items || [];
+  if (!items.length) {
+    listEl.innerHTML = '<div style="font-size:10px;color:var(--txt3);font-family:var(--fm);padding:16px;text-align:center">No labelled investigations yet — mark investigations as TP/FP to build ground truth</div>';
+    return;
+  }
+  listEl.innerHTML = `<div class="tbl"><table style="width:100%"><thead><tr>
+    <th>Rule ID</th><th>Labelled</th><th>FP Count</th><th>TP Count</th><th>Raw FP%</th><th>Adjusted FP% <span style="font-weight:400;font-size:9px;color:var(--txt3)">(Beta prior)</span></th><th>Hist. Weight</th>
+  </tr></thead><tbody>
+  ${items.slice(0, 20).map(r => {
+    const fpCol = r.fp_rate_raw >= 70 ? 'var(--r)' : r.fp_rate_raw >= 40 ? 'var(--o)' : 'var(--g)';
+    const adjCol = r.fp_rate_adjusted >= 70 ? 'var(--r)' : r.fp_rate_adjusted >= 40 ? 'var(--o)' : 'var(--g)';
+    const confBar = Math.round(r.hist_weight_pct);
+    return `<tr>
+      <td style="font-family:var(--fm);font-size:10px;color:var(--c)">${esc(r.rule_id||'')}</td>
+      <td style="font-family:var(--fm);font-size:10px;text-align:center">${r.total_labelled}</td>
+      <td style="font-family:var(--fm);font-size:10px;text-align:center;color:var(--r)">${r.fp_count}</td>
+      <td style="font-family:var(--fm);font-size:10px;text-align:center;color:var(--g)">${r.tp_count}</td>
+      <td style="font-family:var(--fm);font-size:11px;font-weight:700;color:${fpCol}">${r.fp_rate_raw}%</td>
+      <td style="font-family:var(--fm);font-size:11px;font-weight:700;color:${adjCol}">${r.fp_rate_adjusted}%</td>
+      <td>
+        <div style="display:flex;align-items:center;gap:6px">
+          <div style="flex:1;height:4px;background:var(--b1);border-radius:2px">
+            <div style="width:${confBar}%;height:100%;background:var(--c);border-radius:2px"></div>
+          </div>
+          <span style="font-family:var(--fm);font-size:9px;color:var(--txt3)">${confBar}%</span>
+        </div>
+      </td>
+    </tr>`;
+  }).join('')}
+  </tbody></table></div>
+  ${items.length > 20 ? `<div style="font-size:9px;color:var(--txt3);font-family:var(--fm);padding:6px 8px">Showing top 20 of ${items.length} rules</div>` : ''}`;
+}
+
 function _updateApprovalBadge(count) {
   const nb = document.getElementById('n-approvals');
   const cb = document.getElementById('approvals-count-badge');
@@ -8391,20 +8456,32 @@ async function loadActionApprovals() {
     return;
   }
   listEl.innerHTML = `<div class="tbl"><table style="width:100%"><thead><tr>
-    <th>Rule</th><th>Agent</th><th>Verdict</th><th>Confidence</th><th>Actions Requested</th><th>Summary</th><th>Age</th><th>Expires</th><th style="min-width:130px">Decision</th>
+    <th>Rule</th><th>Agent</th><th>Verdict</th><th>Confidence</th><th>FP Risk</th><th>Actions Requested</th><th>Summary</th><th>Age</th><th>Expires</th><th style="min-width:130px">Decision</th>
   </tr></thead><tbody>
   ${items.map(a => {
     const age     = Math.round((Date.now() - new Date(a.created_at).getTime()) / 60000);
     const expMin  = Math.max(0, Math.round((new Date(a.expires_at).getTime() - Date.now()) / 60000));
     const vCls    = a.verdict === 'true_positive' ? 'critical' : a.verdict === 'false_positive' ? 'ok' : 'medium';
     const actions = (a.recommended_actions || []).join(', ');
+    // Extract blend info from investigation_verdict JSONB if present
+    let blendHtml = `<span style="font-family:var(--fm);font-size:11px;color:var(--txt2)">${a.fp_probability}%</span>`;
+    try {
+      const iv = typeof a.investigation_verdict === 'string' ? JSON.parse(a.investigation_verdict) : a.investigation_verdict;
+      const b  = iv?.fp_blend_info;
+      if (b && b.sample_count > 0) {
+        const col = a.fp_probability >= 70 ? 'var(--r)' : a.fp_probability >= 40 ? 'var(--o)' : 'var(--g)';
+        blendHtml = `<span style="font-family:var(--fm);font-size:11px;font-weight:700;color:${col}">${b.adjusted_fp}%</span>
+          <br><span style="font-size:9px;color:var(--txt3)">AI:${b.langchain_fp}% · ${b.sample_count} labels</span>`;
+      }
+    } catch(e2) {}
     return `<tr data-approval-id="${a.id}">
       <td><span style="font-family:var(--fm);font-size:10px">${esc(a.rule_id||'')}</span><br><span style="font-size:9px;color:var(--txt3)">${esc(a.severity||'')}</span></td>
       <td style="font-family:var(--fm);font-size:10px">${esc(a.agent||'')}</td>
       <td><span class="badge ${vCls}" style="font-size:9px">${esc((a.verdict||'').replace('_',' '))}</span></td>
       <td style="font-family:var(--fm);font-size:11px;font-weight:700;color:var(--c)">${a.confidence}%</td>
+      <td>${blendHtml}</td>
       <td style="font-family:var(--fm);font-size:10px;color:var(--o)">${esc(actions)}</td>
-      <td style="font-size:10px;max-width:220px;white-space:normal;line-height:1.4;color:var(--txt2)">${esc((a.summary||'').slice(0,120))}</td>
+      <td style="font-size:10px;max-width:200px;white-space:normal;line-height:1.4;color:var(--txt2)">${esc((a.summary||'').slice(0,100))}</td>
       <td style="font-family:var(--fm);font-size:10px;color:var(--txt3)">${age}m ago</td>
       <td style="font-family:var(--fm);font-size:10px;color:${expMin < 5 ? 'var(--r)' : 'var(--txt3)'}">${expMin}m</td>
       <td>
