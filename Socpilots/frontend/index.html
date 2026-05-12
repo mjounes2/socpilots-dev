@@ -658,7 +658,7 @@ if(localStorage.getItem("soc_dim")==="1")document.body.classList.add("dim");
     <div class="sbi" onclick="go('evidence')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg><span class="sbi-lbl">Evidence Upload</span></div>
   </div>
   <div class="sb-bot">
-    <div class="sbi" onclick="go('darksoc')" id="nav-darksoc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/><path d="M8.5 8.5l7 7M15.5 8.5l-7 7"/></svg><span class="sbi-lbl">Dark SOC</span><span class="sbi-n" id="n-darksoc" style="display:none">ON</span></div>
+    <div class="sbi" onclick="go('darksoc')" id="nav-darksoc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/><path d="M8.5 8.5l7 7M15.5 8.5l-7 7"/></svg><span class="sbi-lbl">Dark SOC</span><span class="sbi-n" id="n-darksoc" style="display:none">ON</span><span class="sbi-n" id="n-approvals" style="display:none;background:rgba(255,152,0,.15);color:var(--o);border-color:rgba(255,152,0,.3)"></span></div>
     <div class="sbi admin-only" onclick="go('users')" id="nav-users" style="display:none"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg><span class="sbi-lbl">User Management</span></div>
     <div class="sbi" onclick="go('settings')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg><span class="sbi-lbl">Settings</span></div>
     <div class="sbi" onclick="logout()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg><span class="sbi-lbl">Logout</span></div>
@@ -2220,6 +2220,26 @@ sshd: Failed" style="min-height:80px"></textarea></div>
     </div>
     <div id="ds-audit-list" style="max-height:400px;overflow-y:auto">
       <div class="loading"><div class="spin"></div></div>
+    </div>
+  </div>
+
+  <!-- PENDING ACTION APPROVALS -->
+  <div class="card mb" style="border-left:3px solid var(--o)" id="approvals-card">
+    <div class="card-hd">
+      <div class="card-ttl" style="color:var(--o)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px;margin-right:5px;vertical-align:middle"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+        PENDING ACTION APPROVALS
+        <span id="approvals-count-badge" style="margin-left:8px;background:rgba(255,152,0,.15);color:var(--o);border:1px solid rgba(255,152,0,.3);font-size:9px;padding:2px 7px;border-radius:8px;font-family:var(--fm);display:none"></span>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <span style="font-size:9px;font-family:var(--fm);color:var(--txt3)">L2+ required to approve · 30-min TTL</span>
+        <button class="btn btn-sm" onclick="loadActionApprovals()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:10px;height:10px"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg> Refresh
+        </button>
+      </div>
+    </div>
+    <div id="approvals-list">
+      <div style="font-size:10px;color:var(--txt3);font-family:var(--fm);padding:16px;text-align:center">No pending approvals</div>
     </div>
   </div>
 
@@ -8168,6 +8188,8 @@ async function pollNotifCount() {
     _notifCount = data.unread || 0;
     updateNotifBadge(_notifCount);
   } catch(e) {}
+  // Also refresh approval badge in background
+  G('/api/action-approvals/stats').then(d => { if (d) _updateApprovalBadge(d.pending); }).catch(()=>{});
 }
 
 async function markNotifRead(id, el) {
@@ -8305,8 +8327,9 @@ async function loadDarkSocPage() {
   // Load audit log + system activity
   await loadAuditLog();
 
-  // Load triage queue stats
+  // Load triage queue stats + action approvals
   loadTriageQueueStats();
+  loadActionApprovals();
 
   // Load playbooks, protected assets, and pending isolation approvals
   if (typeof loadPlaybooks === 'function') loadPlaybooks();
@@ -8347,6 +8370,72 @@ async function loadTriageQueueStats() {
   }
   const noneEl = document.getElementById('tq-tier-none');
   if (noneEl) noneEl.style.display = anyPending ? 'none' : '';
+}
+
+function _updateApprovalBadge(count) {
+  const nb = document.getElementById('n-approvals');
+  const cb = document.getElementById('approvals-count-badge');
+  if (nb) { nb.textContent = count > 0 ? `${count} PENDING` : ''; nb.style.display = count > 0 ? '' : 'none'; }
+  if (cb) { cb.textContent = count > 0 ? count : ''; cb.style.display = count > 0 ? '' : 'none'; }
+}
+
+async function loadActionApprovals() {
+  const listEl = document.getElementById('approvals-list');
+  if (!listEl) return;
+  const d = await G('/api/action-approvals');
+  if (!d) { listEl.innerHTML = '<div style="font-size:10px;color:var(--r);padding:12px;font-family:var(--fm)">Failed to load</div>'; return; }
+  const items = d.items || [];
+  _updateApprovalBadge(items.length);
+  if (!items.length) {
+    listEl.innerHTML = '<div style="font-size:10px;color:var(--g);font-family:var(--fm);padding:16px;text-align:center">&#10003; No pending approvals</div>';
+    return;
+  }
+  listEl.innerHTML = `<div class="tbl"><table style="width:100%"><thead><tr>
+    <th>Rule</th><th>Agent</th><th>Verdict</th><th>Confidence</th><th>Actions Requested</th><th>Summary</th><th>Age</th><th>Expires</th><th style="min-width:130px">Decision</th>
+  </tr></thead><tbody>
+  ${items.map(a => {
+    const age     = Math.round((Date.now() - new Date(a.created_at).getTime()) / 60000);
+    const expMin  = Math.max(0, Math.round((new Date(a.expires_at).getTime() - Date.now()) / 60000));
+    const vCls    = a.verdict === 'true_positive' ? 'critical' : a.verdict === 'false_positive' ? 'ok' : 'medium';
+    const actions = (a.recommended_actions || []).join(', ');
+    return `<tr data-approval-id="${a.id}">
+      <td><span style="font-family:var(--fm);font-size:10px">${esc(a.rule_id||'')}</span><br><span style="font-size:9px;color:var(--txt3)">${esc(a.severity||'')}</span></td>
+      <td style="font-family:var(--fm);font-size:10px">${esc(a.agent||'')}</td>
+      <td><span class="badge ${vCls}" style="font-size:9px">${esc((a.verdict||'').replace('_',' '))}</span></td>
+      <td style="font-family:var(--fm);font-size:11px;font-weight:700;color:var(--c)">${a.confidence}%</td>
+      <td style="font-family:var(--fm);font-size:10px;color:var(--o)">${esc(actions)}</td>
+      <td style="font-size:10px;max-width:220px;white-space:normal;line-height:1.4;color:var(--txt2)">${esc((a.summary||'').slice(0,120))}</td>
+      <td style="font-family:var(--fm);font-size:10px;color:var(--txt3)">${age}m ago</td>
+      <td style="font-family:var(--fm);font-size:10px;color:${expMin < 5 ? 'var(--r)' : 'var(--txt3)'}">${expMin}m</td>
+      <td>
+        <div style="display:flex;gap:5px">
+          <button class="btn btn-sm" style="background:rgba(0,230,118,.12);color:var(--g);border:1px solid rgba(0,230,118,.25);padding:4px 10px" onclick="approveAction(${a.id},this)">Approve</button>
+          <button class="btn btn-sm" style="background:rgba(255,23,68,.1);color:var(--r);border:1px solid rgba(255,23,68,.2);padding:4px 10px" onclick="rejectAction(${a.id},this)">Reject</button>
+        </div>
+      </td>
+    </tr>`;
+  }).join('')}
+  </tbody></table></div>`;
+}
+
+async function approveAction(id, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  const r = await P(`/api/action-approvals/${id}/approve`, {});
+  if (!r || r.error) { toast(r?.error || 'Approve failed', 'error'); if (btn) { btn.disabled = false; btn.textContent = 'Approve'; } return; }
+  toast('Action approved — playbooks executing', 'ok');
+  const row = document.querySelector(`tr[data-approval-id="${id}"]`);
+  if (row) row.style.opacity = '0.4';
+  loadActionApprovals();
+}
+
+async function rejectAction(id, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  const r = await P(`/api/action-approvals/${id}/reject`, {});
+  if (!r || r.error) { toast(r?.error || 'Reject failed', 'error'); if (btn) { btn.disabled = false; btn.textContent = 'Reject'; } return; }
+  toast('Action rejected', 'info');
+  const row = document.querySelector(`tr[data-approval-id="${id}"]`);
+  if (row) row.style.opacity = '0.4';
+  loadActionApprovals();
 }
 
 async function loadAuditLog() {
@@ -8834,6 +8923,23 @@ function initSocketIO(){
     appendDsLiveFeed('darksoc',
       `Playbook <b>${esc(d.playbook)}</b> executed on ${esc(d.agent||'?')} — ${esc((d.actions_taken||[]).join(', ')||'done')}`,
       '#d500f9');
+  });
+
+  _socket.on('approval:new', d=>{
+    _notifCount = (_notifCount||0)+1;
+    updateNotifBadge(_notifCount);
+    showLiveToast('approval', `Approval needed: rule ${esc(d.rule_id||'?')} on ${esc(d.agent||'?')} — ${esc((d.recommended_actions||[]).join(', '))}`, 'warning');
+    appendDsLiveFeed('approval',
+      `Action approval required for rule <b>${esc(d.rule_id||'?')}</b> on ${esc(d.agent||'?')} — <span style="color:var(--o)">${esc((d.recommended_actions||[]).join(', '))}</span>`,
+      '#ff9800');
+    if (document.getElementById('approvals-list')) loadActionApprovals();
+  });
+
+  _socket.on('approval:resolved', d=>{
+    appendDsLiveFeed('approval_resolved',
+      `Approval #${d.id} <b style="color:${d.status==='executed'?'var(--g)':d.status==='rejected'?'var(--r)':'var(--txt3)'}">${esc(d.status)}</b>${d.resolved_by ? ` by ${esc(d.resolved_by)}` : ''}`,
+      d.status==='executed' ? '#00e676' : '#ff1744');
+    if (document.getElementById('approvals-list')) loadActionApprovals();
   });
 
   _socket.on('log_source:silent', d=>{

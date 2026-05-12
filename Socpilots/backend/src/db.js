@@ -477,8 +477,38 @@ async function initSchema() {
     `CREATE INDEX IF NOT EXISTS idx_tq_tier   ON triage_queue(triage_tier, status)`,
     `CREATE INDEX IF NOT EXISTS idx_tq_queued ON triage_queue(queued_at DESC)`,
 
-    // triage_tier column on investigations for visibility
+    // triage_tier + structured_verdict on investigations
     `ALTER TABLE investigations ADD COLUMN IF NOT EXISTS triage_tier VARCHAR(20)`,
+    `ALTER TABLE investigations ADD COLUMN IF NOT EXISTS structured_verdict JSONB`,
+
+    // ── Action Approvals (human-in-the-loop gate for destructive actions) ──
+    `CREATE TABLE IF NOT EXISTS action_approvals (
+      id               SERIAL PRIMARY KEY,
+      investigation_id INTEGER REFERENCES investigations(id) ON DELETE CASCADE,
+      alert_key        VARCHAR(255),
+      rule_id          TEXT,
+      agent            TEXT,
+      src_ip           TEXT,
+      severity         TEXT,
+      triage_tier      TEXT,
+      verdict          TEXT,
+      confidence       INT DEFAULT 0,
+      risk_score       INT DEFAULT 0,
+      fp_probability   NUMERIC(5,2) DEFAULT 0,
+      summary          TEXT,
+      recommended_actions TEXT[],
+      playbook_ids     INTEGER[],
+      alert_data       JSONB,
+      status           TEXT DEFAULT 'pending',
+      resolved_at      TIMESTAMPTZ,
+      resolved_by      TEXT,
+      resolve_note     TEXT,
+      expires_at       TIMESTAMPTZ NOT NULL,
+      created_at       TIMESTAMPTZ DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_aa_status  ON action_approvals(status)`,
+    `CREATE INDEX IF NOT EXISTS idx_aa_expires ON action_approvals(expires_at)`,
+    `CREATE INDEX IF NOT EXISTS idx_aa_inv     ON action_approvals(investigation_id)`,
   ];
 
   for (const q of queries) {
@@ -1560,6 +1590,78 @@ async function markLowTierGroupNotified(ruleId, agent, windowMinutes) {
   );
 }
 
+// ── Action Approvals ─────────────────────────────────────────
+
+async function createActionApproval({
+  investigationId, alertKey, ruleId, agent, srcIp, severity, triageTier,
+  verdict, confidence, riskScore, fpProbability, summary,
+  recommendedActions, playbookIds, alertData, timeoutMin = 30,
+}) {
+  const expiresAt = new Date(Date.now() + timeoutMin * 60_000);
+  const r = await pool.query(
+    `INSERT INTO action_approvals(
+       investigation_id, alert_key, rule_id, agent, src_ip, severity, triage_tier,
+       verdict, confidence, risk_score, fp_probability, summary,
+       recommended_actions, playbook_ids, alert_data, expires_at
+     ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+     RETURNING *`,
+    [
+      investigationId || null, alertKey || '', ruleId || '', agent || '', srcIp || null,
+      severity || '', triageTier || '', verdict || 'needs_review',
+      confidence || 0, riskScore || 0, fpProbability || 0, summary || '',
+      recommendedActions || [], playbookIds || [],
+      JSON.stringify(alertData || {}), expiresAt,
+    ]
+  );
+  return r.rows[0];
+}
+
+async function getActionApproval(id) {
+  const r = await pool.query(`SELECT * FROM action_approvals WHERE id=$1`, [id]);
+  return r.rows[0] || null;
+}
+
+async function listActionApprovals({ status } = {}) {
+  const where  = status ? `WHERE aa.status=$1` : `WHERE aa.status='pending' AND aa.expires_at > NOW()`;
+  const params = status ? [status] : [];
+  const r = await pool.query(
+    `SELECT aa.*, i.report AS investigation_report
+     FROM action_approvals aa
+     LEFT JOIN investigations i ON i.id = aa.investigation_id
+     ${where}
+     ORDER BY aa.created_at DESC LIMIT 100`,
+    params
+  );
+  return r.rows;
+}
+
+async function resolveActionApproval(id, { status, resolvedBy, resolveNote }) {
+  const valid = ['approved', 'rejected', 'expired', 'executed'];
+  if (!valid.includes(status)) throw new Error(`Invalid approval status: ${status}`);
+  const r = await pool.query(
+    `UPDATE action_approvals
+     SET status=$1, resolved_at=NOW(), resolved_by=$2, resolve_note=$3
+     WHERE id=$4 RETURNING *`,
+    [status, resolvedBy || 'system', resolveNote || '', id]
+  );
+  return r.rows[0] || null;
+}
+
+async function listExpiredActionApprovals() {
+  const r = await pool.query(
+    `SELECT * FROM action_approvals WHERE status='pending' AND expires_at < NOW()`
+  );
+  return r.rows;
+}
+
+async function countPendingActionApprovals() {
+  const r = await pool.query(
+    `SELECT COUNT(*) AS count FROM action_approvals
+     WHERE status='pending' AND expires_at > NOW()`
+  );
+  return parseInt(r.rows[0]?.count) || 0;
+}
+
 // ── Health check ─────────────────────────────────────────────
 async function ping() {
   try {
@@ -1675,6 +1777,13 @@ module.exports = {
   // UEBA Digests
   createUebaDigest,
   listUebaDigests,
+  // Action Approvals
+  createActionApproval,
+  getActionApproval,
+  listActionApprovals,
+  resolveActionApproval,
+  listExpiredActionApprovals,
+  countPendingActionApprovals,
   // Triage Queue
   enqueueAlert,
   claimNextQueueItems,

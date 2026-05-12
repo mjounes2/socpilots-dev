@@ -2051,12 +2051,66 @@ app.get('/api/system-events', authMW, async (req, res) => {
 const LOW_BATCH_WINDOW_MIN = parseInt(process.env.LOW_BATCH_WINDOW_MIN || '240'); // 4 hours
 const LOW_BATCH_MIN_COUNT  = parseInt(process.env.LOW_BATCH_MIN_COUNT  || '5');
 
+// Actions that require human approval before execution
+const DESTRUCTIVE_ACTIONS = new Set(['block_ip', 'isolate_host', 'kill_process', 'disable_user']);
+
+// Map LangChain recommended_action strings → playbook action types
+const ACTION_MAP = {
+  block:       ['block_ip'],
+  block_ip:    ['block_ip'],
+  isolate:     ['isolate_host'],
+  isolate_host:['isolate_host'],
+  kill:        ['kill_process'],
+  disable:     ['disable_user'],
+  close:       ['close_case'],
+  monitor:     ['create_case'],
+  investigate: ['create_case'],
+  review:      ['create_case'],
+  create_case: ['create_case'],
+};
+
+function _extractStructuredVerdict(triageData, alert) {
+  const fpProb     = triageData?.false_positive_probability || 0;
+  const confidence = Math.max(0, Math.min(100, 100 - fpProb));
+  const verdict    = fpProb >= 70 ? 'false_positive'
+                   : confidence >= 65 ? 'true_positive'
+                   : 'needs_review';
+  const rawAction  = (triageData?.recommended_action || 'review').toLowerCase().replace(/ /g,'_');
+  const actions    = ACTION_MAP[rawAction] || ['create_case'];
+  const mitre      = triageData?.mitre_technique
+                     ? [triageData.mitre_technique]
+                     : (Array.isArray(alert.mitre) ? alert.mitre : []);
+  return {
+    verdict,
+    confidence,
+    fp_probability:       fpProb,
+    mitre_techniques:     mitre,
+    recommended_actions:  actions,
+    summary:              (triageData?.summary || `Rule ${alert.ruleId||alert.rule_id} on ${alert.agent}`).slice(0, 300),
+    risk_score:           Math.round(((alert.level || alert.rule_level || 0) / 15) * 100),
+    requires_approval:    actions.some(a => DESTRUCTIVE_ACTIONS.has(a)) && verdict !== 'false_positive',
+  };
+}
+
+function _buildMediumVerdict(alert) {
+  return {
+    verdict:             'needs_review',
+    confidence:          40,
+    fp_probability:      60,
+    mitre_techniques:    Array.isArray(alert.mitre) ? alert.mitre : [],
+    recommended_actions: ['create_case'],
+    summary:             `Pattern match — rule ${alert.ruleId||alert.rule_id} on ${alert.agent} (level ${alert.level||alert.rule_level})`.slice(0, 300),
+    risk_score:          Math.round(((alert.level || alert.rule_level || 0) / 15) * 100),
+    requires_approval:   false,
+  };
+}
+
 let _feederRunning    = false;
 let _processorRunning = false;
 let _lastLowBatch     = 0;
 
 // ── Shared: save investigation + side-effects ─────────────────────────
-async function _saveTriageInvestigation({ alert, report, tier, durationMs, queueId }) {
+async function _saveTriageInvestigation({ alert, report, tier, durationMs, queueId, structuredVerdict }) {
   const saved = await db.saveInvestigation({
     alertId:     alert.id,
     ruleId:      alert.ruleId,
@@ -2074,10 +2128,10 @@ async function _saveTriageInvestigation({ alert, report, tier, durationMs, queue
     rawAlert:    alert.raw || alert,
   });
 
-  // Tag the investigations row with tier
+  // Tag tier + structured verdict
   db.pool.query(
-    `UPDATE investigations SET triage_tier=$1 WHERE id=$2`,
-    [tier, saved.id]
+    `UPDATE investigations SET triage_tier=$1, structured_verdict=$2 WHERE id=$3`,
+    [tier, structuredVerdict ? JSON.stringify(structuredVerdict) : null, saved.id]
   ).catch(() => {});
 
   // Cross-investigation RAG memory (non-blocking)
@@ -2117,10 +2171,9 @@ async function _saveTriageInvestigation({ alert, report, tier, durationMs, queue
   return saved;
 }
 
-// ── Shared: run DarkSOC playbooks after investigation ─────────────────
-async function _runDarkSocPlaybooks(alert, report, savedId, fpProbability) {
-  const matchedPlaybooks = await db.getMatchingPlaybooks(alert.level, alert.mitre || []);
-  for (const pb of matchedPlaybooks) {
+// ── Execute playbooks immediately (non-destructive or already approved) ──
+async function _executePlaybooks(alert, report, savedId, fpProbability, playbooks) {
+  for (const pb of playbooks) {
     try {
       const execResult = await playbook.runPlaybook(pb, alert, report, fpProbability, savedId);
       const outcome    = execResult.skipped ? 'skipped' : 'executed';
@@ -2128,10 +2181,10 @@ async function _runDarkSocPlaybooks(alert, report, savedId, fpProbability) {
         playbookId:        pb.id,
         playbookName:      pb.name,
         investigationId:   savedId,
-        alertKey:          alert.alertKey,
+        alertKey:          alert.alertKey || alert.alert_key || '',
         agent:             alert.agent,
-        srcIp:             alert.srcIp,
-        ruleId:            alert.ruleId,
+        srcIp:             alert.srcIp    || alert.src_ip,
+        ruleId:            alert.ruleId   || alert.rule_id,
         severity:          alert.severity,
         fpProbability,
         consensusApproved: execResult.consensusApproved,
@@ -2143,18 +2196,72 @@ async function _runDarkSocPlaybooks(alert, report, savedId, fpProbability) {
       if (outcome === 'executed') {
         db.createNotification(
           'playbook', `Playbook Executed: ${pb.name}`,
-          `Playbook "${pb.name}" ran on alert ${alert.ruleId} (${alert.agent}).`,
+          `Playbook "${pb.name}" ran on alert ${alert.ruleId||alert.rule_id} (${alert.agent}).`,
           'warning', null, { playbook_name: pb.name, investigation_id: savedId }
         ).catch(() => {});
         io.emit('darksoc:action', {
           playbook: pb.name, investigation_id: savedId,
-          rule_id: alert.ruleId, agent: alert.agent, src_ip: alert.srcIp,
+          rule_id: alert.ruleId || alert.rule_id, agent: alert.agent,
+          src_ip: alert.srcIp || alert.src_ip,
           actions_taken: execResult.actionsTaken || [], timestamp: new Date().toISOString(),
         });
       }
     } catch(e) {
       console.error(`[DarkSOC] Playbook "${pb.name}" error:`, e.message);
     }
+  }
+}
+
+// ── Route playbook actions through approval gate or execute immediately ──
+async function _routeActionsOrApproval(alert, report, savedId, fpProbability, verdict) {
+  const matched = await db.getMatchingPlaybooks(
+    alert.level || alert.rule_level || 0,
+    alert.mitre || []
+  );
+  if (!matched.length) return;
+
+  const hasDestructive = matched.some(pb =>
+    (pb.actions || []).some(a => DESTRUCTIVE_ACTIONS.has(a.type))
+  );
+
+  if (hasDestructive && verdict?.requires_approval) {
+    const approval = await db.createActionApproval({
+      investigationId:    savedId,
+      alertKey:           alert.alertKey || alert.alert_key,
+      ruleId:             alert.ruleId   || alert.rule_id,
+      agent:              alert.agent,
+      srcIp:              alert.srcIp    || alert.src_ip,
+      severity:           alert.severity,
+      triageTier:         alert.triage_tier || 'unknown',
+      verdict:            verdict.verdict,
+      confidence:         verdict.confidence,
+      riskScore:          verdict.risk_score,
+      fpProbability,
+      summary:            verdict.summary,
+      recommendedActions: verdict.recommended_actions,
+      playbookIds:        matched.map(pb => pb.id),
+      alertData:          alert,
+    });
+    io.emit('approval:new', {
+      id:                  approval.id,
+      rule_id:             alert.ruleId || alert.rule_id,
+      agent:               alert.agent,
+      severity:            alert.severity,
+      verdict:             verdict.verdict,
+      confidence:          verdict.confidence,
+      summary:             verdict.summary,
+      recommended_actions: verdict.recommended_actions,
+      expires_at:          approval.expires_at,
+      created_at:          approval.created_at,
+    });
+    db.createNotification(
+      'playbook', 'Action Approval Required',
+      `Triage for rule ${alert.ruleId||alert.rule_id} on ${alert.agent} recommends ${(verdict.recommended_actions||[]).join(', ')} — awaiting analyst approval.`,
+      'warning', null, { approval_id: approval.id, investigation_id: savedId }
+    ).catch(() => {});
+    console.log(`[TriageProcessor] APPROVAL QUEUED inv#${savedId} → approval#${approval.id}`);
+  } else {
+    await _executePlaybooks(alert, report, savedId, fpProbability, matched);
   }
 }
 
@@ -2298,18 +2405,18 @@ async function triageProcessor() {
         if (!text) { await db.markQueueItemFailed(item.id, 'empty LangChain response'); continue; }
 
         let fpProbability = 0;
-        if (darkSoc === 'true') {
-          try {
-            const tr = await axios.post(`${LANGCHAIN_URL}/triage`, { alert },
-              { timeout: 30000, headers: { Authorization: `Bearer ${LANGCHAIN_TOKEN}` }, validateStatus: () => true });
-            if (tr.status < 400) fpProbability = tr.data?.false_positive_probability || 0;
-          } catch(e) { /* non-fatal */ }
-        }
+        let triageData    = null;
+        try {
+          const tr = await axios.post(`${LANGCHAIN_URL}/triage`, { alert },
+            { timeout: 30000, headers: { Authorization: `Bearer ${LANGCHAIN_TOKEN}` }, validateStatus: () => true });
+          if (tr.status < 400) { triageData = tr.data; fpProbability = triageData?.false_positive_probability || 0; }
+        } catch(e) { /* non-fatal */ }
 
-        const saved = await _saveTriageInvestigation({ alert, report: text, tier: 'critical', durationMs: Date.now()-start, queueId: item.id });
+        const verdict = _extractStructuredVerdict(triageData, alert);
+        const saved   = await _saveTriageInvestigation({ alert, report: text, tier: 'critical', durationMs: Date.now()-start, queueId: item.id, structuredVerdict: verdict });
         await db.markQueueItemDone(item.id, saved.id);
-        if (darkSoc === 'true') await _runDarkSocPlaybooks(alert, text, saved.id, fpProbability);
-        console.log(`[TriageProcessor] CRITICAL ${item.rule_id} → inv#${saved.id} (${Date.now()-start}ms)`);
+        if (darkSoc === 'true') await _routeActionsOrApproval(alert, text, saved.id, fpProbability, verdict);
+        console.log(`[TriageProcessor] CRITICAL ${item.rule_id} → inv#${saved.id} verdict=${verdict.verdict} (${Date.now()-start}ms)`);
       } catch(e) {
         console.warn(`[TriageProcessor] CRITICAL ${item.rule_id} failed:`, e.message);
         await db.markQueueItemFailed(item.id, e.message);
@@ -2332,27 +2439,27 @@ async function triageProcessor() {
         const prose = raw?.result || raw?.answer || raw?.response || raw?.text || raw?.summary || '';
         if (!prose) { await db.markQueueItemFailed(item.id, 'empty triage response'); continue; }
 
-        const fpProbability = raw?.false_positive_probability || 0;
-        const action        = raw?.recommended_action || 'review';
-        const mitreTech     = raw?.mitre_technique   || '';
-        const indicators    = (raw?.key_indicators || []).slice(0, 5).join(', ');
+        const verdict    = _extractStructuredVerdict(raw, alert);
+        const mitreTech  = raw?.mitre_technique || '';
+        const indicators = (raw?.key_indicators || []).slice(0, 5).join(', ');
         const report = `## AI Triage Assessment — Rule ${item.rule_id}
 
 | Field | Value |
 |---|---|
-| Severity | ${raw?.severity || item.severity} |
-| FP Probability | ${fpProbability}% |
+| Verdict | ${verdict.verdict.replace('_',' ')} |
+| Confidence | ${verdict.confidence}% |
+| FP Probability | ${verdict.fp_probability}% |
 | MITRE Technique | ${mitreTech || 'N/A'} |
-| Recommended Action | ${action} |
+| Recommended Actions | ${verdict.recommended_actions.join(', ')} |
 | Key Indicators | ${indicators || 'N/A'} |
 
 ### Summary
 
 ${prose.slice(0, 2000)}`;
-        const saved = await _saveTriageInvestigation({ alert, report, tier: 'high', durationMs: Date.now()-start, queueId: item.id });
+        const saved = await _saveTriageInvestigation({ alert, report, tier: 'high', durationMs: Date.now()-start, queueId: item.id, structuredVerdict: verdict });
         await db.markQueueItemDone(item.id, saved.id);
-        if (darkSoc === 'true') await _runDarkSocPlaybooks(alert, report, saved.id, fpProbability);
-        console.log(`[TriageProcessor] HIGH ${item.rule_id} → inv#${saved.id} (${Date.now()-start}ms)`);
+        if (darkSoc === 'true') await _routeActionsOrApproval(alert, report, saved.id, verdict.fp_probability, verdict);
+        console.log(`[TriageProcessor] HIGH ${item.rule_id} → inv#${saved.id} verdict=${verdict.verdict} (${Date.now()-start}ms)`);
       } catch(e) {
         console.warn(`[TriageProcessor] HIGH ${item.rule_id} failed:`, e.message);
         await db.markQueueItemFailed(item.id, e.message);
@@ -2367,9 +2474,11 @@ ${prose.slice(0, 2000)}`;
                       mitre: item.mitre || [], fullLog: item.full_log };
       const start = Date.now();
       try {
-        const report = await _buildMediumReport(alert);
-        const saved  = await _saveTriageInvestigation({ alert, report, tier: 'medium', durationMs: Date.now()-start, queueId: item.id });
+        const verdict = _buildMediumVerdict(alert);
+        const report  = await _buildMediumReport(alert);
+        const saved   = await _saveTriageInvestigation({ alert, report, tier: 'medium', durationMs: Date.now()-start, queueId: item.id, structuredVerdict: verdict });
         await db.markQueueItemDone(item.id, saved.id);
+        if (darkSoc === 'true') await _routeActionsOrApproval(alert, report, saved.id, verdict.fp_probability, verdict);
         console.log(`[TriageProcessor] MEDIUM ${item.rule_id} → inv#${saved.id} (${Date.now()-start}ms)`);
       } catch(e) {
         console.warn(`[TriageProcessor] MEDIUM ${item.rule_id} failed:`, e.message);
@@ -2380,6 +2489,16 @@ ${prose.slice(0, 2000)}`;
     // ── Low tier: bulk suppress immediately ─────────────────────
     const suppressed = await db.claimAllPendingLowTier();
     if (suppressed.length > 0) console.log(`[TriageProcessor] Suppressed ${suppressed.length} low-tier items`);
+
+    // ── Approval expiry reaper ───────────────────────────────────
+    try {
+      const expired = await db.listExpiredActionApprovals();
+      for (const a of expired) {
+        await db.resolveActionApproval(a.id, { status: 'expired', resolvedBy: 'system', resolveNote: '30-min TTL exceeded' });
+        io.emit('approval:resolved', { id: a.id, status: 'expired' });
+        console.log(`[TriageProcessor] Approval #${a.id} expired`);
+      }
+    } catch(e) { /* non-fatal */ }
 
     // ── Low tier: batch notification (every 15 min) ──────────────
     if (Date.now() - _lastLowBatch > 900_000) {
@@ -4755,6 +4874,87 @@ app.get('/api/investigations/:id/feedback', authMW, async (req, res) => {
     res.json(summary);
   } catch (e) {
     console.error('[investigation/feedback/get]', e.message);
+    res.status(502).json({ error: e.message });
+  }
+});
+
+// ── ACTION APPROVALS ──
+app.get('/api/action-approvals', authMW, async (req, res) => {
+  try {
+    const status = req.query.status || null;
+    const rows   = await db.listActionApprovals({ status });
+    res.json({ items: rows, total: rows.length });
+  } catch(e) {
+    console.error('[action-approvals/list]', e.message);
+    res.status(502).json({ error: e.message });
+  }
+});
+
+app.get('/api/action-approvals/stats', authMW, async (req, res) => {
+  try {
+    const count = await db.countPendingActionApprovals();
+    res.json({ pending: count });
+  } catch(e) {
+    console.error('[action-approvals/stats]', e.message);
+    res.status(502).json({ error: e.message });
+  }
+});
+
+app.post('/api/action-approvals/:id/approve', authMW, requireRole('l2'), async (req, res) => {
+  try {
+    const approval = await db.getActionApproval(parseInt(req.params.id));
+    if (!approval) return res.status(404).json({ error: 'Not found' });
+    if (approval.status !== 'pending') return res.status(409).json({ error: `Already ${approval.status}` });
+    if (new Date(approval.expires_at) < new Date()) {
+      await db.resolveActionApproval(approval.id, { status: 'expired', resolvedBy: 'system' });
+      return res.status(410).json({ error: 'Approval expired' });
+    }
+
+    // Reconstruct alert from stored data
+    const alert = { ...(approval.alert_data || {}),
+      alertKey: approval.alert_key, ruleId: approval.rule_id, rule_id: approval.rule_id,
+      agent: approval.agent, srcIp: approval.src_ip, src_ip: approval.src_ip,
+      severity: approval.severity };
+    alert.level = alert.rule_level || alert.level || 0;
+    alert.mitre = alert.mitre || [];
+
+    const inv    = await db.getInvestigationById(approval.investigation_id);
+    const report = inv?.report || '';
+    const pbs    = (await Promise.all((approval.playbook_ids || []).map(id => db.getPlaybookById(id)))).filter(Boolean);
+
+    await _executePlaybooks(alert, report, approval.investigation_id, parseFloat(approval.fp_probability) || 0, pbs);
+
+    await db.resolveActionApproval(approval.id, {
+      status:      'executed',
+      resolvedBy:  req.user.username,
+      resolveNote: req.body?.note || '',
+    });
+    io.emit('approval:resolved', { id: approval.id, status: 'executed', resolved_by: req.user.username });
+    db.createSystemEvent('playbook', req.user.username,
+      `Approved action for rule ${approval.rule_id} on ${approval.agent}`, 'ok').catch(() => {});
+    res.json({ ok: true });
+  } catch(e) {
+    console.error('[action-approvals/approve]', e.message);
+    res.status(502).json({ error: e.message });
+  }
+});
+
+app.post('/api/action-approvals/:id/reject', authMW, requireRole('l2'), async (req, res) => {
+  try {
+    const approval = await db.getActionApproval(parseInt(req.params.id));
+    if (!approval) return res.status(404).json({ error: 'Not found' });
+    if (approval.status !== 'pending') return res.status(409).json({ error: `Already ${approval.status}` });
+    await db.resolveActionApproval(approval.id, {
+      status:      'rejected',
+      resolvedBy:  req.user.username,
+      resolveNote: req.body?.note || '',
+    });
+    io.emit('approval:resolved', { id: approval.id, status: 'rejected', resolved_by: req.user.username });
+    db.createSystemEvent('playbook', req.user.username,
+      `Rejected action for rule ${approval.rule_id} on ${approval.agent}`, 'ok').catch(() => {});
+    res.json({ ok: true });
+  } catch(e) {
+    console.error('[action-approvals/reject]', e.message);
     res.status(502).json({ error: e.message });
   }
 });
