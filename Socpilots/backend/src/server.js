@@ -1848,7 +1848,11 @@ app.get('/api/investigations/:id', authMW, async (req, res) => {
   try {
     const inv = await db.getInvestigationById(parseInt(req.params.id));
     if (!inv) return res.status(404).json({ error: 'Not found' });
-    res.json(inv);
+    const [related, comments] = await Promise.all([
+      db.getRelatedInvestigations(inv.id, { srcIp: inv.src_ip, ruleId: inv.rule_id, agent: inv.agent }),
+      db.getInvComments(inv.id),
+    ]);
+    res.json({ ...inv, related, comments });
   } catch(e) {
     res.status(503).json({ error: 'DB unavailable: ' + e.message });
   }
@@ -1859,7 +1863,8 @@ app.get('/api/alert-groups', authMW, async (req, res) => {
   try {
     const page      = parseInt(req.query.page)      || 1;
     const page_size = Math.min(parseInt(req.query.page_size) || parseInt(req.query.limit) || 50, 500);
-    const { rows: groups, total } = await db.listAlertGroups({ page, page_size });
+    const { severity, rule_id, agent, q } = req.query;
+    const { rows: groups, total } = await db.listAlertGroups({ page, page_size, severity, rule_id, agent, q });
     res.json({ groups, total, page, page_size, has_more: page * page_size < total });
   } catch(e) {
     res.status(503).json({ error: e.message });
@@ -5509,6 +5514,29 @@ app.get('/api/investigations/:id/feedback', authMW, async (req, res) => {
     res.json(summary);
   } catch (e) {
     console.error('[investigation/feedback/get]', e.message);
+    res.status(502).json({ error: e.message });
+  }
+});
+
+// ── INVESTIGATION COMMENTS ──
+app.get('/api/investigations/:id/comments', authMW, async (req, res) => {
+  try {
+    const comments = await db.getInvComments(parseInt(req.params.id));
+    res.json({ comments });
+  } catch (e) {
+    console.error('[inv/comments/get]', e.message);
+    res.status(502).json({ error: e.message });
+  }
+});
+
+app.post('/api/investigations/:id/comments', authMW, async (req, res) => {
+  try {
+    const { body } = req.body;
+    if (!body?.trim()) return res.status(400).json({ error: 'body required' });
+    const comment = await db.saveInvComment(parseInt(req.params.id), req.user.username, body.trim());
+    res.json({ ok: true, comment });
+  } catch (e) {
+    console.error('[inv/comments/post]', e.message);
     res.status(502).json({ error: e.message });
   }
 });

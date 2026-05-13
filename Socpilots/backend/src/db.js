@@ -669,6 +669,15 @@ async function initSchema() {
     `CREATE INDEX IF NOT EXISTS idx_corr_created_at ON correlations(created_at DESC)`,
     `CREATE INDEX IF NOT EXISTS idx_corr_ueba_risk  ON correlations(ueba_risk DESC)`,
     `CREATE INDEX IF NOT EXISTS idx_corr_type       ON correlations(correlation_type)`,
+    // Analyst comments on investigations
+    `CREATE TABLE IF NOT EXISTS investigation_comments (
+      id               SERIAL PRIMARY KEY,
+      investigation_id INT NOT NULL REFERENCES investigations(id) ON DELETE CASCADE,
+      username         TEXT NOT NULL,
+      body             TEXT NOT NULL,
+      created_at       TIMESTAMPTZ DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_inv_comments_inv ON investigation_comments(investigation_id)`,
   ];
 
   for (const q of queries) {
@@ -707,16 +716,25 @@ async function upsertAlertGroup(srcIp, ruleId, agent) {
   return { id: r.rows[0].id, count: 1, is_new: true };
 }
 
-async function listAlertGroups({ limit = 50, offset = 0, page, page_size } = {}) {
+async function listAlertGroups({ limit = 50, offset = 0, page, page_size, severity, rule_id, agent, q } = {}) {
   if (page !== undefined) { page_size = Math.min(parseInt(page_size)||50, 500); offset = (Math.max(parseInt(page)||1,1)-1)*page_size; limit = page_size; }
+  const params = [];
+  const where = [];
+  if (severity) where.push(`ag.severity = $${params.push(severity)}`);
+  if (rule_id)  where.push(`ag.rule_id  = $${params.push(rule_id)}`);
+  if (agent)    where.push(`ag.agent    ILIKE $${params.push('%'+agent+'%')}`);
+  if (q)        where.push(`(ag.rule_id ILIKE $${params.push('%'+q+'%')} OR ag.src_ip ILIKE $${params.length} OR ag.agent ILIKE $${params.length})`);
+  const whereClause = where.length ? 'WHERE ' + where.join(' AND ') : '';
+  params.push(limit, offset);
   const r = await pool.query(
     `SELECT ag.*, COUNT(i.id)::int AS investigation_count,
             COUNT(*) OVER() AS total_count
      FROM alert_groups ag
      LEFT JOIN investigations i ON i.group_id = ag.id
+     ${whereClause}
      GROUP BY ag.id
-     ORDER BY ag.last_seen DESC LIMIT $1 OFFSET $2`,
-    [limit, offset]
+     ORDER BY ag.last_seen DESC LIMIT $${params.length-1} OFFSET $${params.length}`,
+    params
   );
   const total = r.rows.length ? parseInt(r.rows[0].total_count) : 0;
   const rows = r.rows.map(({ total_count, ...row }) => row);
@@ -2338,6 +2356,44 @@ async function getCorrelations({ page = 1, page_size = 50, q, entity_type, min_r
   return { rows: r.rows, total: parseInt(r.rows[0]?.total_count || 0) };
 }
 
+// ── Investigation Comments ────────────────────────────────
+async function saveInvComment(investigationId, username, body) {
+  const r = await pool.query(
+    `INSERT INTO investigation_comments (investigation_id, username, body)
+     VALUES ($1, $2, $3) RETURNING *`,
+    [investigationId, username, body]
+  );
+  return r.rows[0];
+}
+
+async function getInvComments(investigationId) {
+  const r = await pool.query(
+    `SELECT * FROM investigation_comments
+     WHERE investigation_id = $1 ORDER BY created_at ASC`,
+    [investigationId]
+  );
+  return r.rows;
+}
+
+// ── Related Investigations ────────────────────────────────
+async function getRelatedInvestigations(invId, { srcIp, ruleId, agent } = {}) {
+  const conditions = [`id != $1`];
+  const params = [invId];
+  const or = [];
+  if (srcIp  && srcIp  !== '—') or.push(`src_ip = $${params.push(srcIp)}`);
+  if (ruleId && ruleId !== '—') or.push(`rule_id = $${params.push(ruleId)}`);
+  if (agent  && agent  !== '—') or.push(`agent = $${params.push(agent)}`);
+  if (!or.length) return [];
+  conditions.push(`(${or.join(' OR ')})`);
+  const r = await pool.query(
+    `SELECT id, created_at, severity, rule_id, description, agent, src_ip, auto_triaged
+     FROM investigations WHERE ${conditions.join(' AND ')}
+     ORDER BY created_at DESC LIMIT 5`,
+    params
+  );
+  return r.rows;
+}
+
 module.exports = {
   pool,
   initSchema,
@@ -2347,6 +2403,9 @@ module.exports = {
   listInvestigations,
   getInvestigationStats,
   getInvestigatedAlertKeys,
+  saveInvComment,
+  getInvComments,
+  getRelatedInvestigations,
   getSetting,
   setSetting,
   getAllSettings,

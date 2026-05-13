@@ -1172,6 +1172,22 @@ if(localStorage.getItem("soc_dim")==="1")document.body.classList.add("dim");
         <button class="btn btn-sm" onclick="_corrLiveRows=[];renderCorrLiveFeed()">Clear</button>
       </div>
     </div>
+    <div style="display:flex;gap:6px;padding:6px 10px;border-bottom:1px solid var(--b1);flex-wrap:wrap;background:rgba(0,0,0,.12)">
+      <input class="fi" id="clf-q" placeholder="Filter entity / MITRE tactic..." style="flex:1;min-width:140px;font-size:11px" oninput="renderCorrLiveFeed()">
+      <select class="fi" id="clf-type" style="width:150px;font-size:11px" onchange="renderCorrLiveFeed()">
+        <option value="">All Types</option>
+        <option value="ueba_triage">UEBA Triage</option>
+        <option value="ueba_lateral">Lateral Movement</option>
+        <option value="ueba_privilege">Privilege Escalation</option>
+        <option value="manual">Manual</option>
+      </select>
+      <select class="fi" id="clf-risk" style="width:130px;font-size:11px" onchange="renderCorrLiveFeed()">
+        <option value="0">All Risk</option>
+        <option value="40">Risk ≥ 40</option>
+        <option value="70">Risk ≥ 70 (High)</option>
+        <option value="90">Risk ≥ 90 (Critical)</option>
+      </select>
+    </div>
     <div id="corr-live-feed" style="max-height:320px;overflow-y:auto">
       <div style="font-size:10px;color:var(--txt3);font-family:var(--fm);padding:16px;text-align:center">No live correlations yet — correlations appear here in real-time</div>
     </div>
@@ -1182,6 +1198,16 @@ if(localStorage.getItem("soc_dim")==="1")document.body.classList.add("dim");
     <div class="card-hd">
       <div class="card-ttl">🗂 ALERT GROUPS — DEDUPLICATION</div>
       <button class="btn btn-sm" onclick="loadAlertGroups()">↻ Refresh</button>
+    </div>
+    <div style="display:flex;gap:6px;padding:6px 10px;border-bottom:1px solid var(--b1);flex-wrap:wrap;background:rgba(0,0,0,.12)">
+      <input class="fi" id="ag-q" placeholder="Search rule, IP, agent..." style="flex:1;min-width:140px;font-size:11px" oninput="agSearchDebounce()">
+      <select class="fi" id="ag-sev" style="width:120px;font-size:11px" onchange="_agPage=1;loadAlertGroups()">
+        <option value="">All Severities</option>
+        <option value="critical">Critical</option>
+        <option value="high">High</option>
+        <option value="medium">Medium</option>
+        <option value="low">Low</option>
+      </select>
     </div>
     <div id="corr-alert-groups"><div class="loading"><div class="spin"></div></div></div>
   </div>
@@ -1198,8 +1224,9 @@ if(localStorage.getItem("soc_dim")==="1")document.body.classList.add("dim");
     </div>
     <!-- Visual Correlation Graph -->
     <div class="card mb">
-      <div class="card-hd"><div class="card-ttl">CORRELATION GRAPH</div><div style="font-size:9px;font-family:var(--fm);color:#8ab0d0" id="cg-hint">Drag nodes to rearrange</div></div>
+      <div class="card-hd"><div class="card-ttl">CORRELATION GRAPH</div><div style="font-size:9px;font-family:var(--fm);color:#8ab0d0" id="cg-hint">Drag nodes to rearrange · Click nodes for details</div></div>
       <div id="corr-graph"></div>
+      <div id="cg-node-detail" style="display:none;padding:8px 12px;margin:4px 0;background:var(--bg2);border:1px solid var(--b2);border-radius:4px;font-size:11px"></div>
     </div>
     <div class="card"><div class="card-hd"><div class="card-ttl">SOCPilots AI REPORT</div></div><div id="corr-ai" class="ai-txt"></div></div>
   </div>
@@ -5621,27 +5648,125 @@ async function loadInvHistory(page){
 }
 function setInvPageSize(sel){_invPageSize=parseInt(sel.value)||50;_invPage=1;loadInvHistory();}
 
+let _invModalId = null;
+
 async function viewSavedInvestigation(id){
   const d = await G(`/api/investigations/${id}`);
   if(!d||d.error){toast('Failed to load','warn'); return;}
+  _invModalId = id;
 
-  document.getElementById('modal-investigation-body').innerHTML = `
+  const metaBar = `
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;padding:8px 12px;background:var(--cdim);border-radius:3px">
       <span class="badge ${sbadge(d.severity)}">L${d.rule_level} ${d.severity}</span>
       <span style="font-family:var(--fm);font-size:11px;color:var(--c)">Rule ${esc(d.rule_id)}</span>
       <span style="font-family:var(--fm);font-size:9px;color:var(--txt3);margin-left:auto">
-        ${d.auto_triaged?'🤖 Auto-triaged':'👤 ' + esc(d.created_by)} • ${fmtDate(d.created_at)} • ${d.duration_ms}ms
+        ${d.auto_triaged?'🤖 Auto-triaged':'👤 '+esc(d.created_by)} • ${fmtDate(d.created_at)} • ${d.duration_ms}ms
       </span>
     </div>
     <div style="font-size:11px;color:var(--txt2);margin-bottom:8px;padding:6px 10px;background:var(--bg2);border-radius:3px">
       <strong>Alert:</strong> ${esc(d.description||'—')}<br>
       <strong>Agent:</strong> ${esc(d.agent||'—')} | <strong>Src IP:</strong> ${esc(d.src_ip||'—')}
+    </div>`;
+
+  const comments = d.comments || [];
+  const related  = d.related  || [];
+
+  const commentsHtml = `
+    <div id="inv-comments-list" style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px;max-height:260px;overflow-y:auto">
+      ${comments.length ? comments.map(c=>`
+        <div style="padding:8px 10px;background:var(--bg2);border:1px solid var(--b1);border-radius:4px">
+          <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+            <span style="font-size:10px;color:var(--c);font-family:var(--fm)">${esc(c.username)}</span>
+            <span style="font-size:9px;color:var(--txt3);font-family:var(--fm)">${fmtDate(c.created_at)}</span>
+          </div>
+          <div style="font-size:11px;color:var(--txt);white-space:pre-wrap">${esc(c.body)}</div>
+        </div>`).join('') : '<div style="font-size:10px;color:var(--txt3);padding:12px;text-align:center">No comments yet — be the first to add context</div>'}
     </div>
-    <div class="ai-txt" id="modal-inv-text">${parseAIMarkdown(d.report || '')}</div>
-    ${_feedbackBar(d.id)}
+    <div style="display:flex;gap:6px">
+      <textarea id="inv-comment-input" class="fi" placeholder="Add analyst comment..." rows="2"
+        style="flex:1;resize:vertical;font-size:12px;font-family:inherit"
+        onkeydown="if(event.ctrlKey&&event.key==='Enter')invSubmitComment()"></textarea>
+      <button class="btn btn-p" style="align-self:flex-end" onclick="invSubmitComment()">Post</button>
+    </div>
+    <div style="font-size:9px;color:var(--txt3);margin-top:4px;font-family:var(--fm)">Ctrl+Enter to post</div>`;
+
+  const relatedHtml = related.length ? `
+    <div class="tbl">
+    <table style="width:100%;border-collapse:collapse;font-size:10px;font-family:var(--fm)">
+      <thead><tr style="color:var(--txt3);border-bottom:1px solid var(--b1)">
+        <th style="text-align:left;padding:5px 8px">Date</th>
+        <th style="text-align:left;padding:5px 8px">Severity</th>
+        <th style="text-align:left;padding:5px 8px">Rule</th>
+        <th style="text-align:left;padding:5px 8px">Alert</th>
+        <th style="text-align:left;padding:5px 8px">Agent</th>
+        <th style="padding:5px 8px"></th>
+      </tr></thead>
+      <tbody>${related.map(r=>`<tr style="border-bottom:1px solid var(--b1)">
+        <td style="padding:5px 8px;color:var(--txt3);white-space:nowrap">${fmtDate(r.created_at)}</td>
+        <td style="padding:5px 8px"><span class="badge ${sbadge(r.severity)}" style="font-size:8px">${r.severity}</span></td>
+        <td style="padding:5px 8px;color:var(--c)">${esc(r.rule_id||'—')}</td>
+        <td style="padding:5px 8px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc((r.description||'').slice(0,60))}</td>
+        <td style="padding:5px 8px;color:var(--txt2)">${esc(r.agent||'—')}</td>
+        <td style="padding:5px 8px"><button class="btn btn-sm" style="padding:2px 7px" onclick="viewSavedInvestigation(${r.id})">View</button></td>
+      </tr>`).join('')}</tbody>
+    </table></div>` : '<div style="font-size:10px;color:var(--txt3);padding:16px;text-align:center">No related investigations found</div>';
+
+  document.getElementById('modal-investigation-body').innerHTML = metaBar + `
+    <div style="display:flex;gap:4px;margin-bottom:10px;border-bottom:1px solid var(--b1);padding-bottom:4px">
+      <button id="inv-tab-report"   class="btn btn-p btn-sm" onclick="invTabShow('report')">Report</button>
+      <button id="inv-tab-comments" class="btn btn-sm"       onclick="invTabShow('comments')">Comments (${comments.length})</button>
+      <button id="inv-tab-related"  class="btn btn-sm"       onclick="invTabShow('related')">Related (${related.length})</button>
+    </div>
+    <div id="inv-pane-report">
+      <div class="ai-txt" id="modal-inv-text">${parseAIMarkdown(d.report || '')}</div>
+      ${_feedbackBar(d.id)}
+    </div>
+    <div id="inv-pane-comments" style="display:none">${commentsHtml}</div>
+    <div id="inv-pane-related"  style="display:none">${relatedHtml}</div>
   `;
   document.getElementById('modal-investigation-body').setAttribute('data-report', d.report || '');
   openModal('modal-investigation');
+}
+
+function invTabShow(tab){
+  ['report','comments','related'].forEach(t=>{
+    const pane = document.getElementById(`inv-pane-${t}`);
+    const btn  = document.getElementById(`inv-tab-${t}`);
+    if(!pane||!btn) return;
+    pane.style.display = t===tab ? '' : 'none';
+    btn.className = t===tab ? 'btn btn-p btn-sm' : 'btn btn-sm';
+  });
+}
+
+async function invSubmitComment(){
+  const input = document.getElementById('inv-comment-input');
+  const body  = (input?.value||'').trim();
+  if(!body){ toast('Comment cannot be empty','warn'); return; }
+  if(!_invModalId){ toast('No investigation selected','warn'); return; }
+  const r = await P(`/api/investigations/${_invModalId}/comments`, { body });
+  if(!r||r.error){ toast(r?.error||'Failed to post comment','warn'); return; }
+  input.value = '';
+  // Refresh comment list
+  const list = document.getElementById('inv-comments-list');
+  if(list){
+    const c = r.comment;
+    const row = document.createElement('div');
+    row.style.cssText='padding:8px 10px;background:var(--bg2);border:1px solid var(--b1);border-radius:4px';
+    row.innerHTML=`
+      <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+        <span style="font-size:10px;color:var(--c);font-family:var(--fm)">${esc(c.username)}</span>
+        <span style="font-size:9px;color:var(--txt3);font-family:var(--fm)">${fmtDate(c.created_at)}</span>
+      </div>
+      <div style="font-size:11px;color:var(--txt);white-space:pre-wrap">${esc(c.body)}</div>`;
+    // Remove "no comments" placeholder if present
+    if(list.children.length===1 && list.firstElementChild.style.textAlign==='center') list.innerHTML='';
+    list.appendChild(row);
+    list.scrollTop = list.scrollHeight;
+    // Update tab count
+    const tabBtn = document.getElementById('inv-tab-comments');
+    if(tabBtn) tabBtn.textContent = `Comments (${list.children.length})`;
+  }
+  toast('Comment posted','ok');
 }
 
 function invCopyFromModal(){
@@ -6145,13 +6270,21 @@ async function loadUebaCorrelations(){
       </div>`).join('')}</div>`;
 }
 
+let _agSearchTimer = null;
+function agSearchDebounce(){ clearTimeout(_agSearchTimer); _agSearchTimer=setTimeout(()=>{_agPage=1;loadAlertGroups();},300); }
+
 async function loadAlertGroups(page){
   if(page!==undefined) _agPage=page;
   const el = document.getElementById('corr-alert-groups');
   if(!el) return;
   el.innerHTML=spin();
-  const data = await G(`/api/alert-groups?page=${_agPage}&page_size=${_agPageSize}`).catch(()=>null);
-  if(!data||!data.groups?.length){ el.innerHTML=empty('No alert groups yet — groups form when the same rule fires from the same IP within 5 minutes'); return; }
+  const q   = (document.getElementById('ag-q')?.value||'').trim();
+  const sev = document.getElementById('ag-sev')?.value||'';
+  const params = new URLSearchParams({ page: _agPage, page_size: _agPageSize });
+  if(q)   params.set('q', q);
+  if(sev) params.set('severity', sev);
+  const data = await G(`/api/alert-groups?${params}`).catch(()=>null);
+  if(!data||!data.groups?.length){ el.innerHTML=empty('No alert groups match — groups form when the same rule fires from the same IP within 5 minutes'); return; }
   const pgn=buildPaginator(_agPage,_agPageSize,data.total||data.groups.length,
     `loadAlertGroups(${_agPage-1})`,`loadAlertGroups(${_agPage+1})`,
     'setAgPageSize(this)');
@@ -6160,6 +6293,7 @@ async function loadAlertGroups(page){
       <th style="text-align:left;padding:5px 8px">Source IP</th>
       <th style="text-align:left;padding:5px 8px">Rule ID</th>
       <th style="text-align:left;padding:5px 8px">Agent</th>
+      <th style="text-align:left;padding:5px 8px">Severity</th>
       <th style="text-align:center;padding:5px 8px">Count</th>
       <th style="text-align:left;padding:5px 8px">First Seen</th>
       <th style="text-align:left;padding:5px 8px">Last Seen</th>
@@ -6168,7 +6302,8 @@ async function loadAlertGroups(page){
       <td style="padding:5px 8px;color:var(--r)">${esc(g.src_ip||'—')}</td>
       <td style="padding:5px 8px;color:var(--c)">${esc(g.rule_id||'—')}</td>
       <td style="padding:5px 8px">${esc(g.agent||'—')}</td>
-      <td style="padding:5px 8px;text-align:center"><span class="badge ${g.count>=5?'crit':g.count>=3?'high':'medium'}" style="font-size:8px">×${g.count}</span></td>
+      <td style="padding:5px 8px"><span class="badge ${sbadge(g.severity||'low')}" style="font-size:8px">${g.severity||'—'}</span></td>
+      <td style="padding:5px 8px;text-align:center"><span class="badge ${g.count>=5?'critical':g.count>=3?'high':'medium'}" style="font-size:8px">×${g.count}</span></td>
       <td style="padding:5px 8px;color:var(--txt2)">${fmtDate(g.first_seen)}</td>
       <td style="padding:5px 8px;color:var(--txt2)">${fmtDate(g.last_seen)}</td>
     </tr>`).join('')}</tbody>
@@ -6308,7 +6443,39 @@ function buildCorrGraph(indicator,siemHits,hiveHits){
       t.style.left=(x+r.width>window.innerWidth?ev.clientX-r.width-16:x)+'px';
       t.style.top =(y+r.height>window.innerHeight?ev.clientY-r.height-10:y)+'px';
     })
-    .on('mouseout',()=>{ const t=document.getElementById('ueba-tooltip'); if(t)t.style.display='none'; });
+    .on('mouseout',()=>{ const t=document.getElementById('ueba-tooltip'); if(t)t.style.display='none'; })
+    .on('click',(ev,d)=>{
+      ev.stopPropagation();
+      const panel = document.getElementById('cg-node-detail');
+      if(!panel) return;
+      if(d.type==='siem'){
+        const idx = parseInt((d.id||'').replace('siem-',''));
+        const hit = siemHits[idx];
+        if(!hit) return;
+        panel.style.display='block';
+        panel.innerHTML=`<div style="font-size:9px;color:var(--txt3);font-family:var(--fm);margin-bottom:4px;letter-spacing:1px">SIEM ALERT DETAIL</div>
+          <div style="font-size:11px;color:var(--txt);margin-bottom:4px">${esc(hit.desc||hit.rule_desc||'—')}</div>
+          <div style="display:flex;gap:10px;font-size:10px;color:var(--txt2);font-family:var(--fm)">
+            ${hit.agent?`<span>Agent: <span style="color:var(--c)">${esc(hit.agent)}</span></span>`:''}
+            ${hit.src_ip?`<span>Src IP: <span style="color:var(--r)">${esc(hit.src_ip)}</span></span>`:''}
+            ${hit.rule_id?`<span>Rule: <span style="color:var(--c)">${esc(String(hit.rule_id))}</span></span>`:''}
+            ${hit.ts?`<span>${new Date(hit.ts).toLocaleString()}</span>`:''}
+          </div>`;
+      } else if(d.type==='hive'){
+        const idx = parseInt((d.id||'').replace('hive-',''));
+        const hit = hiveHits[idx];
+        if(!hit) return;
+        panel.style.display='block';
+        panel.innerHTML=`<div style="font-size:9px;color:var(--txt3);font-family:var(--fm);margin-bottom:4px;letter-spacing:1px">SP-CM CASE DETAIL</div>
+          <div style="font-size:11px;color:var(--txt);margin-bottom:4px">${esc(hit.title||d.label)}</div>
+          <div style="display:flex;gap:10px;font-size:10px;color:var(--txt2);font-family:var(--fm)">
+            <span>Status: <span class="badge ${sbadge(hit.status)}" style="font-size:8px">${esc(hit.status||'—')}</span></span>
+            ${hit.severity?`<span>Severity: <span class="badge ${sbadge(hit.severity)}" style="font-size:8px">${esc(hit.severity)}</span></span>`:''}
+          </div>`;
+      } else {
+        panel.style.display='none';
+      }
+    });
 
   // Draw circles + icons + labels per node
   node.each(function(d){
@@ -10317,12 +10484,26 @@ function appendCorrLiveFeed(d){
 function renderCorrLiveFeed(){
   const el = document.getElementById('corr-live-feed');
   if(!el) return;
-  if(!_corrLiveRows.length){
-    el.innerHTML='<div style="font-size:10px;color:var(--txt3);font-family:var(--fm);padding:16px;text-align:center">No live correlations yet — correlations appear here in real-time</div>';
+  const minRisk = parseInt(document.getElementById('clf-risk')?.value||'0') || 0;
+  const typeF   = (document.getElementById('clf-type')?.value||'').toLowerCase();
+  const qF      = (document.getElementById('clf-q')?.value||'').toLowerCase();
+  const rows = _corrLiveRows.filter(d=>{
+    if(minRisk && (d.ueba_risk||0) < minRisk) return false;
+    if(typeF && !(d.correlation_type||'').toLowerCase().includes(typeF)) return false;
+    if(qF){
+      const haystack = ((d.entity||'') + ' ' + (d.mitre_tactic||[]).join(' ')).toLowerCase();
+      if(!haystack.includes(qF)) return false;
+    }
+    return true;
+  });
+  if(!rows.length){
+    el.innerHTML='<div style="font-size:10px;color:var(--txt3);font-family:var(--fm);padding:16px;text-align:center">'
+      + (_corrLiveRows.length ? 'No correlations match current filters' : 'No live correlations yet — correlations appear here in real-time')
+      + '</div>';
     return;
   }
   const sevColor = s => s==='critical'?'var(--r)':s==='high'?'#ff5722':'#ff9800';
-  el.innerHTML = _corrLiveRows.slice(0,30).map(d=>`
+  el.innerHTML = rows.slice(0,30).map(d=>`
     <div style="display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:start;padding:8px;border-bottom:1px solid var(--b1);font-size:10px;font-family:var(--fm)">
       <span style="color:${d.ueba_risk>=70?'var(--r)':d.ueba_risk>=40?'#ff9800':'var(--y)'};font-size:13px">🔗</span>
       <div>
