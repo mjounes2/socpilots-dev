@@ -687,6 +687,7 @@ app.get('/api/rules', authMW, async (req, res) => {
     if (_rulesCache && now - _rulesCacheTime < 60000) return res.json(_rulesCache);
     const r = await osSearch({
       size: 0,
+      query: { range: { '@timestamp': { gte: 'now-7d' } } },
       aggs: {
         rules: {
           terms: { field: 'rule.id', size: 2000, order: { _count: 'desc' } },
@@ -722,6 +723,8 @@ app.get('/api/rules', authMW, async (req, res) => {
     res.json(result);
   } catch (e) {
     console.error('[rules]', e.message);
+    // Serve stale cache on transient OpenSearch errors (429, 503) rather than failing
+    if (_rulesCache) return res.json({ ..._rulesCache, stale: true });
     res.status(502).json({ error: e.message });
   }
 });
@@ -5963,13 +5966,65 @@ async function autoIngestAlerts(windowMinutes = 15) {
   } finally {
     _iocIngestRunning = false;
   }
+  // Kick off enrichment for newly ingested IOCs immediately
+  if (newCount > 0 && !_enrichRunning) {
+    setTimeout(() => autoEnrichJob(Math.min(newCount, 10)), 5000);
+  }
   return { new: newCount, updated: updCount };
+}
+
+// ── IOC auto-enrichment job ───────────────────────────────────────
+let _enrichRunning  = false;
+let _enrichLastRun  = null;
+let _enrichLastCount = 0;
+
+const _VT_TYPES = new Set(['ip', 'domain', 'md5', 'sha1', 'sha256']);
+
+async function autoEnrichJob(batchSize = 10) {
+  if (_enrichRunning) return { skipped: true };
+  _enrichRunning = true;
+  let enriched = 0;
+  try {
+    // Prioritise IPs/domains (most actionable), then URLs, CVEs, then hashes; oldest first
+    const r = await db.pool.query(
+      `SELECT id, indicator, ioc_type FROM ioc_store
+       WHERE enriched_at IS NULL
+       ORDER BY
+         CASE ioc_type WHEN 'ip' THEN 1 WHEN 'domain' THEN 2 WHEN 'url' THEN 3 WHEN 'cve' THEN 4 ELSE 5 END,
+         created_at ASC
+       LIMIT $1`,
+      [batchSize]
+    );
+    const iocs = r.rows;
+    if (iocs.length) console.log(`[ioc-enrich] batch start — ${iocs.length} IOCs`);
+    for (const ioc of iocs) {
+      try {
+        await enrichIOC(ioc);
+        enriched++;
+      } catch(e) {
+        console.error(`[ioc-enrich] failed ${ioc.indicator.slice(0, 40)}:`, e.message);
+      }
+      // VT free tier: 4/min → 16 s gap; non-VT types: 1 s
+      const delay = _VT_TYPES.has(ioc.ioc_type) ? 16000 : 1000;
+      await new Promise(res => setTimeout(res, delay));
+    }
+  } catch(e) {
+    console.error('[ioc-enrich] job error:', e.message);
+  } finally {
+    _enrichRunning   = false;
+    _enrichLastRun   = new Date().toISOString();
+    _enrichLastCount = enriched;
+    if (enriched) console.log(`[ioc-enrich] done — enriched ${enriched} IOCs`);
+  }
+  return { enriched };
 }
 
 // ── IOC Store routes ──────────────────────────────────────────────
 app.get('/api/ioc-store/stats', authMW, async (req, res) => {
   try {
     const stats = await db.getIOCStats();
+    const queueR = await db.pool.query(`SELECT COUNT(*) AS cnt FROM ioc_store WHERE enriched_at IS NULL`);
+    const enrichQueue = parseInt(queueR.rows[0]?.cnt || 0);
     // Enrichment source status
     const sources = [
       { name: 'VirusTotal',    key: 'VIRUSTOTAL_API_KEY',    configured: !!process.env.VIRUSTOTAL_API_KEY },
@@ -5986,7 +6041,8 @@ app.get('/api/ioc-store/stats', authMW, async (req, res) => {
     res.json({
       ...stats,
       enrichment_sources: sources,
-      ingest: { last_run: _iocIngestLastRun, running: _iocIngestRunning, last_new: _iocIngestLastCount },
+      ingest:  { last_run: _iocIngestLastRun, running: _iocIngestRunning, last_new: _iocIngestLastCount },
+      enrich:  { last_run: _enrichLastRun,    running: _enrichRunning,    last_count: _enrichLastCount, queue: enrichQueue },
     });
   } catch(e) { console.error('[ioc-store/stats]', e.message); res.status(502).json({ error: e.message }); }
 });
@@ -5997,6 +6053,14 @@ app.post('/api/ioc-store/ingest-alerts', authMW, requireRole('l2'), async (req, 
   const window = Math.min(parseInt(req.body?.window_minutes) || 60, 1440); // cap at 24h
   autoIngestAlerts(window).catch(() => {});
   res.json({ status: 'started', window_minutes: window });
+});
+
+// Manual trigger — enrich unenriched IOCs (rate-limited background job)
+app.post('/api/ioc-store/enrich-all', authMW, requireRole('l2'), async (req, res) => {
+  if (_enrichRunning) return res.json({ status: 'already_running' });
+  const batchSize = Math.min(parseInt(req.body?.batch_size) || 10, 50);
+  autoEnrichJob(batchSize).catch(() => {});
+  res.json({ status: 'started', batch_size: batchSize });
 });
 
 app.get('/api/ioc-store', authMW, async (req, res) => {
@@ -6231,6 +6295,9 @@ db.initSchema()
     // IOC auto-ingest: every 15 min; first run 2 min after boot to let OpenSearch warm up
     setInterval(() => autoIngestAlerts(15), 15 * 60_000);
     setTimeout(()  => autoIngestAlerts(60), 2 * 60_000);  // first run: last 60 min
+    // IOC auto-enrich: every 30 min; first run 5 min after boot (staggered from ingest)
+    setInterval(() => autoEnrichJob(10),    30 * 60_000);
+    setTimeout(()  => autoEnrichJob(10),     5 * 60_000);
   })
   .catch(e => console.error('[DB] init failed:', e.message));
 ueba.initSchema()
