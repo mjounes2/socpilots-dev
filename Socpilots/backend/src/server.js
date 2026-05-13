@@ -237,22 +237,59 @@ async function seedUsersFromEnv() {
 }
 
 // ─── OPENSEARCH HELPER ─────────────────────────────────────
-async function osSearch(body, index = IDX, size = 200) {
-  const r = await axios.post(`${OS_URL}/${index}/_search`, body, {
-    auth: { username: OS_USER, password: OS_PASS },
-    httpsAgent, timeout: 15000,
-    headers: { 'Content-Type': 'application/json' },
-  });
-  return r.data;
+async function osSearch(body, index = IDX, size = 200, _retry = 0) {
+  const MAX_OS_RETRIES = 3;
+  try {
+    const r = await axios.post(`${OS_URL}/${index}/_search`, body, {
+      auth: { username: OS_USER, password: OS_PASS },
+      httpsAgent, timeout: 15000,
+      headers: { 'Content-Type': 'application/json' },
+      validateStatus: s => s < 500 || s === 503,
+    });
+    if (r.status === 429 && _retry < MAX_OS_RETRIES) {
+      const wait = (2 ** _retry) * 2000 + Math.random() * 1000; // 2s, 4s, 8s + jitter
+      console.warn(`[osSearch] 429 — retry ${_retry + 1}/${MAX_OS_RETRIES} in ${Math.round(wait)}ms`);
+      await new Promise(res => setTimeout(res, wait));
+      return osSearch(body, index, size, _retry + 1);
+    }
+    if (r.status >= 400) throw new Error(`Request failed with status code ${r.status}`);
+    return r.data;
+  } catch (e) {
+    if (e.response?.status === 429 && _retry < MAX_OS_RETRIES) {
+      const wait = (2 ** _retry) * 2000 + Math.random() * 1000;
+      console.warn(`[osSearch] 429 (catch) — retry ${_retry + 1}/${MAX_OS_RETRIES} in ${Math.round(wait)}ms`);
+      await new Promise(res => setTimeout(res, wait));
+      return osSearch(body, index, size, _retry + 1);
+    }
+    throw e;
+  }
 }
 
-async function osCount(body, index = IDX) {
-  const r = await axios.post(`${OS_URL}/${index}/_count`, body, {
-    auth: { username: OS_USER, password: OS_PASS },
-    httpsAgent, timeout: 10000,
-    headers: { 'Content-Type': 'application/json' },
-  });
-  return r.data.count || 0;
+async function osCount(body, index = IDX, _retry = 0) {
+  const MAX_OS_RETRIES = 3;
+  try {
+    const r = await axios.post(`${OS_URL}/${index}/_count`, body, {
+      auth: { username: OS_USER, password: OS_PASS },
+      httpsAgent, timeout: 10000,
+      headers: { 'Content-Type': 'application/json' },
+      validateStatus: s => s < 500 || s === 503,
+    });
+    if (r.status === 429 && _retry < MAX_OS_RETRIES) {
+      const wait = (2 ** _retry) * 2000 + Math.random() * 1000;
+      console.warn(`[osCount] 429 — retry ${_retry + 1}/${MAX_OS_RETRIES} in ${Math.round(wait)}ms`);
+      await new Promise(res => setTimeout(res, wait));
+      return osCount(body, index, _retry + 1);
+    }
+    if (r.status >= 400) throw new Error(`Request failed with status code ${r.status}`);
+    return r.data.count || 0;
+  } catch (e) {
+    if (e.response?.status === 429 && _retry < MAX_OS_RETRIES) {
+      const wait = (2 ** _retry) * 2000 + Math.random() * 1000;
+      await new Promise(res => setTimeout(res, wait));
+      return osCount(body, index, _retry + 1);
+    }
+    throw e;
+  }
 }
 
 // ─── THEHIVE HELPER ────────────────────────────────────────
@@ -2867,7 +2904,7 @@ async function uebaIngestWorker() {
 }
 
 setInterval(() => { uebaIngestWorker(); }, 120_000);
-setTimeout(() => { uebaIngestWorker(); }, 15_000); // first run 15s after boot
+setTimeout(() => { uebaIngestWorker(); }, 60_000); // first run 60s after boot (staggered from triage)
 
 // ═══════════════════════════════════════════════════════════════
 // ─── DARK SOC — AUTONOMOUS HUNT SCHEDULER (every 6 hours) ──────
