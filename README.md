@@ -8,6 +8,8 @@
 [![Python](https://img.shields.io/badge/Python-FastAPI%20%2F%20Flask-3776AB?logo=python)](langchain-agent/main.py)
 [![Go](https://img.shields.io/badge/Go-MCP%20Bridge-00ADD8?logo=go)](thehive-mcp-new/thehive-mcp-new/main.go)
 
+![SOCPilots Architecture](docs/images/architecture.png)
+
 ---
 
 ## Table of Contents
@@ -48,6 +50,10 @@ SOCPilots is a single-server, Docker Compose-based SOC platform designed for sec
 ---
 
 ## Architecture
+
+![Architecture Diagram](docs/images/architecture.png)
+
+### Request Path
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -492,15 +498,45 @@ For full security documentation see [`docs/SECURITY.md`](docs/SECURITY.md).
 
 ## Screenshots
 
-> Screenshots will be added in an upcoming release. See the [Features](#features) section for a full description of each module.
+### Security Dashboard
+Real-time KPI cards, 24h alert volume timeline, top triggered rules, and severity distribution.
 
-Planned screenshots:
-- SOC Dashboard (KPI cards, alert timeline, MITRE widget)
-- MITRE ATT&CK Coverage Heatmap with drill-down
-- LangChain AI Investigation Report
-- UEBA Entity Risk Graph (D3.js force layout)
-- Dark SOC Playbook Execution Log
-- Asset Inventory with agent coverage gaps
+![SOCPilots Dashboard](docs/images/screenshot_dashboard.png)
+
+---
+
+### Security Alerts
+Full-text search, severity/agent/timeframe filters, expandable rows, one-click AI investigation.
+
+![Alerts Page](docs/images/screenshot_alerts.png)
+
+---
+
+### MITRE ATT&CK Coverage Heatmap
+190 Enterprise techniques across 14 tactics. High/Medium/Low/None coverage with MITRE Navigator export.
+
+![MITRE Coverage](docs/images/screenshot_mitre.png)
+
+---
+
+### AI Investigation Report
+LangChain ReAct agent — multi-step tool trace, threat narrative, IOC artifacts, MITRE mapping.
+
+![AI Investigation](docs/images/screenshot_investigation.png)
+
+---
+
+### UEBA — Entity Behavior Analytics
+Neo4j force graph, risk leaderboard, anomaly detection (impossible travel, lateral movement, privilege escalation).
+
+![UEBA Graph](docs/images/screenshot_ueba.png)
+
+---
+
+### Dark SOC — Automated Response Engine
+Playbook execution audit log, consensus gates, FP probability guard, action results.
+
+![Dark SOC](docs/images/screenshot_darksoc.png)
 
 ---
 
