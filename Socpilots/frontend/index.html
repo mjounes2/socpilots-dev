@@ -3725,6 +3725,7 @@ function sbadge(s){
     falsepositive:'falsepositive','false positive':'falsepositive',duplicate:'duplicate',indeterminate:'duplicate'};
   return m[(s||'').toLowerCase().replace(/[\s_-]/g,'')]||'low';
 }
+function sevFromLevel(n){ return n>=12?'critical':n>=8?'high':n>=4?'medium':'low'; }
 function spin(t='Loading...'){return`<div class="loading"><div class="spin"></div><p>${t}</p></div>`;}
 function empty(t){return`<div class="empty"><p>${esc(t)}</p></div>`;}
 function errBnr(t){return`<div class="banner err">${esc(t)}</div>`;}
