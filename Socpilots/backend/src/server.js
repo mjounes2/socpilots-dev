@@ -5680,6 +5680,61 @@ async function callVT(path) {
   } catch { return null; }
 }
 
+// OpenCTI GraphQL enrichment — returns score, description, active indicators, threat actors/malware
+async function callOpenCTI(indicator) {
+  const url = process.env.OPENCTI_URL;
+  const key = process.env.OPENCTI_API_KEY;
+  if (!url || !key) return null;
+  const query = `{
+    stixCyberObservables(filters: {mode: and, filters: [{key: "value", values: ["${indicator.replace(/"/g, '\\"')}"]}], filterGroups: []}) {
+      edges { node {
+        id entity_type observable_value
+        x_opencti_score x_opencti_description
+        created_at updated_at
+        indicators { edges { node { name pattern valid_from valid_until confidence } } }
+        stixCoreRelationships { edges { node {
+          relationship_type
+          to {
+            ... on ThreatActor { name }
+            ... on Malware { name description }
+            ... on AttackPattern { name x_mitre_id }
+            ... on Campaign { name description }
+          }
+        } } }
+      } }
+    }
+  }`;
+  try {
+    const r = await fetch(`${url}/graphql`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+      body: JSON.stringify({ query }),
+      signal: AbortSignal.timeout(12000)
+    });
+    if (!r.ok) return null;
+    const json = await r.json();
+    const node = json?.data?.stixCyberObservables?.edges?.[0]?.node;
+    if (!node) return null;
+    const indicators = node.indicators?.edges?.map(e => e.node) || [];
+    const relations  = node.stixCoreRelationships?.edges?.map(e => e.node).filter(n => n.to && Object.keys(n.to).length) || [];
+    const now = Date.now();
+    const activeIndicators = indicators.filter(i => i.valid_until && new Date(i.valid_until).getTime() > now);
+    return {
+      score: node.x_opencti_score || 0,
+      description: node.x_opencti_description || '',
+      entity_type: node.entity_type,
+      created_at: node.created_at,
+      updated_at: node.updated_at,
+      indicators: activeIndicators.length,
+      threat_actors: relations.filter(r => r.to?.name && !r.to?.x_mitre_id && !r.to?.description?.includes('malware')).map(r => r.to.name),
+      malware: relations.filter(r => r.to?.description !== undefined).map(r => r.to.name).filter(Boolean),
+      attack_patterns: relations.filter(r => r.to?.x_mitre_id).map(r => ({ name: r.to.name, mitre_id: r.to.x_mitre_id })),
+      campaigns: relations.filter(r => r.relationship_type === 'attributed-to' || r.relationship_type === 'part-of').map(r => r.to.name).filter(Boolean),
+      is_active_indicator: activeIndicators.length > 0
+    };
+  } catch { return null; }
+}
+
 async function enrichIOC(ioc) {
   const { id, indicator, ioc_type } = ioc;
   const results = {};
@@ -5708,7 +5763,7 @@ async function enrichIOC(ioc) {
         if (r.ok) { const d = await r.json(); results.shodan = { ports: d.ports, hostnames: d.hostnames, country: d.country_name, org: d.org, vulns: Object.keys(d.vulns||{}) }; await db.saveIOCEnrichment(id, 'shodan', results.shodan, 'success'); }
       } catch { await db.saveIOCEnrichment(id, 'shodan', null, 'error', 'timeout'); }
     }
-    // GreyNoise
+    // GreyNoise (commercial — only runs when API key is set)
     const gnKey = process.env.GREYNOISE_API_KEY;
     if (gnKey) {
       try {
@@ -5716,6 +5771,9 @@ async function enrichIOC(ioc) {
         if (r.ok) { const d = await r.json(); results.greynoise = { noise: d.noise, riot: d.riot, classification: d.classification, name: d.name, message: d.message }; await db.saveIOCEnrichment(id, 'greynoise', results.greynoise, 'success'); }
       } catch { await db.saveIOCEnrichment(id, 'greynoise', null, 'error', 'timeout'); }
     }
+    // OpenCTI
+    const octi = await callOpenCTI(indicator);
+    if (octi) { results.opencti = octi; await db.saveIOCEnrichment(id, 'opencti', octi, 'success'); }
   } else if (ioc_type === 'domain') {
     const vt = await callVT(`/domains/${encodeURIComponent(indicator)}`);
     if (vt?.data?.attributes) {
@@ -5731,6 +5789,9 @@ async function enrichIOC(ioc) {
         if (r.ok) { const d = await r.json(); if (d.results?.[0]) { results.urlscan = { task: d.results[0].task, stats: d.results[0].stats, verdict: d.results[0].verdicts }; await db.saveIOCEnrichment(id, 'urlscan', results.urlscan, 'success'); } }
       } catch { await db.saveIOCEnrichment(id, 'urlscan', null, 'error', 'timeout'); }
     }
+    // OpenCTI
+    const octi = await callOpenCTI(indicator);
+    if (octi) { results.opencti = octi; await db.saveIOCEnrichment(id, 'opencti', octi, 'success'); }
   } else if (ioc_type === 'url') {
     const usKey = process.env.URLSCAN_API_KEY;
     if (usKey) {
@@ -5739,6 +5800,9 @@ async function enrichIOC(ioc) {
         if (sr.ok) { const d = await sr.json(); if (d.results?.[0]) { results.urlscan = d.results[0].verdicts; await db.saveIOCEnrichment(id, 'urlscan', results.urlscan, 'success'); } }
       } catch { await db.saveIOCEnrichment(id, 'urlscan', null, 'error', 'timeout'); }
     }
+    // OpenCTI (query the URL's domain component as fallback)
+    const octi = await callOpenCTI(indicator);
+    if (octi) { results.opencti = octi; await db.saveIOCEnrichment(id, 'opencti', octi, 'success'); }
   } else if (['md5','sha1','sha256'].includes(ioc_type)) {
     const vt = await callVT(`/files/${encodeURIComponent(indicator)}`);
     if (vt?.data?.attributes) {
@@ -5746,6 +5810,13 @@ async function enrichIOC(ioc) {
       results.virustotal = { malicious: a.last_analysis_stats?.malicious || 0, total: Object.values(a.last_analysis_stats || {}).reduce((s,v)=>s+v,0), meaningful_name: a.meaningful_name, type_description: a.type_description, size: a.size, tags: a.tags, popular_threat_name: a.popular_threat_classification?.suggested_threat_label };
       await db.saveIOCEnrichment(id, 'virustotal', results.virustotal, 'success');
     }
+    // OpenCTI hash lookup
+    const octi = await callOpenCTI(indicator);
+    if (octi) { results.opencti = octi; await db.saveIOCEnrichment(id, 'opencti', octi, 'success'); }
+  } else if (ioc_type === 'cve') {
+    // OpenCTI CVE lookup
+    const octi = await callOpenCTI(indicator);
+    if (octi) { results.opencti = octi; await db.saveIOCEnrichment(id, 'opencti', octi, 'success'); }
   }
 
   // OTX cross-reference (all types via existing feed)
@@ -5761,14 +5832,24 @@ async function enrichIOC(ioc) {
   } catch { /* non-fatal */ }
 
   // Derive overall reputation from enrichment results
-  const vtMal = results.virustotal?.malicious || 0;
-  const abConf = results.abuseipdb?.abuseConfidenceScore || 0;
-  const gnClass = results.greynoise?.classification;
-  const otxHit  = results.otx?.length > 0;
+  const vtMal    = results.virustotal?.malicious || 0;
+  const abConf   = results.abuseipdb?.abuseConfidenceScore || 0;
+  const gnClass  = results.greynoise?.classification;
+  const otxHit   = results.otx?.length > 0;
+  const octiScore = results.opencti?.score || 0;
+  const octiActive = results.opencti?.is_active_indicator || false;
   let reputation = 'unknown', risk = 0, confidence = 0;
-  if (vtMal >= 5 || abConf >= 50 || gnClass === 'malicious') { reputation = 'malicious'; risk = Math.min(100, Math.max(vtMal * 8, abConf, gnClass === 'malicious' ? 80 : 0)); confidence = 90; }
-  else if (vtMal >= 1 || abConf >= 10 || otxHit || gnClass === 'unknown') { reputation = 'suspicious'; risk = Math.max(vtMal * 5, abConf * 0.5, otxHit ? 40 : 0); confidence = 70; }
-  else if (gnClass === 'benign' && vtMal === 0 && abConf === 0) { reputation = 'trusted'; risk = 5; confidence = 80; }
+  if (vtMal >= 5 || abConf >= 50 || gnClass === 'malicious' || octiScore >= 70) {
+    reputation = 'malicious';
+    risk = Math.min(100, Math.max(vtMal * 8, abConf, gnClass === 'malicious' ? 80 : 0, octiScore));
+    confidence = 90;
+  } else if (vtMal >= 1 || abConf >= 10 || otxHit || gnClass === 'unknown' || octiScore >= 40 || octiActive) {
+    reputation = 'suspicious';
+    risk = Math.max(vtMal * 5, abConf * 0.5, otxHit ? 40 : 0, octiScore * 0.6);
+    confidence = 70;
+  } else if (gnClass === 'benign' && vtMal === 0 && abConf === 0 && octiScore < 20) {
+    reputation = 'trusted'; risk = 5; confidence = 80;
+  }
   await db.updateIOC(id, { reputation, risk_score: Math.round(risk), confidence, enriched_at: new Date() });
   return { results, reputation, risk_score: Math.round(risk) };
 }
@@ -5782,13 +5863,13 @@ app.get('/api/ioc-store/stats', authMW, async (req, res) => {
       { name: 'VirusTotal',    key: 'VIRUSTOTAL_API_KEY',    configured: !!process.env.VIRUSTOTAL_API_KEY },
       { name: 'AbuseIPDB',     key: 'ABUSEIPDB_API_KEY',     configured: !!process.env.ABUSEIPDB_API_KEY },
       { name: 'Shodan',        key: 'SHODAN_API_KEY',         configured: !!process.env.SHODAN_API_KEY },
-      { name: 'GreyNoise',     key: 'GREYNOISE_API_KEY',      configured: !!process.env.GREYNOISE_API_KEY },
-      { name: 'URLScan',       key: 'URLSCAN_API_KEY',        configured: !!process.env.URLSCAN_API_KEY },
-      { name: 'OTX AlienVault',key: 'OTX_API_KEY',           configured: !!process.env.OTX_API_KEY },
-      { name: 'Hybrid Analysis',key:'HYBRID_ANALYSIS_API_KEY',configured: !!process.env.HYBRID_ANALYSIS_API_KEY },
-      { name: 'MISP',          key: 'MISP_URL',               configured: !!(process.env.MISP_URL && process.env.MISP_API_KEY) },
-      { name: 'OpenCTI',       key: 'OPENCTI_URL',            configured: !!(process.env.OPENCTI_URL && process.env.OPENCTI_API_KEY) },
-      { name: 'CrowdSec',      key: 'CROWDSEC_API_KEY',       configured: !!process.env.CROWDSEC_API_KEY },
+      { name: 'OTX AlienVault',  key: 'OTX_API_KEY',            configured: !!process.env.OTX_API_KEY },
+      { name: 'OpenCTI',         key: 'OPENCTI_URL',            configured: !!(process.env.OPENCTI_URL && process.env.OPENCTI_API_KEY), note: 'Active — threat actors, malware, MITRE ATT&CK' },
+      { name: 'URLScan.io',      key: 'URLSCAN_API_KEY',        configured: !!process.env.URLSCAN_API_KEY },
+      { name: 'GreyNoise',       key: 'GREYNOISE_API_KEY',      configured: !!process.env.GREYNOISE_API_KEY, note: 'Commercial — key required' },
+      { name: 'Hybrid Analysis', key: 'HYBRID_ANALYSIS_API_KEY',configured: !!process.env.HYBRID_ANALYSIS_API_KEY },
+      { name: 'MISP',            key: 'MISP_URL',               configured: !!(process.env.MISP_URL && process.env.MISP_API_KEY) },
+      { name: 'CrowdSec',        key: 'CROWDSEC_API_KEY',       configured: !!process.env.CROWDSEC_API_KEY, note: 'Commercial — key required' },
     ];
     res.json({ ...stats, enrichment_sources: sources });
   } catch(e) { console.error('[ioc-store/stats]', e.message); res.status(502).json({ error: e.message }); }
