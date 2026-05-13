@@ -96,17 +96,30 @@ _sync_client = httpx.Client(verify=False, timeout=30.0)
 def search_alerts(query: str, hours: int = 24) -> str:
     """
     Search Wazuh/OpenSearch for security alerts related to an IP, hostname, user, or keyword.
-    Input:
-      query — search string like '192.168.1.5', 'failed login root', 'gsuite', 'agent_name:webserver'
-      hours — how far back to search (default 24). Use larger values like 168 (7 days) or 720 (30 days)
-              when looking for historical events, inactive integrations, or rare alert types.
-    Returns: list of matching alerts with timestamp, rule, severity, agent, and source IP.
-    Examples: search_alerts("gsuite", 168) to find Google Workspace events from the past week.
+    Input: a single string. To search further back than 24h, append ' hours=N' or ' days=N' to the query.
+      Examples:
+        "gsuite hours=720"          — Google Workspace events from the last 30 days
+        "failed login hours=168"    — failed logins from the last 7 days
+        "192.168.1.5"               — recent alerts for that IP (last 24h)
+    Returns: list of matching alerts with timestamp, rule, severity, agent, source IP, integration.
     """
     if not OPENSEARCH_URL:
         return "OpenSearch not configured"
     try:
-        lookback_hours = max(1, min(int(hours), 720))  # clamp 1h–30d
+        # Parse optional hours/days suffix from query string (handles ReAct single-string input)
+        import re as _re
+        lookback_hours = int(hours)
+        h_match = _re.search(r'\bhours?=(\d+)\b', query, _re.IGNORECASE)
+        d_match = _re.search(r'\bdays?=(\d+)\b', query, _re.IGNORECASE)
+        if h_match:
+            lookback_hours = int(h_match.group(1))
+            query = _re.sub(r'\bhours?=\d+\b', '', query, flags=_re.IGNORECASE).strip().strip(',').strip()
+        elif d_match:
+            lookback_hours = int(d_match.group(1)) * 24
+            query = _re.sub(r'\bdays?=\d+\b', '', query, flags=_re.IGNORECASE).strip().strip(',').strip()
+        # Strip surrounding quotes the ReAct agent sometimes adds
+        query = query.strip('"\'')
+        lookback_hours = max(1, min(lookback_hours, 720))  # clamp 1h–30d
         body = {
             "size": 10,
             "sort": [{"@timestamp": {"order": "desc"}}],
@@ -473,7 +486,7 @@ def query_log_sources(filter_str: str = "all") -> str:
         if not sources:
             return "No log sources found"
 
-        flt = filter_str.strip().lower()
+        flt = filter_str.strip().strip('"\'').lower()
         if flt and flt != "all":
             sources = [
                 s for s in sources
@@ -541,6 +554,16 @@ Tools:
 {tools}
 
 Tool names: {tool_names}
+
+Tool selection guide:
+- Questions about log sources, integrations, cloud connectors (Google Workspace, AWS, Azure, Cloudflare) → query_log_sources
+- Questions about historical alerts or events → search_alerts, append hours=N for longer lookback e.g. "gsuite hours=720" for 30 days
+- Questions about an IP address reputation → enrich_ip
+- Questions about open ports/services on an IP → query_shodan
+- Questions about cases or incidents → check_cases
+- Questions about user/entity behavior → query_ueba
+- Questions about hosts or assets → query_assets
+- Questions about detection rules or MITRE techniques → query_knowledge_base
 
 Input: {input}
 

@@ -5348,6 +5348,7 @@ app.get('/api/log-sources', authMW, async (req, res) => {
     res.json(await _fetchLogSources());
   } catch (e) {
     console.error('[log-sources]', e.message);
+    if (_logSourcesCache) return res.json({ ..._logSourcesCache, stale: true });
     res.status(502).json({ error: e.message });
   }
 });
