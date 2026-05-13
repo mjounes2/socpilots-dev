@@ -3,11 +3,12 @@ SOCPilots — LangChain Multi-Step Investigation Agent
 ReAct pattern: Reason → Act → Observe → loop until answer found
 
 Tools available to the agent:
-  search_alerts     — query Wazuh/OpenSearch for related alerts
-  enrich_ip         — VirusTotal + AbuseIPDB lookup
-  check_cases       — search TheHive for related cases
-  query_ueba        — ask Neo4j for entity behavior profile
-  query_assets      — check if IP/host is in asset inventory
+  search_alerts      — query Wazuh/OpenSearch for related alerts
+  enrich_ip          — VirusTotal + AbuseIPDB lookup
+  check_cases        — search TheHive for related cases
+  query_ueba         — ask Neo4j for entity behavior profile
+  query_assets       — check if IP/host is in asset inventory
+  query_log_sources  — list all active log sources and cloud integrations
 
 Endpoints:
   POST /investigate   — deep multi-step investigation
@@ -440,6 +441,63 @@ def query_assets(ip_or_hostname: str) -> str:
         return f"Asset query error: {e}"
 
 
+@tool
+def query_log_sources(filter_str: str = "all") -> str:
+    """
+    List all active SIEM log sources: endpoint agents, syslog forwarders, and cloud API integrations.
+    Input: 'all' for everything, or a filter keyword like 'cloud_api', 'server', 'proxy',
+           or a vendor/integration name like 'google', 'gsuite', 'aws', 'azure', 'cloudflare'.
+    Returns: each source's name, vendor, type, 24h event count, last seen, and integration tag.
+    Use this for ANY question about what logs are being collected, which integrations are active,
+    whether a specific platform (Google Workspace, AWS, Azure, etc.) is connected, or log coverage gaps.
+    """
+    try:
+        headers = {"Authorization": f"Bearer {INTERNAL_TOKEN}"} if INTERNAL_TOKEN else {}
+        r = _sync_client.get(f"{WEBAPP_URL}/api/log-sources", headers=headers)
+        if r.status_code != 200:
+            return f"Log sources lookup failed: {r.status_code}"
+        data = r.json()
+        sources = data.get("sources", [])
+        summary = data.get("summary", {})
+        if not sources:
+            return "No log sources found"
+
+        flt = filter_str.strip().lower()
+        if flt and flt != "all":
+            sources = [
+                s for s in sources
+                if flt in (s.get("type") or "").lower()
+                or flt in (s.get("vendor") or "").lower()
+                or flt in (s.get("integration") or "").lower()
+                or flt in (s.get("source_name") or "").lower()
+            ]
+            if not sources:
+                return f"No log sources matching '{filter_str}'"
+
+        lines = [
+            f"Log Source Inventory — {summary.get('total_sources', len(sources))} sources, "
+            f"{summary.get('total_events_24h', 0):,} events/24h, "
+            f"EPS: {summary.get('total_eps', 0):.2f}",
+            ""
+        ]
+        for s in sources:
+            status = "ACTIVE" if s.get("event_count_24h", 0) > 0 else "SILENT"
+            integ = f" [integration:{s['integration']}]" if s.get("integration") else ""
+            lines.append(
+                f"  [{status}] {s['source_name']} | vendor:{s.get('vendor','?')} "
+                f"type:{s.get('type','?')}{integ} | "
+                f"24h:{s.get('event_count_24h',0):,} events | "
+                f"last_seen:{s.get('last_seen','?')[:10]}"
+            )
+        if summary.get("cloud_api_sources"):
+            lines.append(f"\nCloud API integrations: {summary['cloud_api_sources']}")
+        if summary.get("anomaly_count"):
+            lines.append(f"Anomalous sources: {summary['anomaly_count']}")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"Log sources query error: {e}"
+
+
 # ── LLM Selection ─────────────────────────────────────────────
 def get_llm(model_preference: str = "auto"):
     if model_preference == "mistral" and MISTRAL_API_KEY:
@@ -490,7 +548,7 @@ Final Answer: [your structured report]
 
 {agent_scratchpad}""")
 
-TOOLS = [search_alerts, enrich_ip, query_shodan, check_cases, query_ueba, query_assets, query_knowledge_base]
+TOOLS = [search_alerts, enrich_ip, query_shodan, check_cases, query_ueba, query_assets, query_knowledge_base, query_log_sources]
 
 # ── Request Models ────────────────────────────────────────────
 class InvestigateRequest(BaseModel):
@@ -859,7 +917,7 @@ def query_agents(filter_str: str = "all") -> str:
         return f"Agent query error: {e}"
 
 
-CHAT_TOOLS = [search_alerts, enrich_ip, query_assets, query_ueba, query_knowledge_base, query_agents]
+CHAT_TOOLS = [search_alerts, enrich_ip, query_assets, query_ueba, query_knowledge_base, query_agents, query_log_sources]
 
 # ChatPromptTemplate required by create_tool_calling_agent (native function calling).
 # Works with GPT-4o-mini and Mistral — far more reliable than string-based ReAct.
