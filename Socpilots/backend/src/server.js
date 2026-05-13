@@ -4693,101 +4693,298 @@ app.post('/api/otx/sync', authMW, requireRole('admin'), async (req, res) => {
 
 const LS_INTEGRATION_MAP = {
   // Cloud providers
-  aws:             { type: 'cloud_api', vendor: 'AWS CloudTrail' },
-  azure:           { type: 'cloud_api', vendor: 'Microsoft Azure' },
-  'azure-ad':      { type: 'cloud_api', vendor: 'Microsoft Azure AD' },
-  'azure-activity':{ type: 'cloud_api', vendor: 'Microsoft Azure' },
-  'azure-storage': { type: 'cloud_api', vendor: 'Microsoft Azure' },
-  'azure-security':{ type: 'cloud_api', vendor: 'Microsoft Azure' },
-  'ms-graph':      { type: 'cloud_api', vendor: 'Microsoft 365' },
-  office365:       { type: 'cloud_api', vendor: 'Microsoft 365' },
-  gcp:             { type: 'cloud_api', vendor: 'Google Cloud Platform' },
+  aws:                  { type: 'cloud_api', vendor: 'AWS CloudTrail' },
+  'aws-cloudtrail':     { type: 'cloud_api', vendor: 'AWS CloudTrail' },
+  'aws-guardduty':      { type: 'cloud_api', vendor: 'AWS GuardDuty' },
+  'aws-securityhub':    { type: 'cloud_api', vendor: 'AWS Security Hub' },
+  'aws-waf':            { type: 'waf',       vendor: 'AWS WAF' },
+  'aws-s3':             { type: 'cloud_api', vendor: 'AWS S3' },
+  azure:                { type: 'cloud_api', vendor: 'Microsoft Azure' },
+  'azure-ad':           { type: 'cloud_api', vendor: 'Microsoft Azure AD' },
+  'azure-activity':     { type: 'cloud_api', vendor: 'Microsoft Azure' },
+  'azure-storage':      { type: 'cloud_api', vendor: 'Microsoft Azure' },
+  'azure-security':     { type: 'cloud_api', vendor: 'Microsoft Azure' },
+  'ms-graph':           { type: 'cloud_api', vendor: 'Microsoft 365' },
+  office365:            { type: 'cloud_api', vendor: 'Microsoft 365' },
+  gcp:                  { type: 'cloud_api', vendor: 'Google Cloud Platform' },
+  'google-workspace':   { type: 'cloud_api', vendor: 'Google Workspace' },
+  'google-cloud':       { type: 'cloud_api', vendor: 'Google Cloud Platform' },
+  gsuite:               { type: 'cloud_api', vendor: 'Google Workspace' },
+  google:               { type: 'cloud_api', vendor: 'Google Workspace' },
   // Cloudflare
-  cloudflare:      { type: 'cloud_api', vendor: 'Cloudflare' },
-  'cloudflare-waf':{ type: 'waf',       vendor: 'Cloudflare WAF' },
-  'cloudflare-dns':{ type: 'network',   vendor: 'Cloudflare DNS' },
-  'cloudflare-access': { type: 'cloud_api', vendor: 'Cloudflare Access' },
+  cloudflare:           { type: 'cloud_api', vendor: 'Cloudflare' },
+  'cloudflare-waf':     { type: 'waf',       vendor: 'Cloudflare WAF' },
+  'cloudflare-dns':     { type: 'network',   vendor: 'Cloudflare DNS' },
+  'cloudflare-access':  { type: 'cloud_api', vendor: 'Cloudflare Access' },
+  // Identity providers
+  okta:                 { type: 'cloud_api', vendor: 'Okta' },
+  'okta-system-log':    { type: 'cloud_api', vendor: 'Okta' },
+  duo:                  { type: 'cloud_api', vendor: 'Duo Security' },
+  'ping-identity':      { type: 'cloud_api', vendor: 'Ping Identity' },
+  onelogin:             { type: 'cloud_api', vendor: 'OneLogin' },
+  // Developer platforms
+  github:               { type: 'cloud_api', vendor: 'GitHub' },
+  'github-audit':       { type: 'cloud_api', vendor: 'GitHub' },
+  gitlab:               { type: 'cloud_api', vendor: 'GitLab' },
+  // Collaboration / SaaS
+  slack:                { type: 'cloud_api', vendor: 'Slack' },
+  zoom:                 { type: 'cloud_api', vendor: 'Zoom' },
+  box:                  { type: 'cloud_api', vendor: 'Box' },
+  dropbox:              { type: 'cloud_api', vendor: 'Dropbox' },
+  salesforce:           { type: 'cloud_api', vendor: 'Salesforce' },
+  servicenow:           { type: 'cloud_api', vendor: 'ServiceNow' },
+  jira:                 { type: 'cloud_api', vendor: 'Jira / Confluence' },
   // Security services
-  virustotal:      { type: 'cloud_api', vendor: 'VirusTotal' },
-  'ms-defender':   { type: 'cloud_api', vendor: 'Microsoft Defender' },
-  'windows-defender':{ type: 'cloud_api', vendor: 'Microsoft Defender' },
-  sentinelone:     { type: 'cloud_api', vendor: 'SentinelOne' },
-  crowdstrike:     { type: 'cloud_api', vendor: 'CrowdStrike' },
+  virustotal:           { type: 'cloud_api', vendor: 'VirusTotal' },
+  'ms-defender':        { type: 'cloud_api', vendor: 'Microsoft Defender' },
+  'windows-defender':   { type: 'cloud_api', vendor: 'Microsoft Defender' },
+  sentinelone:          { type: 'cloud_api', vendor: 'SentinelOne' },
+  crowdstrike:          { type: 'cloud_api', vendor: 'CrowdStrike' },
+  'carbon-black':       { type: 'cloud_api', vendor: 'VMware Carbon Black' },
+  carbonblack:          { type: 'cloud_api', vendor: 'VMware Carbon Black' },
+  cylance:              { type: 'cloud_api', vendor: 'Cylance (BlackBerry)' },
+  tenable:              { type: 'cloud_api', vendor: 'Tenable.io' },
+  'qualys':             { type: 'cloud_api', vendor: 'Qualys' },
+  'rapid7':             { type: 'cloud_api', vendor: 'Rapid7 InsightVM' },
+  'darktrace':          { type: 'cloud_api', vendor: 'Darktrace' },
+  'vectra':             { type: 'cloud_api', vendor: 'Vectra AI' },
 };
 
 const LS_PROGRAM_MAP = {
-  fortigate: { type: 'firewall', vendor: 'Fortinet' }, fgtd: { type: 'firewall', vendor: 'Fortinet' },
-  paloalto:  { type: 'firewall', vendor: 'Palo Alto Networks' }, 'pan-os': { type: 'firewall', vendor: 'Palo Alto Networks' },
-  checkpoint:{ type: 'firewall', vendor: 'Check Point' },
-  'cisco-asa':{ type: 'firewall', vendor: 'Cisco ASA' },
-  'cisco-ios':{ type: 'network', vendor: 'Cisco IOS' },
-  'f5-bigip': { type: 'waf',      vendor: 'F5 BIG-IP' },
-  bluecoat:   { type: 'proxy',    vendor: 'Blue Coat' },
-  squid:      { type: 'proxy',    vendor: 'Squid Proxy' },
-  cloudflared:{ type: 'cloud_api', vendor: 'Cloudflare' },
-  cloudflare: { type: 'cloud_api', vendor: 'Cloudflare' },
+  // Fortinet
+  fortigate:        { type: 'firewall', vendor: 'Fortinet' },
+  fgtd:             { type: 'firewall', vendor: 'Fortinet' },
+  fortianalyzer:    { type: 'cloud_api', vendor: 'Fortinet FortiAnalyzer' },
+  fortiproxy:       { type: 'proxy',   vendor: 'Fortinet FortiProxy' },
+  fortisiem:        { type: 'cloud_api', vendor: 'Fortinet FortiSIEM' },
+  // Palo Alto
+  paloalto:         { type: 'firewall', vendor: 'Palo Alto Networks' },
+  'pan-os':         { type: 'firewall', vendor: 'Palo Alto Networks' },
+  'panos':          { type: 'firewall', vendor: 'Palo Alto Networks' },
+  panorama:         { type: 'firewall', vendor: 'Palo Alto Panorama' },
+  // Check Point
+  checkpoint:       { type: 'firewall', vendor: 'Check Point' },
+  'check-point':    { type: 'firewall', vendor: 'Check Point' },
+  // Cisco
+  'cisco-asa':      { type: 'firewall', vendor: 'Cisco ASA' },
+  'cisco-ios':      { type: 'network',  vendor: 'Cisco IOS' },
+  'cisco-ftd':      { type: 'firewall', vendor: 'Cisco FTD (Firepower)' },
+  'cisco-meraki':   { type: 'network',  vendor: 'Cisco Meraki' },
+  'cisco-ise':      { type: 'cloud_api', vendor: 'Cisco ISE' },
+  'cisco-nx-os':    { type: 'network',  vendor: 'Cisco NX-OS' },
+  // Juniper
+  juniper:          { type: 'firewall', vendor: 'Juniper Networks' },
+  'junos':          { type: 'firewall', vendor: 'Juniper Networks' },
+  'srx':            { type: 'firewall', vendor: 'Juniper SRX' },
+  // F5
+  'f5-bigip':       { type: 'waf',      vendor: 'F5 BIG-IP' },
+  'f5-asm':         { type: 'waf',      vendor: 'F5 ASM' },
+  'f5-ltm':         { type: 'network',  vendor: 'F5 LTM' },
+  // Sophos
+  sophos:           { type: 'firewall', vendor: 'Sophos' },
+  'sophos-xg':      { type: 'firewall', vendor: 'Sophos XG Firewall' },
+  // Zscaler
+  zscaler:          { type: 'proxy',    vendor: 'Zscaler' },
+  'zscaler-zia':    { type: 'proxy',    vendor: 'Zscaler ZIA' },
+  'zscaler-zpa':    { type: 'cloud_api', vendor: 'Zscaler ZPA' },
+  // Proxies & load balancers
+  bluecoat:         { type: 'proxy',    vendor: 'Blue Coat' },
+  squid:            { type: 'proxy',    vendor: 'Squid Proxy' },
+  haproxy:          { type: 'proxy',    vendor: 'HAProxy' },
+  traefik:          { type: 'proxy',    vendor: 'Traefik' },
+  varnish:          { type: 'proxy',    vendor: 'Varnish Cache' },
+  // Barracuda
+  barracuda:        { type: 'waf',      vendor: 'Barracuda WAF' },
+  'barracuda-waf':  { type: 'waf',      vendor: 'Barracuda WAF' },
+  // pfSense / OPNsense
+  pfsense:          { type: 'firewall', vendor: 'pfSense' },
+  opnsense:         { type: 'firewall', vendor: 'OPNsense' },
+  // Cloudflare
+  cloudflared:      { type: 'cloud_api', vendor: 'Cloudflare' },
+  cloudflare:       { type: 'cloud_api', vendor: 'Cloudflare' },
+  // Misc network
+  'mikrotik':       { type: 'network',  vendor: 'MikroTik' },
+  'ubiquiti':       { type: 'network',  vendor: 'Ubiquiti UniFi' },
+  'aruba':          { type: 'network',  vendor: 'Aruba Networks' },
 };
 
 const LS_DECODER_MAP = {
-  'nginx-accesslog': { type: 'proxy',     vendor: 'nginx' },
-  'nginx-errorlog':  { type: 'proxy',     vendor: 'nginx' },
-  'apache-errorlog': { type: 'proxy',     vendor: 'Apache' },
-  'apache-access':   { type: 'proxy',     vendor: 'Apache' },
-  sshd:              { type: 'server',    vendor: 'OpenSSH' },
-  syscheck_new_entry:{ type: 'server',    vendor: 'Wazuh FIM' },
-  syscheck_deleted:  { type: 'server',    vendor: 'Wazuh FIM' },
+  // Web servers / proxies
+  'nginx-accesslog':      { type: 'proxy',     vendor: 'nginx' },
+  'nginx-errorlog':       { type: 'proxy',     vendor: 'nginx' },
+  'apache-errorlog':      { type: 'proxy',     vendor: 'Apache' },
+  'apache-access':        { type: 'proxy',     vendor: 'Apache' },
+  'iis':                  { type: 'proxy',     vendor: 'Microsoft IIS' },
+  'haproxy':              { type: 'proxy',     vendor: 'HAProxy' },
+  'traefik':              { type: 'proxy',     vendor: 'Traefik' },
+  // Linux / server
+  sshd:                   { type: 'server',    vendor: 'OpenSSH' },
+  syscheck_new_entry:     { type: 'server',    vendor: 'Wazuh FIM' },
+  syscheck_deleted:       { type: 'server',    vendor: 'Wazuh FIM' },
   syscheck_integrity_changed: { type: 'server', vendor: 'Wazuh FIM' },
+  'linux-kernel':         { type: 'server',    vendor: 'Linux Kernel' },
+  'auditd':               { type: 'server',    vendor: 'Linux Auditd' },
+  'sudo':                 { type: 'server',    vendor: 'Linux sudo' },
+  'cron':                 { type: 'server',    vendor: 'Linux cron' },
+  // Windows
+  'sysmon':               { type: 'server',    vendor: 'Sysmon (Windows)' },
+  'windows-eventchannel': { type: 'server',    vendor: 'Windows Event Log' },
+  'windows_eventchannel': { type: 'server',    vendor: 'Windows Event Log' },
+  'win-eventchannel':     { type: 'server',    vendor: 'Windows Event Log' },
+  'win_eventchannel':     { type: 'server',    vendor: 'Windows Event Log' },
+  'mssql':                { type: 'server',    vendor: 'Microsoft SQL Server' },
+  'iis-access':           { type: 'proxy',     vendor: 'Microsoft IIS' },
+  // Network IDS/IPS
+  'suricata':             { type: 'network',   vendor: 'Suricata IDS' },
+  'zeek':                 { type: 'network',   vendor: 'Zeek IDS' },
+  'snort':                { type: 'network',   vendor: 'Snort IDS' },
   // Cloudflare decoders
-  cloudflare:        { type: 'cloud_api', vendor: 'Cloudflare' },
-  'cloudflare-json': { type: 'cloud_api', vendor: 'Cloudflare' },
-  'cloudflare-waf':  { type: 'waf',       vendor: 'Cloudflare WAF' },
-  'cloudflare-access':{ type: 'cloud_api', vendor: 'Cloudflare Access' },
-  // Azure decoders
-  azure:             { type: 'cloud_api', vendor: 'Microsoft Azure' },
-  'azure-ad':        { type: 'cloud_api', vendor: 'Microsoft Azure AD' },
-  'azure-activity':  { type: 'cloud_api', vendor: 'Microsoft Azure' },
+  cloudflare:             { type: 'cloud_api', vendor: 'Cloudflare' },
+  'cloudflare-json':      { type: 'cloud_api', vendor: 'Cloudflare' },
+  'cloudflare-waf':       { type: 'waf',       vendor: 'Cloudflare WAF' },
+  'cloudflare-access':    { type: 'cloud_api', vendor: 'Cloudflare Access' },
+  // Azure / Microsoft decoders
+  azure:                  { type: 'cloud_api', vendor: 'Microsoft Azure' },
+  'azure-ad':             { type: 'cloud_api', vendor: 'Microsoft Azure AD' },
+  'azure-activity':       { type: 'cloud_api', vendor: 'Microsoft Azure' },
+  // AWS decoders
+  'aws-cloudtrail':       { type: 'cloud_api', vendor: 'AWS CloudTrail' },
+  'aws-guardduty':        { type: 'cloud_api', vendor: 'AWS GuardDuty' },
+  // Google decoders
+  'google-workspace':     { type: 'cloud_api', vendor: 'Google Workspace' },
+  'gcp-pubsub':           { type: 'cloud_api', vendor: 'Google Cloud Platform' },
+  // Okta decoder
+  'okta':                 { type: 'cloud_api', vendor: 'Okta' },
+  // Network device decoders
+  'cisco-asa':            { type: 'firewall',  vendor: 'Cisco ASA' },
+  'cisco-ftd':            { type: 'firewall',  vendor: 'Cisco FTD (Firepower)' },
+  'pf':                   { type: 'firewall',  vendor: 'pfSense' },
+  'sophos':               { type: 'firewall',  vendor: 'Sophos' },
+  'f5-bigip':             { type: 'waf',       vendor: 'F5 BIG-IP' },
 };
 
 const LS_GROUP_MAP = {
-  nginx:  { type: 'proxy',    vendor: 'nginx' },
-  web:    { type: 'proxy',    vendor: null },
-  apache: { type: 'proxy',    vendor: 'Apache' },
-  syscheck: { type: 'server', vendor: 'Wazuh FIM' },
-  firewall: { type: 'firewall', vendor: null },
-  sshd:   { type: 'server',   vendor: 'OpenSSH' },
-  authentication_failed: { type: 'server', vendor: null },
-  pam:    { type: 'server',   vendor: null },
-  // Cloudflare rule groups
-  cloudflare:     { type: 'cloud_api', vendor: 'Cloudflare' },
-  'cloudflare-waf':{ type: 'waf',      vendor: 'Cloudflare WAF' },
-  'cloudflare-dns':{ type: 'network',  vendor: 'Cloudflare DNS' },
-  cloudflare_waf: { type: 'waf',      vendor: 'Cloudflare WAF' },
-  cloudflare_dns: { type: 'network',  vendor: 'Cloudflare DNS' },
-  // Azure / Microsoft rule groups
-  azure:    { type: 'cloud_api', vendor: 'Microsoft Azure' },
-  azure_ad: { type: 'cloud_api', vendor: 'Microsoft Azure AD' },
-  'azure-ad':{ type: 'cloud_api', vendor: 'Microsoft Azure AD' },
-  office365:{ type: 'cloud_api', vendor: 'Microsoft 365' },
-  'ms-defender':{ type: 'cloud_api', vendor: 'Microsoft Defender' },
-  windows_defender: { type: 'cloud_api', vendor: 'Microsoft Defender' },
+  // Web servers
+  nginx:                { type: 'proxy',     vendor: 'nginx' },
+  web:                  { type: 'proxy',     vendor: null },
+  apache:               { type: 'proxy',     vendor: 'Apache' },
+  iis:                  { type: 'proxy',     vendor: 'Microsoft IIS' },
+  haproxy:              { type: 'proxy',     vendor: 'HAProxy' },
+  // Linux
+  syscheck:             { type: 'server',    vendor: 'Wazuh FIM' },
+  sshd:                 { type: 'server',    vendor: 'OpenSSH' },
+  authentication_failed:{ type: 'server',    vendor: null },
+  pam:                  { type: 'server',    vendor: null },
+  auditd:               { type: 'server',    vendor: 'Linux Auditd' },
+  // Windows
+  sysmon:               { type: 'server',    vendor: 'Sysmon (Windows)' },
+  windows:              { type: 'server',    vendor: 'Windows Event Log' },
+  win_evt:              { type: 'server',    vendor: 'Windows Event Log' },
+  mssql:                { type: 'server',    vendor: 'Microsoft SQL Server' },
+  // Firewalls (generic group names)
+  firewall:             { type: 'firewall',  vendor: null },
+  'cisco-asa':          { type: 'firewall',  vendor: 'Cisco ASA' },
+  'cisco-ftd':          { type: 'firewall',  vendor: 'Cisco FTD (Firepower)' },
+  juniper:              { type: 'firewall',  vendor: 'Juniper Networks' },
+  sophos:               { type: 'firewall',  vendor: 'Sophos' },
+  pfsense:              { type: 'firewall',  vendor: 'pfSense' },
+  opnsense:             { type: 'firewall',  vendor: 'OPNsense' },
+  // Network IDS/IPS
+  suricata:             { type: 'network',   vendor: 'Suricata IDS' },
+  zeek:                 { type: 'network',   vendor: 'Zeek IDS' },
+  snort:                { type: 'network',   vendor: 'Snort IDS' },
+  // Cloud: Cloudflare
+  cloudflare:           { type: 'cloud_api', vendor: 'Cloudflare' },
+  'cloudflare-waf':     { type: 'waf',       vendor: 'Cloudflare WAF' },
+  'cloudflare-dns':     { type: 'network',   vendor: 'Cloudflare DNS' },
+  cloudflare_waf:       { type: 'waf',       vendor: 'Cloudflare WAF' },
+  cloudflare_dns:       { type: 'network',   vendor: 'Cloudflare DNS' },
+  // Cloud: Microsoft
+  azure:                { type: 'cloud_api', vendor: 'Microsoft Azure' },
+  azure_ad:             { type: 'cloud_api', vendor: 'Microsoft Azure AD' },
+  'azure-ad':           { type: 'cloud_api', vendor: 'Microsoft Azure AD' },
+  office365:            { type: 'cloud_api', vendor: 'Microsoft 365' },
+  'ms-defender':        { type: 'cloud_api', vendor: 'Microsoft Defender' },
+  windows_defender:     { type: 'cloud_api', vendor: 'Microsoft Defender' },
+  // Cloud: AWS
+  aws:                  { type: 'cloud_api', vendor: 'AWS CloudTrail' },
+  aws_cloudtrail:       { type: 'cloud_api', vendor: 'AWS CloudTrail' },
+  aws_guardduty:        { type: 'cloud_api', vendor: 'AWS GuardDuty' },
+  // Cloud: Google
+  gcp:                  { type: 'cloud_api', vendor: 'Google Cloud Platform' },
+  google_workspace:     { type: 'cloud_api', vendor: 'Google Workspace' },
+  gsuite:               { type: 'cloud_api', vendor: 'Google Workspace' },
+  // Cloud: Identity
+  okta:                 { type: 'cloud_api', vendor: 'Okta' },
+  duo:                  { type: 'cloud_api', vendor: 'Duo Security' },
+  // Cloud: Dev / Collaboration
+  github:               { type: 'cloud_api', vendor: 'GitHub' },
+  gitlab:               { type: 'cloud_api', vendor: 'GitLab' },
+  slack:                { type: 'cloud_api', vendor: 'Slack' },
+  // Cloud: Security
+  crowdstrike:          { type: 'cloud_api', vendor: 'CrowdStrike' },
+  sentinelone:          { type: 'cloud_api', vendor: 'SentinelOne' },
+  carbonblack:          { type: 'cloud_api', vendor: 'VMware Carbon Black' },
+  tenable:              { type: 'cloud_api', vendor: 'Tenable.io' },
 };
 
-// Last-resort: match against agent name / integration name with regex
+// Last-resort: match against agent name / integration name / decoder / groups with regex
 const LS_NAME_PATTERNS = [
-  { re: /cloudflare/i,            type: 'cloud_api', vendor: 'Cloudflare',           confidence: 0.88 },
-  { re: /azure[\s\-_]?ad/i,       type: 'cloud_api', vendor: 'Microsoft Azure AD',   confidence: 0.88 },
-  { re: /azure/i,                  type: 'cloud_api', vendor: 'Microsoft Azure',      confidence: 0.85 },
-  { re: /microsoft[\s\-_]?365/i,  type: 'cloud_api', vendor: 'Microsoft 365',        confidence: 0.88 },
-  { re: /office[\s\-_]?365/i,     type: 'cloud_api', vendor: 'Microsoft 365',        confidence: 0.88 },
-  { re: /ms[\s\-_]?graph/i,       type: 'cloud_api', vendor: 'Microsoft 365',        confidence: 0.88 },
-  { re: /defender/i,              type: 'cloud_api', vendor: 'Microsoft Defender',   confidence: 0.85 },
-  { re: /aws|cloudtrail/i,        type: 'cloud_api', vendor: 'AWS CloudTrail',        confidence: 0.85 },
-  { re: /crowdstrike/i,           type: 'cloud_api', vendor: 'CrowdStrike',           confidence: 0.88 },
-  { re: /sentinelone/i,           type: 'cloud_api', vendor: 'SentinelOne',           confidence: 0.88 },
-  { re: /fortinet|fortigate/i,    type: 'firewall',  vendor: 'Fortinet',             confidence: 0.85 },
-  { re: /palo\s?alto|pan.?os/i,   type: 'firewall',  vendor: 'Palo Alto Networks',   confidence: 0.85 },
-  { re: /checkpoint/i,            type: 'firewall',  vendor: 'Check Point',           confidence: 0.85 },
-  { re: /cisco[\s\-_]?asa/i,      type: 'firewall',  vendor: 'Cisco ASA',            confidence: 0.85 },
+  // Cloud: Cloudflare
+  { re: /cloudflare/i,                     type: 'cloud_api', vendor: 'Cloudflare',                confidence: 0.88 },
+  // Cloud: Microsoft
+  { re: /azure[\s\-_]?ad/i,               type: 'cloud_api', vendor: 'Microsoft Azure AD',        confidence: 0.88 },
+  { re: /azure/i,                          type: 'cloud_api', vendor: 'Microsoft Azure',           confidence: 0.85 },
+  { re: /microsoft[\s\-_]?365/i,          type: 'cloud_api', vendor: 'Microsoft 365',             confidence: 0.88 },
+  { re: /office[\s\-_]?365/i,             type: 'cloud_api', vendor: 'Microsoft 365',             confidence: 0.88 },
+  { re: /ms[\s\-_]?graph/i,               type: 'cloud_api', vendor: 'Microsoft 365',             confidence: 0.88 },
+  { re: /defender/i,                       type: 'cloud_api', vendor: 'Microsoft Defender',        confidence: 0.85 },
+  // Cloud: AWS
+  { re: /aws|cloudtrail/i,                 type: 'cloud_api', vendor: 'AWS CloudTrail',            confidence: 0.85 },
+  { re: /guardduty/i,                      type: 'cloud_api', vendor: 'AWS GuardDuty',             confidence: 0.87 },
+  // Cloud: Google
+  { re: /google[\s\-_]?workspace|gsuite/i, type: 'cloud_api', vendor: 'Google Workspace',         confidence: 0.88 },
+  { re: /google[\s\-_]?cloud|gcp/i,        type: 'cloud_api', vendor: 'Google Cloud Platform',    confidence: 0.87 },
+  // Cloud: Identity
+  { re: /okta/i,                           type: 'cloud_api', vendor: 'Okta',                      confidence: 0.90 },
+  { re: /duo[\s\-_]?security|duo\.com/i,   type: 'cloud_api', vendor: 'Duo Security',              confidence: 0.88 },
+  { re: /ping[\s\-_]?identity/i,           type: 'cloud_api', vendor: 'Ping Identity',             confidence: 0.87 },
+  { re: /onelogin/i,                        type: 'cloud_api', vendor: 'OneLogin',                 confidence: 0.88 },
+  // Cloud: EDR / Security
+  { re: /crowdstrike/i,                    type: 'cloud_api', vendor: 'CrowdStrike',               confidence: 0.90 },
+  { re: /sentinelone/i,                    type: 'cloud_api', vendor: 'SentinelOne',               confidence: 0.90 },
+  { re: /carbon[\s\-_]?black/i,            type: 'cloud_api', vendor: 'VMware Carbon Black',       confidence: 0.88 },
+  { re: /cylance/i,                         type: 'cloud_api', vendor: 'Cylance (BlackBerry)',     confidence: 0.87 },
+  { re: /darktrace/i,                       type: 'cloud_api', vendor: 'Darktrace',                confidence: 0.88 },
+  { re: /vectra/i,                          type: 'cloud_api', vendor: 'Vectra AI',                confidence: 0.87 },
+  { re: /tenable/i,                         type: 'cloud_api', vendor: 'Tenable.io',               confidence: 0.87 },
+  { re: /qualys/i,                          type: 'cloud_api', vendor: 'Qualys',                   confidence: 0.87 },
+  // Cloud: Dev / Collab
+  { re: /github/i,                          type: 'cloud_api', vendor: 'GitHub',                   confidence: 0.88 },
+  { re: /gitlab/i,                          type: 'cloud_api', vendor: 'GitLab',                   confidence: 0.88 },
+  { re: /salesforce/i,                      type: 'cloud_api', vendor: 'Salesforce',               confidence: 0.87 },
+  // Firewalls
+  { re: /fortinet|fortigate/i,             type: 'firewall',  vendor: 'Fortinet',                  confidence: 0.87 },
+  { re: /palo[\s\-_]?alto|pan.?os/i,       type: 'firewall',  vendor: 'Palo Alto Networks',        confidence: 0.87 },
+  { re: /check[\s\-_]?point/i,             type: 'firewall',  vendor: 'Check Point',               confidence: 0.87 },
+  { re: /cisco[\s\-_]?asa/i,               type: 'firewall',  vendor: 'Cisco ASA',                 confidence: 0.87 },
+  { re: /cisco[\s\-_]?ftd|firepower/i,     type: 'firewall',  vendor: 'Cisco FTD (Firepower)',     confidence: 0.87 },
+  { re: /cisco[\s\-_]?meraki/i,            type: 'network',   vendor: 'Cisco Meraki',              confidence: 0.87 },
+  { re: /juniper|junos|srx\d/i,            type: 'firewall',  vendor: 'Juniper Networks',          confidence: 0.87 },
+  { re: /sophos/i,                          type: 'firewall',  vendor: 'Sophos',                   confidence: 0.87 },
+  { re: /pfsense/i,                         type: 'firewall',  vendor: 'pfSense',                  confidence: 0.87 },
+  { re: /opnsense/i,                        type: 'firewall',  vendor: 'OPNsense',                 confidence: 0.87 },
+  { re: /barracuda/i,                       type: 'waf',       vendor: 'Barracuda WAF',            confidence: 0.87 },
+  // Network / Proxy
+  { re: /zscaler/i,                         type: 'proxy',     vendor: 'Zscaler',                  confidence: 0.88 },
+  { re: /haproxy/i,                         type: 'proxy',     vendor: 'HAProxy',                  confidence: 0.88 },
+  { re: /f5[\s\-_]?big.?ip|f5[\s\-_]?asm/i,type: 'waf',      vendor: 'F5 BIG-IP',                confidence: 0.88 },
+  // Windows / Sysmon
+  { re: /sysmon/i,                          type: 'server',    vendor: 'Sysmon (Windows)',         confidence: 0.90 },
+  // IDS/IPS
+  { re: /suricata/i,                        type: 'network',   vendor: 'Suricata IDS',             confidence: 0.90 },
+  { re: /zeek|bro[\s\-_]?ids/i,            type: 'network',   vendor: 'Zeek IDS',                 confidence: 0.90 },
+  { re: /snort/i,                           type: 'network',   vendor: 'Snort IDS',                confidence: 0.88 },
 ];
 
 let _logSourcesCache = null, _logSourcesCacheTime = 0;
@@ -4816,22 +5013,50 @@ async function _runLogSourcesAnalysis(sources) {
 // Cloud vendor groups that warrant a dedicated virtual source entry.
 // These are rule.groups values Wazuh assigns to cloud integration events.
 const CLOUD_GROUP_VENDORS = {
-  cloudflare:        { vendor: 'Cloudflare',            type: 'cloud_api' },
-  'cloudflare-waf':  { vendor: 'Cloudflare WAF',        type: 'waf'       },
-  cloudflare_waf:    { vendor: 'Cloudflare WAF',        type: 'waf'       },
-  'cloudflare-dns':  { vendor: 'Cloudflare DNS',        type: 'network'   },
-  cloudflare_dns:    { vendor: 'Cloudflare DNS',        type: 'network'   },
-  azure:             { vendor: 'Microsoft Azure',       type: 'cloud_api' },
-  azure_ad:          { vendor: 'Microsoft Azure AD',    type: 'cloud_api' },
-  'azure-ad':        { vendor: 'Microsoft Azure AD',    type: 'cloud_api' },
-  aws_cloudtrail:    { vendor: 'AWS CloudTrail',        type: 'cloud_api' },
-  gcp:               { vendor: 'Google Cloud Platform', type: 'cloud_api' },
-  office365:         { vendor: 'Microsoft 365',         type: 'cloud_api' },
-  'ms-graph':        { vendor: 'Microsoft 365',         type: 'cloud_api' },
-  'ms-defender':     { vendor: 'Microsoft Defender',    type: 'cloud_api' },
-  windows_defender:  { vendor: 'Microsoft Defender',    type: 'cloud_api' },
-  crowdstrike:       { vendor: 'CrowdStrike',           type: 'cloud_api' },
-  sentinelone:       { vendor: 'SentinelOne',           type: 'cloud_api' },
+  // Cloudflare
+  cloudflare:           { vendor: 'Cloudflare',              type: 'cloud_api' },
+  'cloudflare-waf':     { vendor: 'Cloudflare WAF',          type: 'waf'       },
+  cloudflare_waf:       { vendor: 'Cloudflare WAF',          type: 'waf'       },
+  'cloudflare-dns':     { vendor: 'Cloudflare DNS',          type: 'network'   },
+  cloudflare_dns:       { vendor: 'Cloudflare DNS',          type: 'network'   },
+  // Microsoft
+  azure:                { vendor: 'Microsoft Azure',         type: 'cloud_api' },
+  azure_ad:             { vendor: 'Microsoft Azure AD',      type: 'cloud_api' },
+  'azure-ad':           { vendor: 'Microsoft Azure AD',      type: 'cloud_api' },
+  office365:            { vendor: 'Microsoft 365',           type: 'cloud_api' },
+  'ms-graph':           { vendor: 'Microsoft 365',           type: 'cloud_api' },
+  'ms-defender':        { vendor: 'Microsoft Defender',      type: 'cloud_api' },
+  windows_defender:     { vendor: 'Microsoft Defender',      type: 'cloud_api' },
+  // AWS
+  aws:                  { vendor: 'AWS CloudTrail',          type: 'cloud_api' },
+  aws_cloudtrail:       { vendor: 'AWS CloudTrail',          type: 'cloud_api' },
+  'aws-cloudtrail':     { vendor: 'AWS CloudTrail',          type: 'cloud_api' },
+  aws_guardduty:        { vendor: 'AWS GuardDuty',           type: 'cloud_api' },
+  'aws-guardduty':      { vendor: 'AWS GuardDuty',           type: 'cloud_api' },
+  aws_securityhub:      { vendor: 'AWS Security Hub',        type: 'cloud_api' },
+  aws_waf:              { vendor: 'AWS WAF',                  type: 'waf'       },
+  // Google
+  gcp:                  { vendor: 'Google Cloud Platform',   type: 'cloud_api' },
+  google_workspace:     { vendor: 'Google Workspace',        type: 'cloud_api' },
+  gsuite:               { vendor: 'Google Workspace',        type: 'cloud_api' },
+  google:               { vendor: 'Google Workspace',        type: 'cloud_api' },
+  'google-workspace':   { vendor: 'Google Workspace',        type: 'cloud_api' },
+  // Identity
+  okta:                 { vendor: 'Okta',                     type: 'cloud_api' },
+  duo:                  { vendor: 'Duo Security',             type: 'cloud_api' },
+  // Dev / Collaboration
+  github:               { vendor: 'GitHub',                   type: 'cloud_api' },
+  gitlab:               { vendor: 'GitLab',                   type: 'cloud_api' },
+  slack:                { vendor: 'Slack',                    type: 'cloud_api' },
+  salesforce:           { vendor: 'Salesforce',               type: 'cloud_api' },
+  // EDR / Security
+  crowdstrike:          { vendor: 'CrowdStrike',              type: 'cloud_api' },
+  sentinelone:          { vendor: 'SentinelOne',              type: 'cloud_api' },
+  carbonblack:          { vendor: 'VMware Carbon Black',      type: 'cloud_api' },
+  'carbon-black':       { vendor: 'VMware Carbon Black',      type: 'cloud_api' },
+  tenable:              { vendor: 'Tenable.io',               type: 'cloud_api' },
+  qualys:               { vendor: 'Qualys',                   type: 'cloud_api' },
+  darktrace:            { vendor: 'Darktrace',                type: 'cloud_api' },
 };
 
 async function _fetchLogSources() {
@@ -5066,6 +5291,49 @@ async function _fetchLogSources() {
       insights,
     };
 
+    // ── Onboarding history: upsert every source, notify truly new ones ──
+    try {
+      const unnotifiedBefore = await db.getUnnotifiedLogSources();
+      const knownIds = new Set(unnotifiedBefore.map(r => r.source_id));
+
+      const toNotify = [];
+      for (const src of sources) {
+        const row = await db.upsertLogSourceHistory(src);
+        // is_insert=true means this source_id has never been seen before
+        if (row.is_insert) toNotify.push(row);
+      }
+
+      if (toNotify.length) {
+        await db.markLogSourcesNotified(toNotify.map(r => r.id));
+        for (const row of toNotify) {
+          await db.createNotification(
+            'log_source_onboarded',
+            `New log source onboarded: ${row.source_name}`,
+            `Vendor: ${row.vendor || 'unknown'} | Type: ${row.type || 'unknown'} | Protocol: ${row.protocol || 'unknown'} | First seen: ${new Date().toISOString()}`,
+            'info', null,
+            { source_id: row.source_id, source_name: row.source_name, vendor: row.vendor, type: row.type }
+          );
+          io.emit('log_source:new', {
+            source_id:   row.source_id,
+            source_name: row.source_name,
+            vendor:      row.vendor,
+            type:        row.type,
+            protocol:    row.protocol,
+            first_seen:  row.first_seen,
+          });
+        }
+        console.log(`[log-sources] ${toNotify.length} new source(s) onboarded and notified`);
+      }
+
+      // Also notify any previously unseen sources that escaped the first pass
+      const stillUnnotified = unnotifiedBefore.filter(r => !knownIds.has(r.source_id));
+      if (stillUnnotified.length) {
+        await db.markLogSourcesNotified(stillUnnotified.map(r => r.id));
+      }
+    } catch (histErr) {
+      console.error('[log-sources] history upsert error:', histErr.message);
+    }
+
     _logSourcesCache = result;
     _logSourcesCacheTime = Date.now();
     return result;
@@ -5099,6 +5367,18 @@ app.post('/api/log-sources/analyze', authMW, async (req, res) => {
 app.get('/api/log-sources/analysis', authMW, (req, res) => {
   if (!_logSourcesAutoAnalysis) return res.json({ available: false });
   res.json({ available: true, ..._logSourcesAutoAnalysis });
+});
+
+app.get('/api/log-sources/history', authMW, async (req, res) => {
+  try {
+    const page      = Math.max(parseInt(req.query.page) || 1, 1);
+    const page_size = Math.min(parseInt(req.query.page_size) || 50, 200);
+    const { rows, total } = await db.getLogSourceHistory({ page, page_size });
+    res.json({ items: rows, total, page, page_size, has_more: page * page_size < total });
+  } catch (e) {
+    console.error('[log-sources/history]', e.message);
+    res.status(502).json({ error: e.message });
+  }
 });
 
 // ── INVESTIGATION FEEDBACK ──

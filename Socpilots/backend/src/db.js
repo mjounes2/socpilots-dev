@@ -550,6 +550,24 @@ async function initSchema() {
     `CREATE INDEX IF NOT EXISTS idx_aa_status  ON action_approvals(status)`,
     `CREATE INDEX IF NOT EXISTS idx_aa_expires ON action_approvals(expires_at)`,
     `CREATE INDEX IF NOT EXISTS idx_aa_inv     ON action_approvals(investigation_id)`,
+    // Log Source Onboarding History
+    `CREATE TABLE IF NOT EXISTS log_source_history (
+      id           SERIAL PRIMARY KEY,
+      source_id    TEXT NOT NULL UNIQUE,
+      source_name  TEXT NOT NULL,
+      source_ip    TEXT,
+      vendor       TEXT,
+      type         TEXT,
+      protocol     TEXT,
+      integration  TEXT,
+      top_decoder  TEXT,
+      top_groups   TEXT[],
+      notified     BOOLEAN DEFAULT FALSE,
+      first_seen   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      last_seen    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_lsh_first_seen ON log_source_history(first_seen DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_lsh_notified   ON log_source_history(notified)`,
   ];
 
   for (const q of queries) {
@@ -1861,6 +1879,55 @@ async function ping() {
   } catch { return false; }
 }
 
+// ── Log Source Onboarding History ────────────────────────────
+async function upsertLogSourceHistory(src) {
+  const r = await pool.query(
+    `INSERT INTO log_source_history
+       (source_id, source_name, source_ip, vendor, type, protocol,
+        integration, top_decoder, top_groups, first_seen, last_seen)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW(),NOW())
+     ON CONFLICT (source_id) DO UPDATE
+       SET source_name=$2, source_ip=$3, vendor=$4, type=$5, protocol=$6,
+           integration=$7, top_decoder=$8, top_groups=$9, last_seen=NOW()
+     RETURNING *, (xmax = 0) AS is_insert`,
+    [
+      src.source_id, src.source_name, src.source_ip || null,
+      src.vendor || null, src.type || null, src.protocol || null,
+      src.integration || null, src.top_decoder || null,
+      src.top_groups || [],
+    ]
+  );
+  return r.rows[0];
+}
+
+async function getUnnotifiedLogSources() {
+  const r = await pool.query(
+    `SELECT * FROM log_source_history WHERE notified=FALSE ORDER BY first_seen ASC`
+  );
+  return r.rows;
+}
+
+async function markLogSourcesNotified(ids) {
+  if (!ids.length) return;
+  await pool.query(
+    `UPDATE log_source_history SET notified=TRUE WHERE id=ANY($1)`,
+    [ids]
+  );
+}
+
+async function getLogSourceHistory({ page = 1, page_size = 50 } = {}) {
+  page_size = Math.min(parseInt(page_size) || 50, 200);
+  const offset = (Math.max(parseInt(page) || 1, 1) - 1) * page_size;
+  const r = await pool.query(
+    `SELECT *, COUNT(*) OVER() AS total_count
+     FROM log_source_history
+     ORDER BY first_seen DESC
+     LIMIT $1 OFFSET $2`,
+    [page_size, offset]
+  );
+  return { rows: r.rows, total: parseInt(r.rows[0]?.total_count || 0) };
+}
+
 module.exports = {
   pool,
   initSchema,
@@ -2003,6 +2070,11 @@ module.exports = {
   getUebaDigest,
   getLatestUebaDigest,
   markUebaDigestEmailed,
+  // Log Source Onboarding History
+  upsertLogSourceHistory,
+  getUnnotifiedLogSources,
+  markLogSourcesNotified,
+  getLogSourceHistory,
 };
 
 // ── Evidence Files CRUD ──────────────────────────────────

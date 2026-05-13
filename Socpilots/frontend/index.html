@@ -2623,7 +2623,7 @@ sshd: Failed" style="min-height:80px"></textarea></div>
 
 <!-- ── LOG SOURCES INTELLIGENCE PAGE ───────────────────────── -->
 <div class="page" id="page-log-sources">
-  <div class="ph"><h1>LOG SOURCES INTELLIGENCE</h1><p>Real-time classification, EPS metrics, and AI-powered vendor detection for all SIEM ingestion sources</p></div>
+  <div class="ph"><h1>LOG SOURCES INTELLIGENCE</h1><p>Real-time classification, EPS metrics, AI-powered vendor detection, and persistent onboarding history for all SIEM ingestion sources</p></div>
 
   <!-- KPI row -->
   <div class="ls-kpi-grid">
@@ -2633,71 +2633,109 @@ sshd: Failed" style="min-height:80px"></textarea></div>
     <div class="kpi cr"><div class="kpi-lbl">Unknown Vendors</div><div class="kpi-val" id="ls-kpi-unknown">—</div><div class="kpi-sub">unclassified</div></div>
   </div>
 
-  <!-- Filter bar -->
-  <div class="card" style="padding:12px;margin-bottom:12px">
-    <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
-      <input class="fi" id="ls-search" placeholder="Search source name or IP…" oninput="lsFilterDebounce()" style="width:220px">
-      <select class="fi" id="ls-type-filter" onchange="applyLsFilters()" style="width:160px">
-        <option value="">All Types</option>
-        <option value="firewall">Firewall</option>
-        <option value="waf">WAF</option>
-        <option value="proxy">Proxy / Web</option>
-        <option value="server">Server</option>
-        <option value="cloud_api">Cloud / API</option>
-        <option value="network">Network</option>
-        <option value="unknown">Unknown</option>
-      </select>
-      <select class="fi" id="ls-anomaly-filter" onchange="applyLsFilters()" style="width:140px">
-        <option value="">All Sources</option>
-        <option value="anomaly">Anomalies Only</option>
-        <option value="new">New Sources</option>
-      </select>
-      <div style="margin-left:auto;display:flex;gap:8px">
-        <button class="btn btn-h btn-sm" onclick="loadLogSources()">↻ Refresh</button>
-        <button class="btn btn-sm" id="ls-ai-btn" onclick="runLogSourcesAnalysis()" style="background:rgba(0,229,255,.12);border-color:rgba(0,229,255,.3);color:var(--c)">🧠 AI Analysis</button>
+  <!-- Tab nav -->
+  <div class="inv-tabs" style="margin-bottom:12px">
+    <button class="inv-tab active" id="ls-tab-live" onclick="switchLsTab('live')">Live Inventory</button>
+    <button class="inv-tab" id="ls-tab-history" onclick="switchLsTab('history')">Onboarding History</button>
+  </div>
+
+  <!-- ── Live Inventory tab ── -->
+  <div id="ls-panel-live">
+    <!-- Filter bar -->
+    <div class="card" style="padding:12px;margin-bottom:12px">
+      <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+        <input class="fi" id="ls-search" placeholder="Search source name or IP…" oninput="lsFilterDebounce()" style="width:220px">
+        <select class="fi" id="ls-type-filter" onchange="applyLsFilters()" style="width:160px">
+          <option value="">All Types</option>
+          <option value="firewall">Firewall</option>
+          <option value="waf">WAF</option>
+          <option value="proxy">Proxy / Web</option>
+          <option value="server">Server</option>
+          <option value="cloud_api">Cloud / API</option>
+          <option value="network">Network</option>
+          <option value="unknown">Unknown</option>
+        </select>
+        <select class="fi" id="ls-anomaly-filter" onchange="applyLsFilters()" style="width:140px">
+          <option value="">All Sources</option>
+          <option value="anomaly">Anomalies Only</option>
+          <option value="new">New Sources</option>
+        </select>
+        <div style="margin-left:auto;display:flex;gap:8px">
+          <button class="btn btn-h btn-sm" onclick="loadLogSources()">↻ Refresh</button>
+          <button class="btn btn-sm" id="ls-ai-btn" onclick="runLogSourcesAnalysis()" style="background:rgba(0,229,255,.12);border-color:rgba(0,229,255,.3);color:var(--c)">🧠 AI Analysis</button>
+        </div>
       </div>
     </div>
+
+    <!-- AI results panel (hidden until analysis runs) -->
+    <div class="ls-ai-panel" id="ls-ai-panel" style="display:none;margin-bottom:12px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <div style="font-size:12px;font-weight:700;color:var(--c);letter-spacing:.5px">AI ANALYSIS RESULTS</div>
+        <div class="ls-model-badge" id="ls-models-used"></div>
+      </div>
+      <div id="ls-ai-insights"></div>
+    </div>
+
+    <!-- Sources table -->
+    <div class="card" style="padding:0">
+      <div class="card-hd" style="padding:12px 16px">
+        <div class="card-ttl">LOG SOURCE INVENTORY</div>
+        <div style="font-size:11px;color:var(--txt2)" id="ls-tbl-meta">Loading…</div>
+      </div>
+      <div class="tbl">
+        <table style="width:100%;border-collapse:collapse">
+          <thead>
+            <tr style="border-bottom:1px solid var(--b1)">
+              <th style="padding:10px 12px;text-align:left;font-size:10px;color:var(--txt2);font-weight:600;width:32px"></th>
+              <th style="padding:10px 12px;text-align:left;font-size:10px;color:var(--txt2);font-weight:600">SOURCE</th>
+              <th style="padding:10px 12px;text-align:left;font-size:10px;color:var(--txt2);font-weight:600">TYPE</th>
+              <th style="padding:10px 12px;text-align:left;font-size:10px;color:var(--txt2);font-weight:600">VENDOR</th>
+              <th style="padding:10px 12px;text-align:left;font-size:10px;color:var(--txt2);font-weight:600">PROTOCOL</th>
+              <th style="padding:10px 12px;text-align:right;font-size:10px;color:var(--txt2);font-weight:600">EPS</th>
+              <th style="padding:10px 12px;text-align:right;font-size:10px;color:var(--txt2);font-weight:600">24H EVENTS</th>
+              <th style="padding:10px 12px;text-align:left;font-size:10px;color:var(--txt2);font-weight:600">LAST SEEN</th>
+              <th style="padding:10px 12px;text-align:center;font-size:10px;color:var(--txt2);font-weight:600">STATUS</th>
+            </tr>
+          </thead>
+          <tbody id="ls-tbl-body">
+            <tr><td colspan="9" style="padding:32px;text-align:center"><div class="loading"><div class="spin"></div></div></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Global insights bar (below table) -->
+    <div id="ls-insights-bar" style="margin-top:10px"></div>
   </div>
 
-  <!-- AI results panel (hidden until analysis runs) -->
-  <div class="ls-ai-panel" id="ls-ai-panel" style="display:none;margin-bottom:12px">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-      <div style="font-size:12px;font-weight:700;color:var(--c);letter-spacing:.5px">AI ANALYSIS RESULTS</div>
-      <div class="ls-model-badge" id="ls-models-used"></div>
-    </div>
-    <div id="ls-ai-insights"></div>
-  </div>
-
-  <!-- Sources table -->
-  <div class="card" style="padding:0">
-    <div class="card-hd" style="padding:12px 16px">
-      <div class="card-ttl">LOG SOURCE INVENTORY</div>
-      <div style="font-size:11px;color:var(--txt2)" id="ls-tbl-meta">Loading…</div>
-    </div>
-    <div class="tbl">
-      <table style="width:100%;border-collapse:collapse">
-        <thead>
-          <tr style="border-bottom:1px solid var(--b1)">
-            <th style="padding:10px 12px;text-align:left;font-size:10px;color:var(--txt2);font-weight:600;width:32px"></th>
-            <th style="padding:10px 12px;text-align:left;font-size:10px;color:var(--txt2);font-weight:600">SOURCE</th>
-            <th style="padding:10px 12px;text-align:left;font-size:10px;color:var(--txt2);font-weight:600">TYPE</th>
-            <th style="padding:10px 12px;text-align:left;font-size:10px;color:var(--txt2);font-weight:600">VENDOR</th>
-            <th style="padding:10px 12px;text-align:left;font-size:10px;color:var(--txt2);font-weight:600">PROTOCOL</th>
-            <th style="padding:10px 12px;text-align:right;font-size:10px;color:var(--txt2);font-weight:600">EPS</th>
-            <th style="padding:10px 12px;text-align:right;font-size:10px;color:var(--txt2);font-weight:600">24H EVENTS</th>
-            <th style="padding:10px 12px;text-align:left;font-size:10px;color:var(--txt2);font-weight:600">LAST SEEN</th>
-            <th style="padding:10px 12px;text-align:center;font-size:10px;color:var(--txt2);font-weight:600">STATUS</th>
-          </tr>
-        </thead>
-        <tbody id="ls-tbl-body">
-          <tr><td colspan="9" style="padding:32px;text-align:center"><div class="loading"><div class="spin"></div></div></td></tr>
-        </tbody>
-      </table>
+  <!-- ── Onboarding History tab ── -->
+  <div id="ls-panel-history" style="display:none">
+    <div class="card" style="padding:0">
+      <div class="card-hd" style="padding:12px 16px">
+        <div class="card-ttl">ONBOARDING HISTORY</div>
+        <div style="font-size:11px;color:var(--txt2)" id="ls-hist-meta">All log sources ever seen — permanent record</div>
+      </div>
+      <div class="tbl">
+        <table style="width:100%;border-collapse:collapse">
+          <thead>
+            <tr style="border-bottom:1px solid var(--b1)">
+              <th style="padding:10px 12px;text-align:left;font-size:10px;color:var(--txt2);font-weight:600">SOURCE</th>
+              <th style="padding:10px 12px;text-align:left;font-size:10px;color:var(--txt2);font-weight:600">TYPE</th>
+              <th style="padding:10px 12px;text-align:left;font-size:10px;color:var(--txt2);font-weight:600">VENDOR</th>
+              <th style="padding:10px 12px;text-align:left;font-size:10px;color:var(--txt2);font-weight:600">PROTOCOL</th>
+              <th style="padding:10px 12px;text-align:left;font-size:10px;color:var(--txt2);font-weight:600">FIRST SEEN</th>
+              <th style="padding:10px 12px;text-align:left;font-size:10px;color:var(--txt2);font-weight:600">LAST SEEN</th>
+              <th style="padding:10px 12px;text-align:left;font-size:10px;color:var(--txt2);font-weight:600">AGE</th>
+            </tr>
+          </thead>
+          <tbody id="ls-hist-body">
+            <tr><td colspan="7" style="padding:32px;text-align:center"><div class="loading"><div class="spin"></div></div></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div id="ls-hist-pgn" style="padding:10px 16px;display:flex;justify-content:center"></div>
     </div>
   </div>
-
-  <!-- Global insights bar (below table) -->
-  <div id="ls-insights-bar" style="margin-top:10px"></div>
 </div>
 
 <!-- MITRE Technique Detail Modal -->
@@ -4880,6 +4918,61 @@ function showLogSourceDetail(s) {
     ${recsHtml ? `<div class="ls-ai-panel"><div style="font-size:10px;font-weight:700;color:var(--c);margin-bottom:6px">AI RECOMMENDATIONS</div>${recsHtml}</div>` : ''}
   `;
   openModal('modal-log-source');
+}
+
+let _lsHistPage = 1, _lsHistPageSize = 50;
+
+function switchLsTab(tab) {
+  document.getElementById('ls-tab-live').classList.toggle('active', tab === 'live');
+  document.getElementById('ls-tab-history').classList.toggle('active', tab === 'history');
+  document.getElementById('ls-panel-live').style.display    = tab === 'live'    ? '' : 'none';
+  document.getElementById('ls-panel-history').style.display = tab === 'history' ? '' : 'none';
+  if (tab === 'history') loadLsHistory();
+}
+
+async function loadLsHistory(page) {
+  if (page) _lsHistPage = page;
+  const body = document.getElementById('ls-hist-body');
+  const meta = document.getElementById('ls-hist-meta');
+  if (body) body.innerHTML = `<tr><td colspan="7" style="padding:32px;text-align:center"><div class="loading"><div class="spin"></div></div></td></tr>`;
+
+  const d = await G(`/api/log-sources/history?page=${_lsHistPage}&page_size=${_lsHistPageSize}`);
+  if (!d || d.error) {
+    if (body) body.innerHTML = `<tr><td colspan="7">${errBnr(d?.error || 'Failed to load history')}</td></tr>`;
+    return;
+  }
+
+  const now = Date.now();
+  if (body) body.innerHTML = (d.items || []).map(r => {
+    const firstMs  = r.first_seen ? new Date(r.first_seen).getTime() : 0;
+    const lastMs   = r.last_seen  ? new Date(r.last_seen).getTime()  : 0;
+    const ageDays  = firstMs ? Math.floor((now - firstMs) / 86400000) : null;
+    const ageStr   = ageDays == null ? '—' : ageDays === 0 ? 'Today' : ageDays === 1 ? 'Yesterday' : `${ageDays}d ago`;
+    const ageColor = ageDays === 0 ? 'var(--g)' : ageDays != null && ageDays <= 7 ? 'var(--c)' : 'var(--txt3)';
+    const isRecent = ageDays != null && ageDays <= 1;
+    const protoIcon = r.protocol === 'api' ? '⚡' : r.protocol === 'syslog' ? '📡' : '🖥';
+    return `<tr style="border-bottom:1px solid rgba(255,255,255,.04)">
+      <td style="padding:10px 12px">
+        <div style="font-size:13px;font-weight:600;color:var(--txt)">${isRecent ? '<span class="ls-new-badge">NEW</span> ' : ''}${esc(r.source_name)}</div>
+        <div style="font-size:11px;color:var(--txt3);font-family:var(--fm)">${esc(r.source_ip || r.source_id)}</div>
+      </td>
+      <td style="padding:10px 12px">${lsTypeBadge(r.type)}</td>
+      <td style="padding:10px 12px;font-size:12px;color:var(--txt2)">${esc(r.vendor || '—')}</td>
+      <td style="padding:10px 12px;font-size:11px;color:var(--txt3)">${protoIcon} ${esc(r.protocol || '—')}</td>
+      <td style="padding:10px 12px;font-size:11px;color:var(--c);font-family:var(--fm)">${fmtDate(r.first_seen)}</td>
+      <td style="padding:10px 12px;font-size:11px;color:var(--txt3)">${fmtDate(r.last_seen)}</td>
+      <td style="padding:10px 12px;font-size:11px;font-weight:600;color:${ageColor}">${ageStr}</td>
+    </tr>`;
+  }).join('') || `<tr><td colspan="7">${empty('No onboarding history yet — sources are recorded on first detection')}</td></tr>`;
+
+  const total = d.total || 0;
+  if (meta) meta.textContent = `${total.toLocaleString()} sources ever onboarded`;
+
+  const pgnEl = document.getElementById('ls-hist-pgn');
+  if (pgnEl) {
+    pgnEl.innerHTML = buildPaginator(_lsHistPage, _lsHistPageSize, total,
+      'loadLsHistory(_lsHistPage-1)', 'loadLsHistory(_lsHistPage+1)', null);
+  }
 }
 
 async function runLogSourcesAnalysis() {
@@ -9647,6 +9740,19 @@ function initSocketIO(){
       `Approval #${d.id} <b style="color:${d.status==='executed'?'var(--g)':d.status==='rejected'?'var(--r)':'var(--txt3)'}">${esc(d.status)}</b>${d.resolved_by ? ` by ${esc(d.resolved_by)}` : ''}`,
       d.status==='executed' ? '#00e676' : '#ff1744');
     if (document.getElementById('approvals-list')) loadActionApprovals();
+  });
+
+  _socket.on('log_source:new', d=>{
+    _notifCount = (_notifCount||0)+1;
+    updateNotifBadge(_notifCount);
+    showLiveToast('log_source_new',
+      `New Log Source: ${esc(d.source_name||'?')} — ${esc(d.vendor||'unknown vendor')} (${esc(d.type||'?')})`,
+      'info');
+    appendDsLiveFeed('log_source_new',
+      `New log source onboarded: <b>${esc(d.source_name||'?')}</b> — Vendor: ${esc(d.vendor||'unknown')} | Type: ${esc(d.type||'?')} | Protocol: ${esc(d.protocol||'?')}`,
+      '#00e5ff');
+    // Refresh the history tab if it's open
+    if (document.getElementById('ls-panel-history')?.style.display !== 'none') loadLsHistory(1);
   });
 
   _socket.on('log_source:silent', d=>{
