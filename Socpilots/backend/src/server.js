@@ -6544,13 +6544,16 @@ const PAGE_CONTEXTS = {
   },
   correlate: {
     title: 'Correlation',
-    desc: 'Alert correlation engine that groups related alerts into attack chains. Identifies multi-step attacks that individual alerts would miss.',
+    desc: 'Alert correlation engine that groups related alerts into attack chains, with live UEBA↔SIEM correlation feed, alert deduplication, manual IOC correlation, and full correlation history.',
     sections: [
-      { name: 'Alert Groups table', desc: 'Correlated alert clusters. Each group shows: cluster name, alert count, severity level, involved agents, MITRE techniques detected, and time span of the attack chain.' },
-      { name: 'Group detail modal', desc: 'Click any group to see the full correlation: timeline of individual alerts in sequence, kill-chain stage mapping, source IPs involved, and AI-generated attack narrative.' },
-      { name: 'Risk score', desc: 'Each correlation group has a 0–100 risk score calculated from: UEBA entity risk, MITRE technique severity weights, alert frequency, and lateral movement indicators.' },
-      { name: 'Live correlation feed', desc: 'Real-time panel on the right showing new correlations as they are detected. Auto-refreshes. Badge count in the nav sidebar updates live via WebSocket.' },
-      { name: 'Severity filter', desc: 'Filter correlation groups by severity. The chart at the top shows group distribution over time.' },
+      { name: 'Live / History tabs', desc: 'Two tabs at the top: "Live" shows the real-time UEBA↔SIEM feed and alert groups; "History" shows all past saved correlations in a searchable paginated table with risk, MITRE tactics, and source filters.' },
+      { name: 'Live feed filter bar', desc: 'Above the live feed: filter by minimum UEBA risk (40+/70+/90+), correlation type (UEBA Triage, Lateral Movement, Privilege Escalation, Manual), and free-text search over entity name or MITRE tactic. Filters apply instantly without re-fetching.' },
+      { name: 'Live UEBA↔SIEM feed', desc: 'Real-time stream of correlations pushed via WebSocket. Each row shows: entity name, severity badge, correlation type, UEBA risk score, anomaly count, and MITRE tactic pills. Feed is capped at 100 rows; Clear button resets it.' },
+      { name: 'Alert Groups table', desc: 'Below the live feed: deduplicated alert groups — same rule firing from the same source IP within a 5-minute window. Columns: Source IP, Rule ID, Agent, Severity, Count badge, First/Last Seen. Use the filter bar above to narrow by severity or search by rule/IP/agent.' },
+      { name: 'Alert groups filter bar', desc: 'Severity dropdown (critical/high/medium/low) and free-text search field. Type a rule ID, IP address, or agent name; results update with 300ms debounce.' },
+      { name: 'Manual IOC correlation', desc: 'Enter any indicator (IP, hash, domain, username) and click Correlate. Runs against both SIEM (OpenSearch) and SP-CM (TheHive) and returns matching hits plus an AI correlation narrative.' },
+      { name: 'Correlation graph', desc: 'D3.js force-directed graph showing the indicator at center, with SIEM alert nodes (orange) and Hive case nodes (purple) as connected satellites. Drag nodes to rearrange, scroll to zoom. Click a SIEM or Hive node to expand an inline detail card below the graph showing alert/case fields.' },
+      { name: 'Correlation History tab', desc: 'Paginated table of all saved correlations. Filter by free text (entity/rule), minimum risk score, and source (UEBA Triage vs Manual). Expand any row to see full SIEM hits and Hive hits JSON.' },
     ]
   },
   threatmap: {
@@ -6578,14 +6581,17 @@ const PAGE_CONTEXTS = {
   },
   investigation: {
     title: 'AI Investigation',
-    desc: 'AI-powered security investigation engine. Select an alert or describe an incident — the AI runs a multi-step ReAct investigation using 6 specialized tools and produces a full analysis report.',
+    desc: 'AI-powered security investigation engine. Select an alert or describe an incident — the AI runs a multi-step ReAct investigation using 6 specialized tools and produces a full analysis report with analyst collaboration features.',
     sections: [
       { name: 'Alert selector', desc: 'Left panel shows recent SIEM alerts you can click to pre-load into the investigation. Alternatively type a free-text description of the incident in the input box.' },
       { name: 'Investigation input', desc: 'Text area where you describe what to investigate. Can be an IOC (IP, hash, domain), an alert rule ID, an agent name, or a plain English description like "unusual PowerShell from finance workstation".' },
       { name: 'Investigation report', desc: 'The AI agent\'s output: timeline of findings, IOC reputation verdicts, UEBA entity risk scores, MITRE techniques identified, correlated cases in TheHive, asset context, and recommended response actions.' },
       { name: 'Agent reasoning steps', desc: 'Expandable section showing the ReAct reasoning chain: each tool the agent called (search_alerts, enrich_ip, check_cases, query_ueba, query_assets, query_shodan), the inputs it used, and what it found. Useful for understanding WHY the AI reached its conclusion.' },
       { name: 'Auto-triage settings', desc: 'Toggle to enable automatic investigation of new high/critical alerts as they arrive. Threshold selector sets minimum severity for auto-triage.' },
-      { name: 'Investigation history', desc: 'Right panel shows past investigations with severity, summary, and timestamp. Click any to reload the full report.' },
+      { name: 'Investigation history', desc: 'Paginated table of all saved investigations with severity badge, rule ID, alert description, agent, source IP, and triage method (Auto vs Manual). Click "View" on any row to open the detail modal.' },
+      { name: 'Investigation detail modal — Report tab', desc: 'Full AI-generated investigation report with markdown formatting. Header bar shows severity, rule ID, triage method, timestamp. Footer has Download PDF and Copy Report buttons. Thumbs-up/down feedback buttons let you rate report quality.' },
+      { name: 'Investigation detail modal — Comments tab', desc: 'Analyst comment thread for collaborative investigation. Any authenticated analyst can add a comment; comments persist in the database and appear for all team members. Press Ctrl+Enter or click Post. Useful for noting follow-up actions, FP/TP verdicts, or additional context the AI missed.' },
+      { name: 'Investigation detail modal — Related tab', desc: 'Up to 5 recent investigations that share the same source IP, rule ID, or agent as the current one. Shows severity, rule, alert description, and a View button to jump directly to each related report. Helps identify recurring patterns or multi-stage attacks across different time windows.' },
     ]
   },
   copilot: {
