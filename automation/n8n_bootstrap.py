@@ -26,7 +26,7 @@ from pathlib import Path
 # ── Paths ────────────────────────────────────────────────────────────
 SCRIPT_DIR  = Path(__file__).parent
 PROJECT_DIR = SCRIPT_DIR.parent
-WF_DIR      = PROJECT_DIR / "Socpilots-webapp" / "workflows"
+WF_DIR      = PROJECT_DIR / "Socpilots" / "workflows"
 DB_PATH     = Path("/var/lib/docker/volumes/socpilots_n8n_data/_data/database.sqlite")
 
 ASSET_WF_DIR = PROJECT_DIR / "services" / "asset-scan" / "n8n_workflows"
