@@ -644,6 +644,31 @@ async function initSchema() {
       created_at   TIMESTAMPTZ DEFAULT NOW()
     )`,
     `CREATE INDEX IF NOT EXISTS idx_wla_wid ON ioc_whitelist_audit(whitelist_id)`,
+
+    // ── Correlation Persistence ───────────────────────────────────
+    `CREATE TABLE IF NOT EXISTS correlations (
+      id               SERIAL PRIMARY KEY,
+      entity           TEXT NOT NULL,
+      entity_type      TEXT,
+      ueba_risk        INT  DEFAULT 0,
+      ueba_anomalies   INT  DEFAULT 0,
+      siem_rule        TEXT,
+      siem_severity    TEXT,
+      mitre            TEXT[] DEFAULT '{}',
+      mitre_tactic     TEXT[] DEFAULT '{}',
+      correlation_type TEXT,
+      investigation_id INT  REFERENCES investigations(id) ON DELETE SET NULL,
+      indicator        TEXT,
+      wazuh_hits       JSONB DEFAULT '[]',
+      hive_hits        JSONB DEFAULT '[]',
+      ai_analysis      TEXT,
+      source           TEXT DEFAULT 'ueba_triage',
+      created_at       TIMESTAMPTZ DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_corr_entity     ON correlations(entity)`,
+    `CREATE INDEX IF NOT EXISTS idx_corr_created_at ON correlations(created_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_corr_ueba_risk  ON correlations(ueba_risk DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_corr_type       ON correlations(correlation_type)`,
   ];
 
   for (const q of queries) {
@@ -2259,6 +2284,60 @@ async function getLogSourceHistory({ page = 1, page_size = 50 } = {}) {
   return { rows: r.rows, total: parseInt(r.rows[0]?.total_count || 0) };
 }
 
+// ── Correlation Persistence ───────────────────────────────────────
+async function saveCorrelation(data) {
+  const r = await pool.query(
+    `INSERT INTO correlations
+       (entity, entity_type, ueba_risk, ueba_anomalies, siem_rule, siem_severity,
+        mitre, mitre_tactic, correlation_type, investigation_id, indicator,
+        wazuh_hits, hive_hits, ai_analysis, source)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+     RETURNING id`,
+    [
+      data.entity        || null,
+      data.entity_type   || null,
+      data.ueba_risk     || 0,
+      data.ueba_anomalies || 0,
+      data.siem_rule     || null,
+      data.siem_severity || null,
+      data.mitre         || [],
+      data.mitre_tactic  || [],
+      data.correlation_type || null,
+      data.investigation_id || null,
+      data.indicator     || null,
+      JSON.stringify(data.wazuh_hits || []),
+      JSON.stringify(data.hive_hits  || []),
+      data.ai_analysis   || null,
+      data.source        || 'ueba_triage',
+    ]
+  );
+  return r.rows[0];
+}
+
+async function getCorrelations({ page = 1, page_size = 50, q, entity_type, min_risk, correlation_type, sort_by = 'created_at', sort_dir = 'desc' } = {}) {
+  const ALLOWED_SORT = { created_at: 'created_at', ueba_risk: 'ueba_risk', entity: 'entity' };
+  const col = ALLOWED_SORT[sort_by] || 'created_at';
+  const dir = sort_dir === 'asc' ? 'ASC' : 'DESC';
+  const offset = (page - 1) * page_size;
+  const params = [];
+  const where = [];
+  if (q) {
+    params.push(`%${q}%`);
+    where.push(`(entity ILIKE $${params.length} OR correlation_type ILIKE $${params.length} OR siem_rule ILIKE $${params.length} OR indicator ILIKE $${params.length})`);
+  }
+  if (entity_type) { params.push(entity_type); where.push(`entity_type = $${params.length}`); }
+  if (min_risk)    { params.push(parseInt(min_risk)); where.push(`ueba_risk >= $${params.length}`); }
+  if (correlation_type) { params.push(correlation_type); where.push(`correlation_type = $${params.length}`); }
+  const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  params.push(page_size, offset);
+  const r = await pool.query(
+    `SELECT *, COUNT(*) OVER() AS total_count FROM correlations
+     ${whereClause} ORDER BY ${col} ${dir} LIMIT $${params.length - 1} OFFSET $${params.length}`,
+    params
+  );
+  return { rows: r.rows, total: parseInt(r.rows[0]?.total_count || 0) };
+}
+
 module.exports = {
   pool,
   initSchema,
@@ -2427,6 +2506,9 @@ module.exports = {
   checkWhitelisted,
   getWhitelistAudit,
   bulkImportWhitelist,
+  // Correlation Persistence
+  saveCorrelation,
+  getCorrelations,
 };
 
 // ── Evidence Files CRUD ──────────────────────────────────

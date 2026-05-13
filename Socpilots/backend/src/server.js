@@ -203,6 +203,7 @@ async function runUebaCorrelation(invId, alert) {
       };
 
       io.emit('correlation:found', correlation);
+      db.saveCorrelation({ ...correlation, source: 'ueba_triage' }).catch(() => {});
       db.createNotification(
         'correlation',
         `UEBA Correlation: ${entity}`,
@@ -1454,6 +1455,21 @@ app.post('/api/hunt', authMW, async (req, res) => {
 });
 
 // ── CORRELATION ──
+// ── CORRELATION HISTORY ──
+app.get('/api/correlations', authMW, async (req, res) => {
+  try {
+    const { page = 1, page_size = 50, q, entity_type, min_risk, correlation_type, sort_by, sort_dir } = req.query;
+    const { rows, total } = await db.getCorrelations({
+      page: parseInt(page), page_size: parseInt(page_size),
+      q, entity_type, min_risk, correlation_type, sort_by, sort_dir,
+    });
+    res.json({ items: rows, total, page: parseInt(page), page_size: parseInt(page_size), has_more: parseInt(page) * parseInt(page_size) < total });
+  } catch (e) {
+    console.error('[correlations]', e.message);
+    res.status(502).json({ error: e.message });
+  }
+});
+
 app.post('/api/correlate', authMW, async (req, res) => {
   const { indicator } = req.body;
   if (!indicator) return res.status(400).json({ error: 'indicator required' });
@@ -1483,11 +1499,15 @@ app.post('/api/correlate', authMW, async (req, res) => {
     } catch (_) {}
   }
 
-  res.json({
-    wazuhHits:  osR.value?.hits?.hits?.map(h => ({ id: h._id, ts: h._source['@timestamp'], desc: h._source.rule?.description, agent: h._source.agent?.name })) || [],
-    hiveHits:   Array.isArray(hiveR.value) ? hiveR.value.map(c => ({ id: c._id, title: c.title, status: c.status })) : [],
-    aiAnalysis,
-  });
+  const wazuhHits = osR.value?.hits?.hits?.map(h => ({ id: h._id, ts: h._source['@timestamp'], desc: h._source.rule?.description, agent: h._source.agent?.name })) || [];
+  const hiveHits  = Array.isArray(hiveR.value) ? hiveR.value.map(c => ({ id: c._id, title: c.title, status: c.status })) : [];
+
+  db.saveCorrelation({
+    indicator, entity: indicator, source: 'manual',
+    wazuh_hits: wazuhHits, hive_hits: hiveHits, ai_analysis: aiAnalysis,
+  }).catch(() => {});
+
+  res.json({ wazuhHits, hiveHits, aiAnalysis });
 });
 
 // ── AI CHAT RATE LIMITER ──

@@ -1136,6 +1136,14 @@ if(localStorage.getItem("soc_dim")==="1")document.body.classList.add("dim");
 <div class="page" id="page-correlate">
   <div class="ph"><h1>CORRELATION</h1><p>Cross-platform indicator analysis — SIEM + UEBA + SP-CM + SOCPilots AI</p></div>
 
+  <!-- Tab bar -->
+  <div style="display:flex;gap:4px;margin-bottom:12px;border-bottom:1px solid var(--b1);padding-bottom:0">
+    <button id="corr-tab-live" class="btn btn-p btn-sm" style="border-radius:4px 4px 0 0;margin-bottom:-1px;border-bottom:2px solid var(--c)" onclick="corrTab('live')">⚡ Live Feed</button>
+    <button id="corr-tab-history" class="btn btn-sm" style="border-radius:4px 4px 0 0;margin-bottom:-1px;border-bottom:2px solid transparent" onclick="corrTab('history')">📋 History</button>
+  </div>
+
+  <!-- Live tab -->
+  <div id="corr-pane-live">
   <!-- Live UEBA↔SIEM correlation feed -->
   <div class="card mb" style="border-left:3px solid #f06292">
     <div class="card-hd">
@@ -1178,6 +1186,32 @@ if(localStorage.getItem("soc_dim")==="1")document.body.classList.add("dim");
       <div id="corr-graph"></div>
     </div>
     <div class="card"><div class="card-hd"><div class="card-ttl">SOCPilots AI REPORT</div></div><div id="corr-ai" class="ai-txt"></div></div>
+  </div>
+  </div><!-- end corr-pane-live -->
+
+  <!-- History tab -->
+  <div id="corr-pane-history" style="display:none">
+    <div class="card mb">
+      <div class="card-hd">
+        <div class="card-ttl">📋 CORRELATION HISTORY</div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <input class="fi" id="corr-h-q" placeholder="Search entity, type, rule..." style="width:200px;font-size:12px" oninput="corrHistDebounce()">
+          <select class="fi" id="corr-h-risk" style="width:130px;font-size:12px" onchange="loadCorrHistory(1)">
+            <option value="">All Risk Levels</option>
+            <option value="40">Risk ≥ 40</option>
+            <option value="70">Risk ≥ 70 (High)</option>
+            <option value="90">Risk ≥ 90 (Critical)</option>
+          </select>
+          <select class="fi" id="corr-h-src" style="width:130px;font-size:12px" onchange="loadCorrHistory(1)">
+            <option value="">All Sources</option>
+            <option value="ueba_triage">UEBA Triage</option>
+            <option value="manual">Manual</option>
+          </select>
+          <button class="btn btn-sm" onclick="loadCorrHistory(1)">↻</button>
+        </div>
+      </div>
+      <div id="corr-history-body"><div class="loading"><div class="spin"></div></div></div>
+    </div>
   </div>
 </div>
 
@@ -3807,7 +3841,7 @@ const LOAD_MAP={dashboard:loadDashboard,agents:loadAgents,alerts:loadAlerts,rule
   ioc:()=>{loadIOCQuick();loadOtxFeed();},reports:loadReportMetrics,
   assets:()=>{loadSubnets();loadAssets();loadScanStatus();},
   ueba:()=>{loadUebaStats();loadUebaAnomalies();loadUebaDigests();},
-  correlate:()=>{loadAlertGroups();renderCorrLiveFeed();},
+  correlate:()=>{loadAlertGroups();renderCorrLiveFeed();corrTab('live');},
   darksoc:()=>loadDarkSocPage(),
   langchain:()=>{lcCheckHealth();},
   settings:loadSmtpSettings,
@@ -10275,6 +10309,87 @@ function renderCorrLiveFeed(){
       </div>
       <span style="color:var(--txt3);font-size:9px;white-space:nowrap">${d.timestamp?new Date(d.timestamp).toLocaleTimeString():''}</span>
     </div>`).join('');
+}
+
+// ── Correlation Tab / History ──────────────────────────────
+let _corrHistPage=1, _corrHistPageSize=50, _corrHistDebTimer=null;
+
+function corrTab(tab){
+  document.getElementById('corr-pane-live').style.display    = tab==='live'    ? '' : 'none';
+  document.getElementById('corr-pane-history').style.display = tab==='history' ? '' : 'none';
+  const liveBtn = document.getElementById('corr-tab-live');
+  const histBtn = document.getElementById('corr-tab-history');
+  liveBtn.style.borderBottomColor = tab==='live'    ? 'var(--c)' : 'transparent';
+  histBtn.style.borderBottomColor = tab==='history' ? 'var(--c)' : 'transparent';
+  liveBtn.className = tab==='live'    ? 'btn btn-p btn-sm' : 'btn btn-sm';
+  histBtn.className = tab==='history' ? 'btn btn-p btn-sm' : 'btn btn-sm';
+  if(tab==='history') loadCorrHistory(1);
+}
+
+function corrHistDebounce(){
+  clearTimeout(_corrHistDebTimer);
+  _corrHistDebTimer = setTimeout(()=>loadCorrHistory(1), 300);
+}
+
+async function loadCorrHistory(page){
+  _corrHistPage = page||1;
+  const el = document.getElementById('corr-history-body');
+  if(!el) return;
+  el.innerHTML = '<div class="loading"><div class="spin"></div></div>';
+  const q    = document.getElementById('corr-h-q')?.value.trim()||'';
+  const risk = document.getElementById('corr-h-risk')?.value||'';
+  const src  = document.getElementById('corr-h-src')?.value||'';
+  const params = new URLSearchParams({ page: _corrHistPage, page_size: _corrHistPageSize });
+  if(q)    params.set('q', q);
+  if(risk) params.set('min_risk', risk);
+  if(src)  params.set('correlation_type', src);
+  const d = await G(`/api/correlations?${params}`);
+  if(!d || d.error){ el.innerHTML = errBnr(d?.error||'Failed to load history'); return; }
+  if(!d.items?.length){ el.innerHTML = empty('No correlations recorded yet — they appear here as UEBA triage runs or manual correlations fire'); return; }
+  const sevColor = s => s==='critical'?'var(--r)':s==='high'?'#ff5722':s==='medium'?'var(--y)':'var(--txt3)';
+  const riskColor = r => r>=70?'var(--r)':r>=40?'#ff9800':'var(--y)';
+  el.innerHTML = `
+    <div class="tbl">
+    <table style="width:100%;border-collapse:collapse;font-size:11px">
+      <thead><tr style="font-size:10px;color:var(--txt3);font-family:var(--fm);border-bottom:1px solid var(--b2)">
+        <th style="padding:8px;text-align:left">ENTITY</th>
+        <th style="padding:8px;text-align:left">TYPE</th>
+        <th style="padding:8px;text-align:center">UEBA RISK</th>
+        <th style="padding:8px;text-align:left">SIEM SEVERITY</th>
+        <th style="padding:8px;text-align:left">CORRELATION TYPE</th>
+        <th style="padding:8px;text-align:left">MITRE TACTICS</th>
+        <th style="padding:8px;text-align:left">SOURCE</th>
+        <th style="padding:8px;text-align:left">WHEN</th>
+      </tr></thead>
+      <tbody>
+        ${d.items.map(r=>`
+        <tr style="border-bottom:1px solid var(--b1);cursor:pointer" onclick="corrHistExpand(${r.id})">
+          <td style="padding:8px;color:var(--c);font-weight:600;font-family:var(--fm)">${esc(r.entity||r.indicator||'—')}</td>
+          <td style="padding:8px;color:var(--txt2)">${esc(r.entity_type||'—')}</td>
+          <td style="padding:8px;text-align:center"><span style="color:${riskColor(r.ueba_risk)};font-weight:700;font-family:var(--fm)">${r.ueba_risk||0}</span></td>
+          <td style="padding:8px"><span class="badge ${r.siem_severity||'ok'}">${r.siem_severity||'—'}</span></td>
+          <td style="padding:8px;color:var(--txt2)">${esc((r.correlation_type||'—').replace(/_/g,' '))}</td>
+          <td style="padding:8px">${(r.mitre_tactic||[]).slice(0,3).map(t=>`<span style="font-size:9px;padding:1px 4px;border-radius:3px;background:rgba(255,152,0,.1);color:#ff9800;margin-right:2px">${esc(t)}</span>`).join('')}</td>
+          <td style="padding:8px"><span style="font-size:9px;padding:1px 5px;border-radius:3px;background:${r.source==='manual'?'rgba(0,229,255,.1)':'rgba(240,98,146,.1)'};color:${r.source==='manual'?'var(--c)':'#f06292'}">${esc(r.source||'—')}</span></td>
+          <td style="padding:8px;color:var(--txt3);white-space:nowrap;font-family:var(--fm)">${fmtDate(r.created_at)}</td>
+        </tr>
+        <tr id="corr-exp-${r.id}" style="display:none;background:var(--bg2)">
+          <td colspan="8" style="padding:10px 16px">
+            ${r.ai_analysis?`<div style="font-size:11px;color:var(--txt);line-height:1.6;margin-bottom:8px"><b style="color:var(--c)">AI Analysis:</b><br>${esc(r.ai_analysis).replace(/\n/g,'<br>')}</div>`:''}
+            ${(r.wazuh_hits?.length||0)>0?`<div style="font-size:10px;color:var(--txt3);font-family:var(--fm)"><b>SIEM hits:</b> ${(r.wazuh_hits||[]).slice(0,3).map(h=>`${esc(h.desc||'')} @ ${esc(h.agent||'')}`).join(' | ')}</div>`:''}
+            ${(r.hive_hits?.length||0)>0?`<div style="font-size:10px;color:var(--txt3);font-family:var(--fm);margin-top:4px"><b>Case hits:</b> ${(r.hive_hits||[]).map(h=>esc(h.title||'')).join(', ')}</div>`:''}
+          </td>
+        </tr>`).join('')}
+      </tbody>
+    </table>
+    </div>
+    ${buildPaginator(_corrHistPage, _corrHistPageSize, d.total, 'loadCorrHistory(_corrHistPage-1)', 'loadCorrHistory(_corrHistPage+1)', 'sel=>{_corrHistPageSize=+sel.value;loadCorrHistory(1)}')}
+    <div style="font-size:10px;color:var(--txt3);padding:8px 0">${d.total} correlation(s) total</div>`;
+}
+
+function corrHistExpand(id){
+  const row = document.getElementById('corr-exp-'+id);
+  if(row) row.style.display = row.style.display==='none' ? '' : 'none';
 }
 
 function showLiveToast(type, msg, severity){
