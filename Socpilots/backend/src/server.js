@@ -263,6 +263,22 @@ function _osBackpressure(label) {
   return false;
 }
 
+// Auto-clear OS fielddata cache when circuit breaker trips — prevents 98% heap death-spiral
+let _osClearCacheTime = 0;
+async function _osClearFielddata() {
+  const now = Date.now();
+  if (now - _osClearCacheTime < 60_000) return; // at most once per minute
+  _osClearCacheTime = now;
+  try {
+    await axios.post(`${OS_URL}/_cache/clear?fielddata=true`, null, {
+      auth: { username: OS_USER, password: OS_PASS }, httpsAgent, timeout: 10000,
+    });
+    console.warn('[osSearch] 429 fielddata cache cleared — heap pressure relieved');
+  } catch (e) {
+    console.warn('[osSearch] cache clear failed:', e.message);
+  }
+}
+
 // ─── OPENSEARCH HELPER ─────────────────────────────────────
 // maxRetries: default 3 (~14s max). Pass 2 for fast-fail paths, higher for critical user routes.
 async function osSearch(body, index = IDX, size = 200, _retry = 0, maxRetries = 3) {
@@ -280,6 +296,7 @@ async function osSearch(body, index = IDX, size = 200, _retry = 0, maxRetries = 
     if (e.response?.status === 429 && _retry < maxRetries) {
       const wait = (2 ** _retry) * 2000 + Math.random() * 1000;
       console.warn(`[osSearch] 429 — retry ${_retry + 1}/${maxRetries} in ${Math.round(wait)}ms`);
+      if (_retry === 0) _osClearFielddata();
       await new Promise(res => setTimeout(res, wait));
       return osSearch(body, index, size, _retry + 1, maxRetries);
     }
@@ -289,6 +306,7 @@ async function osSearch(body, index = IDX, size = 200, _retry = 0, maxRetries = 
   if (r.status === 429 && _retry < maxRetries) {
     const wait = (2 ** _retry) * 2000 + Math.random() * 1000;
     console.warn(`[osSearch] 429 — retry ${_retry + 1}/${maxRetries} in ${Math.round(wait)}ms`);
+    if (_retry === 0) _osClearFielddata(); // try freeing fielddata on first 429
     await new Promise(res => setTimeout(res, wait));
     return osSearch(body, index, size, _retry + 1, maxRetries);
   }
