@@ -2798,19 +2798,35 @@ sshd: Failed" style="min-height:80px"></textarea></div>
 
   <!-- ── OVERVIEW ── -->
   <div id="art-panel-overview">
-    <!-- Auto-ingest status bar -->
-    <div class="card" style="padding:10px 16px;margin-bottom:12px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
-      <div style="display:flex;align-items:center;gap:8px;flex:1">
-        <div id="art-ingest-dot" style="width:8px;height:8px;border-radius:50%;background:var(--txt3);flex-shrink:0"></div>
-        <div>
-          <div style="font-size:11px;font-weight:600;color:var(--txt)">SIEM → IOC Auto-Ingest</div>
-          <div style="font-size:10px;color:var(--txt3)" id="art-ingest-status">Runs every 15 min — scanning alerts for IPs, hashes, domains, URLs</div>
+    <!-- Auto-ingest + Auto-enrich status bar -->
+    <div class="card" style="padding:10px 16px;margin-bottom:12px">
+      <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:8px">
+        <div style="display:flex;align-items:center;gap:8px;flex:1">
+          <div id="art-ingest-dot" style="width:8px;height:8px;border-radius:50%;background:var(--txt3);flex-shrink:0"></div>
+          <div>
+            <div style="font-size:11px;font-weight:600;color:var(--txt)">SIEM → IOC Auto-Ingest</div>
+            <div style="font-size:10px;color:var(--txt3)" id="art-ingest-status">Runs every 15 min — scanning alerts for IPs, hashes, domains, URLs</div>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="font-size:10px;color:var(--txt3)">Last: <span id="art-ingest-last" style="color:var(--txt2)">—</span></div>
+          <div style="font-size:10px;color:var(--txt3)">New: <span id="art-ingest-new" style="color:var(--c);font-family:var(--fm)">—</span></div>
+          <button class="btn btn-sm" id="art-ingest-btn" onclick="artTriggerIngest()" style="font-size:10px">↻ Sync Now</button>
         </div>
       </div>
-      <div style="display:flex;align-items:center;gap:8px">
-        <div style="font-size:10px;color:var(--txt3)">Last run: <span id="art-ingest-last" style="color:var(--txt2)">—</span></div>
-        <div style="font-size:10px;color:var(--txt3)">New: <span id="art-ingest-new" style="color:var(--c);font-family:var(--fm)">—</span></div>
-        <button class="btn btn-sm" id="art-ingest-btn" onclick="artTriggerIngest()" style="font-size:10px">↻ Sync Now</button>
+      <div style="border-top:1px solid var(--b1);padding-top:8px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+        <div style="display:flex;align-items:center;gap:8px;flex:1">
+          <div id="art-enrich-dot" style="width:8px;height:8px;border-radius:50%;background:var(--txt3);flex-shrink:0"></div>
+          <div>
+            <div style="font-size:11px;font-weight:600;color:var(--txt)">IOC Auto-Enrichment</div>
+            <div style="font-size:10px;color:var(--txt3)" id="art-enrich-status">Runs every 30 min — VT, AbuseIPDB, Shodan, OpenCTI, OTX</div>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="font-size:10px;color:var(--txt3)">Last: <span id="art-enrich-last" style="color:var(--txt2)">—</span></div>
+          <div style="font-size:10px;color:var(--txt3)">Queue: <span id="art-enrich-queue" style="font-family:var(--fm)">—</span></div>
+          <button class="btn btn-sm" id="art-enrich-btn" onclick="artTriggerEnrich()" style="font-size:10px">⚡ Enrich Now</button>
+        </div>
       </div>
     </div>
     <div class="art-kpi-grid">
@@ -10366,6 +10382,16 @@ async function loadArtStats() {
   if (lbl) lbl.textContent = ingest.running ? 'Running now — scanning alerts…' : 'Auto-runs every 15 min — scanning alerts for IPs, hashes, domains, URLs';
   if (lastEl) lastEl.textContent = ingest.last_run ? fmtDate(ingest.last_run) : 'Not yet run (runs 2 min after boot)';
   if (newEl) newEl.textContent = ingest.last_run ? String(ingest.last_new || 0) : '—';
+  // Enrichment status bar
+  const enrich = d.enrich || {};
+  const eDot = document.getElementById('art-enrich-dot');
+  const eLbl = document.getElementById('art-enrich-status');
+  const eLastEl = document.getElementById('art-enrich-last');
+  const eQueueEl = document.getElementById('art-enrich-queue');
+  if (eDot) eDot.style.background = enrich.running ? 'var(--o)' : (enrich.last_run ? 'var(--g)' : 'var(--txt3)');
+  if (eLbl) eLbl.textContent = enrich.running ? 'Running — enriching IOCs with VT, AbuseIPDB, Shodan, OpenCTI…' : 'Auto-runs every 30 min — VT, AbuseIPDB, Shodan, OpenCTI, OTX';
+  if (eLastEl) eLastEl.textContent = enrich.last_run ? fmtDate(enrich.last_run) : '—';
+  if (eQueueEl) { eQueueEl.textContent = enrich.queue !== undefined ? String(enrich.queue) : '—'; eQueueEl.style.color = (enrich.queue||0) > 0 ? 'var(--o)' : 'var(--g)'; }
   const srcLbl = document.getElementById('art-alert-source-lbl');
   if (srcLbl && s.total > 0) srcLbl.textContent = `${s.total} total IOCs — ${s.seen_24h || 0} seen in last 24h`;
   // Type distribution bars
@@ -10385,10 +10411,12 @@ async function loadArtStats() {
   const covEl = document.getElementById('art-enr-coverage');
   if (covEl && s.total) {
     const pct = s.enriched ? Math.round(s.enriched / s.total * 100) : 0;
+    const queueHint = (enrich.queue||0) > 0 ? `<div style="font-size:10px;color:var(--o);margin-top:4px">${enrich.queue} pending in queue</div>` : '';
     covEl.innerHTML = `
       <div style="text-align:center;margin-bottom:12px">
         <div style="font-size:36px;font-weight:700;color:${pct>70?'var(--g)':pct>30?'var(--o)':'var(--r)'};font-family:var(--fm)">${pct}%</div>
         <div style="font-size:11px;color:var(--txt3)">${s.enriched||0} of ${s.total} IOCs enriched</div>
+        ${queueHint}
       </div>
       <div style="height:8px;background:var(--b1);border-radius:4px;overflow:hidden">
         <div style="height:100%;width:${pct}%;background:var(--g);border-radius:4px"></div>
@@ -10563,28 +10591,53 @@ async function loadArtEnrichmentSources() {
     </div>`).join('');
 }
 
+async function artTriggerEnrich() {
+  const btn = document.getElementById('art-enrich-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Starting…'; }
+  const r = await P('/api/ioc-store/enrich-all', { batch_size: 10 });
+  if (btn) { btn.textContent = r?.status === 'already_running' ? 'Already running' : 'Running…'; }
+  setTimeout(() => loadArtStats(), 3000);
+  setTimeout(() => { if (btn) { btn.disabled = false; btn.textContent = '⚡ Enrich Now'; } loadArtStats(); }, 12000);
+}
+
 async function artBulkEnrich() {
   const btn = document.getElementById('art-bulk-enr-btn');
   const status = document.getElementById('art-bulk-enr-status');
-  if (btn) { btn.disabled = true; btn.textContent = 'Running…'; }
-  if (status) status.textContent = 'Fetching unenriched IOCs…';
-  const type = document.getElementById('art-bulk-enr-type')?.value || '';
-  const d = await G(`/api/ioc-store?page_size=50&sort_by=last_seen&sort_dir=asc${type?'&ioc_type='+type:''}`);
-  const unenriched = (d?.items||[]).filter(i => !i.enriched_at);
-  if (!unenriched.length) { if (status) status.textContent = 'All IOCs are already enriched'; if (btn) { btn.disabled=false; btn.textContent='Start Bulk Enrichment'; } return; }
   const queueEl = document.getElementById('art-enr-queue');
-  if (queueEl) queueEl.innerHTML = unenriched.map(i=>`<div id="enr-row-${i.id}" style="padding:5px 0;font-size:11px;color:var(--txt3);font-family:var(--fm)">${esc(i.indicator)} <span style="color:var(--txt3)">pending…</span></div>`).join('');
-  let done = 0;
-  for (const ioc of unenriched) {
-    if (status) status.textContent = `Enriching ${done+1}/${unenriched.length}: ${ioc.indicator}`;
-    const r = await P(`/api/ioc-store/${ioc.id}/enrich`, {});
-    const row = document.getElementById(`enr-row-${ioc.id}`);
-    if (row) row.innerHTML = `${esc(ioc.indicator)} <span style="color:${r?.reputation==='malicious'?'var(--r)':r?.reputation==='suspicious'?'var(--o)':'var(--g)'}">${r?.reputation||'done'} (risk:${r?.risk_score||0})</span>`;
-    done++;
+  if (btn) { btn.disabled = true; btn.textContent = 'Starting…'; }
+  if (status) status.textContent = '';
+  const r = await P('/api/ioc-store/enrich-all', { batch_size: 10 });
+  if (!r || r.error) {
+    if (status) status.textContent = r?.error || 'Failed to start enrichment';
+    if (btn) { btn.disabled = false; btn.textContent = 'Start Bulk Enrichment'; }
+    return;
   }
-  if (status) status.textContent = `Done — enriched ${done} IOCs`;
-  if (btn) { btn.disabled=false; btn.textContent='Start Bulk Enrichment'; }
-  loadArtStats();
+  if (r.status === 'already_running') {
+    if (status) status.textContent = 'Enrichment job is already running in the background';
+    if (btn) { btn.disabled = false; btn.textContent = 'Start Bulk Enrichment'; }
+    return;
+  }
+  if (queueEl) queueEl.innerHTML = `<div style="font-size:11px;color:var(--txt3);padding:8px 0;border:1px solid var(--b1);border-radius:6px;padding:10px 12px;margin-top:8px">
+    <div style="color:var(--c);font-weight:600;margin-bottom:4px">Enrichment running in background</div>
+    Processing up to ${r.batch_size} IOCs — rate-limited to respect VT free tier (4 req/min, ~16s per VT-type IOC).<br>
+    Status updates every 5 seconds below.
+  </div>`;
+  if (status) status.textContent = 'Started…';
+  if (btn) btn.textContent = 'Running…';
+  let polls = 0;
+  const poll = setInterval(async () => {
+    const s = await G('/api/ioc-store/stats');
+    const enrich = s?.enrich || {};
+    if (!enrich.running) {
+      clearInterval(poll);
+      if (btn) { btn.disabled = false; btn.textContent = 'Start Bulk Enrichment'; }
+      if (status) status.textContent = `Batch complete — ${enrich.last_count||0} enriched. ${enrich.queue||0} IOCs still queued (next auto-run in 30 min).`;
+      loadArtStats();
+    } else {
+      if (status) status.textContent = `Running… ${enrich.queue||0} IOCs remaining in queue`;
+    }
+    if (++polls > 150) clearInterval(poll);
+  }, 5000);
 }
 
 const HUNT_TEMPLATES = [
@@ -10820,6 +10873,188 @@ async function loadArtSettings() {
 .utf-btn{background:rgba(255,255,255,.04);color:var(--txt2);border:1px solid var(--b1);transition:all .15s}
 .utf-btn:hover,.utf-btn.active-utf{background:rgba(0,229,255,.15);color:var(--c);border-color:rgba(0,229,255,.4);font-weight:600}
 </style>
+
+<!-- ── PAGE GUIDE CHATBOT ─────────────────────────────────────── -->
+<style>
+#help-btn{position:fixed;bottom:24px;right:24px;z-index:9990;width:46px;height:46px;border-radius:50%;background:linear-gradient(135deg,rgba(0,229,255,.18),rgba(0,184,212,.12));border:1px solid rgba(0,229,255,.35);color:var(--c);cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 0 18px rgba(0,229,255,.18);transition:all .2s;backdrop-filter:blur(8px)}
+#help-btn:hover{background:rgba(0,229,255,.25);box-shadow:0 0 28px rgba(0,229,255,.35);transform:scale(1.06)}
+#help-btn svg{width:20px;height:20px;pointer-events:none}
+#help-panel{position:fixed;bottom:82px;right:24px;z-index:9989;width:380px;max-width:calc(100vw - 32px);background:rgba(10,22,40,.97);border:1px solid rgba(0,229,255,.2);border-radius:14px;box-shadow:0 8px 40px rgba(0,0,0,.55),0 0 30px rgba(0,229,255,.08);display:none;flex-direction:column;overflow:hidden;backdrop-filter:blur(16px);animation:helpSlideIn .22s ease}
+@keyframes helpSlideIn{from{opacity:0;transform:translateY(16px) scale(.97)}to{opacity:1;transform:none}}
+#help-panel.open{display:flex}
+#help-hd{display:flex;align-items:center;gap:10px;padding:12px 14px 10px;border-bottom:1px solid rgba(0,229,255,.1);flex-shrink:0}
+#help-hd-icon{width:28px;height:28px;border-radius:50%;background:rgba(0,229,255,.12);border:1px solid rgba(0,229,255,.25);display:flex;align-items:center;justify-content:center;flex-shrink:0}
+#help-hd-icon svg{width:14px;height:14px;color:var(--c)}
+#help-hd-title{flex:1;font-size:11px;font-family:var(--fm);color:var(--c);letter-spacing:.06em;text-transform:uppercase}
+#help-hd-page{font-size:9px;color:var(--txt3);font-family:var(--fm);letter-spacing:.04em;margin-top:1px}
+#help-close{background:none;border:none;color:var(--txt3);cursor:pointer;padding:2px;display:flex;align-items:center;justify-content:center;border-radius:4px;transition:color .15s}
+#help-close:hover{color:var(--r)}
+#help-msgs{flex:1;overflow-y:auto;padding:12px 14px;display:flex;flex-direction:column;gap:10px;min-height:200px;max-height:340px;scroll-behavior:smooth}
+#help-msgs::-webkit-scrollbar{width:3px}
+#help-msgs::-webkit-scrollbar-track{background:transparent}
+#help-msgs::-webkit-scrollbar-thumb{background:rgba(0,229,255,.15);border-radius:2px}
+.hm-user{align-self:flex-end;background:rgba(0,229,255,.12);border:1px solid rgba(0,229,255,.2);color:var(--txt);border-radius:12px 12px 2px 12px;padding:8px 12px;font-size:12px;max-width:85%;line-height:1.45;word-break:break-word}
+.hm-bot{align-self:flex-start;background:rgba(15,30,53,.8);border:1px solid rgba(255,255,255,.06);color:var(--txt);border-radius:2px 12px 12px 12px;padding:8px 12px;font-size:12px;max-width:92%;line-height:1.55;word-break:break-word}
+.hm-bot ul{margin:4px 0 0 14px;padding:0}
+.hm-bot li{margin-bottom:3px}
+.hm-bot strong{color:var(--c)}
+.hm-bot code{background:rgba(0,229,255,.08);border:1px solid rgba(0,229,255,.15);border-radius:3px;padding:1px 5px;font-family:var(--fm);font-size:10px;color:var(--c)}
+.hm-typing{align-self:flex-start;padding:8px 14px;background:rgba(15,30,53,.8);border:1px solid rgba(255,255,255,.06);border-radius:2px 12px 12px 12px}
+.hm-typing span{display:inline-block;width:6px;height:6px;background:rgba(0,229,255,.5);border-radius:50%;margin:0 2px;animation:typingDot 1.2s infinite}
+.hm-typing span:nth-child(2){animation-delay:.2s}
+.hm-typing span:nth-child(3){animation-delay:.4s}
+@keyframes typingDot{0%,80%,100%{transform:scale(.7);opacity:.5}40%{transform:scale(1);opacity:1}}
+#help-quick{padding:0 14px 8px;display:flex;flex-wrap:wrap;gap:5px;flex-shrink:0}
+.hq-chip{background:rgba(0,229,255,.07);border:1px solid rgba(0,229,255,.18);color:var(--c);font-size:10px;font-family:var(--fm);padding:4px 10px;border-radius:20px;cursor:pointer;transition:all .15s;white-space:nowrap}
+.hq-chip:hover{background:rgba(0,229,255,.18);border-color:rgba(0,229,255,.4)}
+#help-ft{display:flex;gap:8px;padding:10px 14px 12px;border-top:1px solid rgba(0,229,255,.08);flex-shrink:0}
+#help-input{flex:1;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);border-radius:8px;color:var(--txt);font-size:12px;padding:8px 11px;font-family:inherit;resize:none;outline:none;line-height:1.4;max-height:80px;transition:border-color .15s}
+#help-input:focus{border-color:rgba(0,229,255,.35)}
+#help-input::placeholder{color:var(--txt3)}
+#help-send{background:rgba(0,229,255,.15);border:1px solid rgba(0,229,255,.3);color:var(--c);border-radius:8px;padding:0 14px;cursor:pointer;font-size:12px;font-family:var(--fm);transition:all .15s;flex-shrink:0}
+#help-send:hover:not(:disabled){background:rgba(0,229,255,.28);border-color:rgba(0,229,255,.55)}
+#help-send:disabled{opacity:.4;cursor:not-allowed}
+</style>
+
+<button id="help-btn" onclick="helpToggle()" title="Page Guide">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+</button>
+
+<div id="help-panel">
+  <div id="help-hd">
+    <div id="help-hd-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></div>
+    <div style="flex:1"><div id="help-hd-title">PAGE GUIDE</div><div id="help-hd-page">—</div></div>
+    <button id="help-close" onclick="helpToggle()" title="Close">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+  </div>
+  <div id="help-msgs"></div>
+  <div id="help-quick"></div>
+  <div id="help-ft">
+    <textarea id="help-input" rows="1" placeholder="Ask about this page…" onkeydown="helpKey(event)" oninput="helpResize(this)"></textarea>
+    <button id="help-send" onclick="helpSend()">Send</button>
+  </div>
+</div>
+
+<script>
+const PAGE_TITLES={dashboard:'Dashboard',agents:'Agents',alerts:'Alerts',rules:'Detection Rules',mitre:'ATT&CK Coverage','log-sources':'Log Sources',artifacts:'Artifacts & IOC',cases:'Cases','hive-alerts':'SP-CM Alerts',hunt:'Threat Hunt',ioc:'IOC Enrichment',correlate:'Correlation',threatmap:'Live Threat Map','create-rules':'Create Rules',investigation:'AI Investigation',copilot:'SOCPilots AI',langchain:'LangChain Agent',assets:'Assets',ueba:'UEBA',reports:'Reports',evidence:'Evidence Upload',darksoc:'Dark SOC',users:'User Management',settings:'Settings',notifications:'Notifications'};
+const PAGE_QUICK={dashboard:['Explain this page','What do the KPI cards mean?','What is the MITRE widget?'],alerts:['Explain this page','How do I investigate an alert?','What does severity mean?'],rules:['Explain this page','What is a rule level?','What is the MITRE column?'],'create-rules':['Explain everything','What is Generated Rule XML?','What does Test Rule do?','How do I deploy a rule?'],mitre:['Explain this page','What do the colors mean?','How do I export to Navigator?'],ueba:['Explain this page','What is an anomaly score?','What is impossible travel?'],darksoc:['Explain this page','What actions are automated?','What needs consensus approval?'],investigation:['Explain this page','How does the AI investigate?','What tools does the agent use?'],ioc:['Explain this page','What sources are queried?','What is the threat score?'],assets:['Explain this page','What is a coverage gap?','What are criticality tiers?'],copilot:['What can I ask here?','How do I attach an alert?'],langchain:['Explain the endpoints','What is the reasoning trace?'],evidence:['Explain this page','What file types are supported?','How does semantic search work?'],cases:['Explain this page','What are TLP levels?'],hunt:['Explain this page','How do I schedule a hunt?'],correlate:['Explain this page','What is a risk score?'],artifacts:['Explain this page','What is auto-ingest?','What is a threat score?']};
+
+let _helpOpen=false,_helpHistory=[],_helpBusy=false;
+
+function helpToggle(){
+  _helpOpen=!_helpOpen;
+  const panel=document.getElementById('help-panel');
+  if(_helpOpen){
+    panel.classList.add('open');
+    helpSetPage(CUR);
+    if(!_helpHistory.length) helpWelcome(CUR);
+    setTimeout(()=>document.getElementById('help-input').focus(),120);
+  } else {
+    panel.classList.remove('open');
+  }
+}
+
+function helpSetPage(p){
+  const title=PAGE_TITLES[p]||p;
+  document.getElementById('help-hd-page').textContent=title;
+  const chips=PAGE_QUICK[p]||['Explain this page','What are the main sections?'];
+  document.getElementById('help-quick').innerHTML=chips.map(c=>`<div class="hq-chip" onclick="helpAsk(${JSON.stringify(c)})">${esc(c)}</div>`).join('');
+}
+
+function helpWelcome(p){
+  const title=PAGE_TITLES[p]||p;
+  _helpAddMsg('bot','Hi! I\'m your SOCPilots page guide.\n\nYou\'re on the **'+title+'** page. Ask me anything — what each section does, how to use a feature, or what any term means.\n\nTip: click a quick-action chip below, or ask **"Explain everything about this page"**');
+}
+
+function helpAsk(q){
+  document.getElementById('help-input').value=q;
+  helpSend();
+}
+
+function helpResize(el){
+  el.style.height='auto';
+  el.style.height=Math.min(el.scrollHeight,80)+'px';
+}
+
+function helpKey(e){
+  if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();helpSend();}
+}
+
+async function helpSend(){
+  const inp=document.getElementById('help-input');
+  const q=inp.value.trim();
+  if(!q||_helpBusy) return;
+  inp.value='';inp.style.height='auto';
+  document.getElementById('help-quick').innerHTML='';
+  _helpAddMsg('user',q);
+  _helpHistory.push({role:'user',content:q});
+  _helpBusy=true;
+  document.getElementById('help-send').disabled=true;
+  const typId='typ_'+Date.now();
+  _helpAddTyping(typId);
+  try{
+    const r=await P('/api/help/chat',{page:CUR,question:q,history:_helpHistory.slice(-8)});
+    _helpRemoveTyping(typId);
+    if(r&&r.answer){
+      _helpAddMsg('bot',r.answer);
+      _helpHistory.push({role:'assistant',content:r.answer});
+    } else {
+      _helpAddMsg('bot','No response received. Ensure OPENAI_API_KEY is set in .env.');
+    }
+  }catch(e){
+    _helpRemoveTyping(typId);
+    _helpAddMsg('bot','Connection error — help service may be unavailable.');
+  }
+  _helpBusy=false;
+  document.getElementById('help-send').disabled=false;
+  document.getElementById('help-input').focus();
+}
+
+function _helpRenderBot(raw){
+  // Escape HTML first, then apply simple markdown
+  let t=raw.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  // Bold
+  t=t.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>');
+  // Inline code
+  t=t.replace(/`([^`\n]+)`/g,'<code>$1</code>');
+  // Bullet lines → li items, then wrap consecutive li in ul
+  t=t.replace(/^[•\-\*] (.+)$/gm,'<li>$1</li>');
+  t=t.replace(/(<\/li>\n?<li>|<\/li><li>)/g,'</li><li>');
+  t=t.replace(/(<li>[\s\S]+?<\/li>)/g,'<ul>$1</ul>');
+  // Newlines
+  t=t.replace(/\n/g,'<br>');
+  return t;
+}
+
+function _helpAddMsg(role,text){
+  const el=document.getElementById('help-msgs');
+  const div=document.createElement('div');
+  div.className=role==='user'?'hm-user':'hm-bot';
+  if(role==='bot') div.innerHTML=_helpRenderBot(text);
+  else div.textContent=text;
+  el.appendChild(div);
+  el.scrollTop=el.scrollHeight;
+}
+
+function _helpAddTyping(id){
+  const el=document.getElementById('help-msgs');
+  const div=document.createElement('div');
+  div.className='hm-typing';div.id=id;
+  div.innerHTML='<span></span><span></span><span></span>';
+  el.appendChild(div);el.scrollTop=el.scrollHeight;
+}
+
+function _helpRemoveTyping(id){
+  document.getElementById(id)?.remove();
+}
+
+// Update the panel header when the analyst navigates (hooks into existing _pageLoadHooks)
+if(typeof _pageLoadHooks!=='undefined'){
+  const _origHooks=window.go;
+  window.go=function(p){if(_origHooks)_origHooks(p);if(_helpOpen)helpSetPage(p);};
+}
+</script>
 
 <!-- Live toast notification container (Socket.IO events) -->
 <div id="live-toast-wrap" style="position:fixed;bottom:20px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:8px;pointer-events:none">

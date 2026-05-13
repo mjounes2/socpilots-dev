@@ -6283,6 +6283,357 @@ app.get('/api/ioc-whitelist/:id/audit', authMW, async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── PAGE HELP CHAT ───────────────────────────────────────────────
+const PAGE_CONTEXTS = {
+  dashboard: {
+    title: 'Dashboard',
+    desc: 'Real-time security operations overview showing the health of your entire SOC environment at a glance.',
+    sections: [
+      { name: 'KPI Cards (top row)', desc: 'Six metric tiles: Total Alerts (last 24h), Active Agents, Offline Agents, Open Cases, Threat Hunt runs, and a MITRE Coverage score. Each card is clickable and navigates to the relevant module.' },
+      { name: 'Alert Severity Chart', desc: 'Bar chart showing alert volume broken down by severity (critical/high/medium/low) over the selected time range. Helps spot spikes and trends.' },
+      { name: 'Top Rules / Top Agents', desc: 'Side-by-side tables showing which detection rules fired most and which agents generated most alerts in the last 24 hours.' },
+      { name: 'MITRE ATT&CK Widget', desc: 'Mini heatmap showing your current ATT&CK technique coverage. High coverage = green, no coverage = dark. Click "View Full Matrix" to go to the full ATT&CK Coverage page.' },
+      { name: 'Recent Critical Alerts', desc: 'Live table of the last 10 critical-severity alerts. Click any row to jump to the Alerts page filtered on that event.' },
+      { name: 'Live Threat Map preview', desc: 'Globe widget showing real-time attack origin arcs. Hover arcs to see source country and targeted service.' },
+    ]
+  },
+  agents: {
+    title: 'Agents',
+    desc: 'Wazuh endpoint agent inventory — every host reporting to your SIEM.',
+    sections: [
+      { name: 'Status Summary (header cards)', desc: 'Four KPI tiles: Total, Active, Disconnected, Never Connected. Gives instant fleet health view.' },
+      { name: 'Agent Table', desc: 'Full agent list with columns: Name, ID, IP, OS, Version, Groups, Last Keep-Alive, Status badge. Active = green, Disconnected = red, Never Connected = grey.' },
+      { name: 'Search & Filter bar', desc: 'Filter agents by status (active / disconnected / never_connected) using the dropdown, or free-text search by name or IP.' },
+      { name: 'Agent detail modal', desc: 'Click any agent row to open a side panel showing full OS info, installed agent groups, last event time, and a button to jump to that agent\'s alerts.' },
+      { name: 'Agent-down alerts', desc: 'Agents that go offline trigger automatic notifications. The Disconnected count in the header turns orange when any agents are down.' },
+    ]
+  },
+  alerts: {
+    title: 'Alerts',
+    desc: 'Live feed of all SIEM alerts ingested from Wazuh via OpenSearch. This is your primary triage queue.',
+    sections: [
+      { name: 'Filter bar', desc: 'Filter by: Severity (critical/high/medium/low), Time Range (1h to 90d), Agent name, Source IP, and free-text search over rule description. Combine multiple filters.' },
+      { name: 'Alert table', desc: 'Paginated list with columns: Timestamp, Severity badge, Rule description, Agent, Source IP, Rule ID, MITRE technique. Click any row to open the detail modal.' },
+      { name: 'Alert detail modal', desc: 'Full alert breakdown: rule metadata, MITRE ATT&CK tags, raw log data, agent info. Contains action buttons: Investigate (sends to AI Investigation), Create Case (opens in TheHive), Enrich IOC.' },
+      { name: 'Bulk Investigate', desc: 'Checkbox-select multiple alerts then click "Investigate Selected" to run AI triage on all of them at once. Results go to the Investigation history.' },
+      { name: 'Pagination', desc: 'Navigate pages with Prev/Next buttons. Change page size (25/50/100/200) with the dropdown. Total alert count shown in header.' },
+    ]
+  },
+  rules: {
+    title: 'Detection Rules',
+    desc: 'All Wazuh detection rules that have fired at least once in the last 7 days, aggregated from OpenSearch.',
+    sections: [
+      { name: 'Stats header', desc: 'Four KPI tiles: Total Active Rules, Critical Rules, High Rules, and Most Active Rule (the one with highest fire count today).' },
+      { name: 'Filter & Search bar', desc: 'Filter rules by Severity level (critical/high/medium/low) or Decoder type (syslog, windows, etc.). Free-text search matches rule ID, description, or group name.' },
+      { name: 'Rules table', desc: 'Columns: Rule ID, Level badge, Description, Groups (tags), MITRE technique IDs, Decoder, First Seen, Last Seen, Fires count (24h). Sortable by level or count.' },
+      { name: 'Rule ID range', desc: 'Wazuh built-in rules are 1–99999. Custom rules you deploy via Create Rules are in the 200000–299999 range and are highlighted.' },
+      { name: 'MITRE column', desc: 'Shows which ATT&CK technique IDs this rule maps to. Click a technique badge to jump to that technique in the ATT&CK Coverage page.' },
+    ]
+  },
+  mitre: {
+    title: 'ATT&CK Coverage',
+    desc: 'MITRE ATT&CK Enterprise heatmap showing which techniques your detection rules cover, based on real alert activity.',
+    sections: [
+      { name: 'Coverage heatmap', desc: 'A 14-column grid (one column per tactic) × ~190 technique rows. Cell color = coverage level: Cyan/bright = High (10+ alerts), Teal = Medium (3-9), Dark teal = Low (1-2), Very dark = None (0 alerts matching this technique).' },
+      { name: 'Timeframe filter', desc: 'Select 24h / 7d / 30d / 90d to see coverage over different periods. Coverage changes based on actual alert activity in that window.' },
+      { name: 'Tactic columns', desc: '14 enterprise tactics in kill-chain order: Reconnaissance → Resource Development → Initial Access → Execution → Persistence → Privilege Escalation → Defense Evasion → Credential Access → Discovery → Lateral Movement → Collection → Command & Control → Exfiltration → Impact.' },
+      { name: 'Technique drill-down', desc: 'Click any technique cell to open a detail modal showing: recent alerts that matched, agents involved, decoder, daily timeline histogram, and associated Wazuh rules.' },
+      { name: 'Coverage stats bar', desc: 'Header shows total technique count by coverage level. Useful to quickly see your coverage gap percentage.' },
+      { name: 'Export Navigator', desc: 'Click "Export Navigator" to download a MITRE ATT&CK Navigator 4.9 compatible JSON. Import this into navigator.attack.mitre.org to visualize coverage in the official tool.' },
+    ]
+  },
+  'log-sources': {
+    title: 'Log Sources',
+    desc: 'Overview of all active log sources feeding your SIEM — agents, syslog forwarders, and cloud integrations.',
+    sections: [
+      { name: 'Source cards', desc: 'Each connected log source appears as a card showing: source name/IP, type (Windows Agent, Linux Agent, Syslog, Cloud API), last event timestamp, and events-per-minute rate.' },
+      { name: 'Silence detection', desc: 'Sources that stop sending logs trigger a "SILENT" alert badge. The auto-analysis job checks silence every 15 minutes and creates a notification if a source goes quiet unexpectedly.' },
+      { name: 'Event rate sparkline', desc: 'Mini bar chart on each card shows event volume over the last 24 hours. A flat/zero line indicates a silent source.' },
+      { name: 'Source type filters', desc: 'Filter bar lets you view only Windows agents, Linux agents, Syslog sources, or Cloud integrations separately.' },
+      { name: 'Auto-analysis summary', desc: 'The header shows the last auto-analysis run time and how many sources were analyzed. Analysis checks for silence, rate anomalies, and missing expected source types.' },
+    ]
+  },
+  artifacts: {
+    title: 'Artifacts & IOC',
+    desc: 'Indicators of Compromise (IOCs) automatically extracted from SIEM alerts and linked to investigations. This is your evidence locker — raw indicators before enrichment.',
+    sections: [
+      { name: 'Stats header', desc: 'KPI tiles: Total IOCs collected, IPs, Domains, Hashes, and URLs in the database. Also shows last auto-ingest time.' },
+      { name: 'IOC table', desc: 'All collected artifacts with columns: Indicator value, Type (ip/domain/hash/url), Threat Score, First Seen, Last Seen, Times Seen, linked Investigation, and Enrichment status badge.' },
+      { name: 'Threat Score', desc: 'A 0–100 score calculated from enrichment results. Red (70+) = high risk, Orange (40–70) = medium, Grey = unenriched. OTX-known indicators get an automatic score boost.' },
+      { name: 'Auto-ingest', desc: 'Every 15 minutes, the platform scans SIEM alerts and extracts IPs, domains, and hashes automatically. The badge in the header shows how many were ingested in the last run.' },
+      { name: 'Enrichment panel', desc: 'Click any IOC row to open the enrichment panel showing results from VirusTotal, AbuseIPDB, GreyNoise, CrowdSec, and OTX. Enrichment runs automatically for new artifacts.' },
+      { name: 'Filters', desc: 'Filter by Type (ip/domain/hash/url), Threat Score range, enrichment status, or free-text search. Sort by threat score or first seen date.' },
+    ]
+  },
+  cases: {
+    title: 'Cases',
+    desc: 'TheHive case management integration. All security cases created from investigations or manually. Cases track the full incident lifecycle from creation to closure.',
+    sections: [
+      { name: 'Case table', desc: 'Lists all TheHive cases with: Case ID, Title, Severity badge, Status (Open/In Progress/Resolved/Closed), TLP classification, PAP level, Assignee, and Created date.' },
+      { name: 'Timeframe filter', desc: 'Filter cases by creation date: Today, Last 7 days, Last 30 days, or All time. Severity filter (critical/high/medium/low) also available.' },
+      { name: 'Case detail modal', desc: 'Click any case to open a modal showing full case description, observables (IOCs attached to the case), tasks, and audit timeline.' },
+      { name: 'Create Case button', desc: 'Opens a form to manually create a new TheHive case. Can pre-fill from an alert using the "Create Case" button in the Alert detail modal.' },
+      { name: 'Status badges', desc: 'Open = red, In Progress = orange, Resolved = blue, Closed = green. TLP colors follow standard classification: TLP:RED, TLP:AMBER, TLP:GREEN, TLP:WHITE.' },
+    ]
+  },
+  'hive-alerts': {
+    title: 'SP-CM Alerts',
+    desc: 'TheHive alert triage queue (SP-CM = Security Platform Case Management). These are alerts pushed into TheHive waiting for analyst review before becoming full cases.',
+    sections: [
+      { name: 'Alert triage table', desc: 'Columns: Alert ID, Title, Severity, Source, Status (New/Updated/Ignored), TLP, Date. New alerts are highlighted. Click any to open in TheHive.' },
+      { name: 'Timeframe & Severity filters', desc: 'Same filter bar as Cases page — filter by date range and severity. Counts update as you filter.' },
+      { name: 'Alert detail modal', desc: 'Shows full TheHive alert details including source rule, artifacts/observables, and raw data payload. Contains a "Promote to Case" button to create a full investigation case.' },
+      { name: 'Status flow', desc: 'Alerts start as New → move to Updated when an analyst adds notes → Ignored if dismissed. Only Promoted alerts become Cases.' },
+    ]
+  },
+  hunt: {
+    title: 'Threat Hunt',
+    desc: 'Scheduled and ad-hoc threat hunting engine. Run AI-powered hunts against your SIEM data using hypothesis-driven queries.',
+    sections: [
+      { name: 'Run Hunt now', desc: 'Enter a hunt description or hypothesis (e.g., "Look for lateral movement via SMB from non-standard workstations") and click Run. The AI agent searches OpenSearch and returns findings with MITRE mapping.' },
+      { name: 'Hunt Schedules table', desc: 'All recurring hunts with name, schedule (cron expression), last run time, last result summary, and enabled/disabled toggle. Click a schedule to edit or run immediately.' },
+      { name: 'Create Schedule', desc: 'Form to add a recurring hunt: name, description/hypothesis, cron schedule (e.g., "0 8 * * *" = daily at 8am), and active toggle.' },
+      { name: 'Hunt History', desc: 'Results from past hunt runs showing timestamp, hunt name, findings count, and AI-generated summary. Click any row to see the full hunt report.' },
+      { name: 'Hunt templates', desc: 'Pre-built hunt hypotheses for common scenarios: credential stuffing, lateral movement, exfiltration, persistence mechanisms. Click a template to pre-fill the hunt form.' },
+    ]
+  },
+  ioc: {
+    title: 'IOC Enrichment',
+    desc: 'Manual IOC lookup and enrichment tool. Enter any IP, domain, file hash, or URL to get a full threat intelligence profile from multiple sources.',
+    sections: [
+      { name: 'Enrichment form', desc: 'Input field for the indicator value + type selector (IP / Domain / Hash / URL). Click Enrich to query all configured threat intel sources simultaneously.' },
+      { name: 'Enrichment results panel', desc: 'Results from each source shown in separate cards: VirusTotal (malicious votes, engine detections, categories), AbuseIPDB (confidence score, country, ISP, abuse reports), Shodan (open ports, services, OS, CVEs), OTX AlienVault (pulse count, campaigns, malware families).' },
+      { name: 'Threat verdict', desc: 'A combined verdict at the top (MALICIOUS / SUSPICIOUS / CLEAN / UNKNOWN) based on weighted scores from all sources. Includes a 0–100 composite score.' },
+      { name: 'OTX Feed table', desc: 'Below the enrichment form, a live table of the latest IOCs from your OTX subscription — pulled every 6 hours. Shows indicator, type, pulse name, threat actor tags. Click any to auto-fill the enrichment form.' },
+      { name: 'Cache indicator', desc: 'Results are cached in Redis for 1 hour to avoid redundant API calls. A "Cached" badge appears on results served from cache. Click "Refresh" to force a new lookup.' },
+    ]
+  },
+  correlate: {
+    title: 'Correlation',
+    desc: 'Alert correlation engine that groups related alerts into attack chains. Identifies multi-step attacks that individual alerts would miss.',
+    sections: [
+      { name: 'Alert Groups table', desc: 'Correlated alert clusters. Each group shows: cluster name, alert count, severity level, involved agents, MITRE techniques detected, and time span of the attack chain.' },
+      { name: 'Group detail modal', desc: 'Click any group to see the full correlation: timeline of individual alerts in sequence, kill-chain stage mapping, source IPs involved, and AI-generated attack narrative.' },
+      { name: 'Risk score', desc: 'Each correlation group has a 0–100 risk score calculated from: UEBA entity risk, MITRE technique severity weights, alert frequency, and lateral movement indicators.' },
+      { name: 'Live correlation feed', desc: 'Real-time panel on the right showing new correlations as they are detected. Auto-refreshes. Badge count in the nav sidebar updates live via WebSocket.' },
+      { name: 'Severity filter', desc: 'Filter correlation groups by severity. The chart at the top shows group distribution over time.' },
+    ]
+  },
+  threatmap: {
+    title: 'Live Threat Map',
+    desc: 'Real-time 3D globe visualization showing attack origins targeting your organization, derived from SIEM source IPs.',
+    sections: [
+      { name: 'Globe visualization', desc: 'Animated 3D globe with colored arcs showing attack trajectories. Arc origin = attacker source country. Arc target = YOUR ORG marker. Arc color follows severity: red = critical, orange = high, yellow = medium.' },
+      { name: 'Attack counter', desc: 'Live counter in the corner showing total attacks in the current session and attacks per minute rate.' },
+      { name: 'Arc hover tooltip', desc: 'Hover any arc to see: source country, source IP, rule that triggered, severity, and timestamp.' },
+      { name: 'Data source', desc: 'Arcs are drawn from SIEM alerts that have a source IP address. The map polls for new alerts every 30 seconds and adds new arcs dynamically.' },
+      { name: 'Country stats panel', desc: 'Right panel shows top attacking countries ranked by alert count, with flag icons and percentage of total attacks.' },
+    ]
+  },
+  'create-rules': {
+    title: 'Create Detection Rules',
+    desc: 'Build, test, and deploy custom Wazuh SIEM detection rules via an AI-assisted workflow. Rules are written to your SIEM in real-time through the MCP bridge.',
+    sections: [
+      { name: 'Rule Builder (form)', desc: 'Fill in: Rule Name (human label), Severity Level (1–15, where 12+ = critical), Rule Group (e.g., "authentication", "web"), Match Pattern (the string Wazuh looks for in logs), MITRE Technique ID (optional, e.g. T1110), and Description. The form validates inputs before allowing test or deploy.' },
+      { name: 'Generated Rule XML', desc: 'Auto-generated Wazuh XML rule based on your form inputs. Shows the exact XML that will be written to custom_rules.xml on the SIEM. The rule ID is randomly assigned in the 200000–299999 range (the Wazuh custom rules namespace). You can review this before deploying.' },
+      { name: 'Test Rule (Dry Run)', desc: 'Sends the rule to the AI agent for syntax validation and logical review WITHOUT writing it to the SIEM. The agent checks: XML validity, pattern correctness, potential false positive rate, and MITRE mapping accuracy. Use this before every deploy.' },
+      { name: 'Deploy to SIEM', desc: 'Sends the rule to your Wazuh manager via the MCP bridge (add_wazuh_rule tool). The rule becomes active immediately — no SIEM restart required. Requires analyst or admin role. A success response includes the assigned rule ID and verification status.' },
+      { name: 'Deployed Custom Rules table', desc: 'Shows all rules currently in the 200000–299999 ID range that have fired at least once. Columns: Rule ID, Level badge, Description, Groups, MITRE, 24h fire count. Proves the rule is working after deployment.' },
+      { name: 'AI Rule Templates', desc: 'Pre-built rule templates for common scenarios (brute force, privilege escalation, data exfiltration, web attacks). Click a template to auto-fill the Rule Builder form.' },
+    ]
+  },
+  investigation: {
+    title: 'AI Investigation',
+    desc: 'AI-powered security investigation engine. Select an alert or describe an incident — the AI runs a multi-step ReAct investigation using 6 specialized tools and produces a full analysis report.',
+    sections: [
+      { name: 'Alert selector', desc: 'Left panel shows recent SIEM alerts you can click to pre-load into the investigation. Alternatively type a free-text description of the incident in the input box.' },
+      { name: 'Investigation input', desc: 'Text area where you describe what to investigate. Can be an IOC (IP, hash, domain), an alert rule ID, an agent name, or a plain English description like "unusual PowerShell from finance workstation".' },
+      { name: 'Investigation report', desc: 'The AI agent\'s output: timeline of findings, IOC reputation verdicts, UEBA entity risk scores, MITRE techniques identified, correlated cases in TheHive, asset context, and recommended response actions.' },
+      { name: 'Agent reasoning steps', desc: 'Expandable section showing the ReAct reasoning chain: each tool the agent called (search_alerts, enrich_ip, check_cases, query_ueba, query_assets, query_shodan), the inputs it used, and what it found. Useful for understanding WHY the AI reached its conclusion.' },
+      { name: 'Auto-triage settings', desc: 'Toggle to enable automatic investigation of new high/critical alerts as they arrive. Threshold selector sets minimum severity for auto-triage.' },
+      { name: 'Investigation history', desc: 'Right panel shows past investigations with severity, summary, and timestamp. Click any to reload the full report.' },
+    ]
+  },
+  copilot: {
+    title: 'SOCPilots AI Copilot',
+    desc: 'Conversational AI assistant for your SOC. Ask security questions, get alert explanations, request threat analysis, or have a contextual discussion about an active incident.',
+    sections: [
+      { name: 'Chat interface', desc: 'Standard conversational chat. The AI has access to your SIEM data and can query it on your behalf. Conversations are grouped by day in the left history panel.' },
+      { name: 'Alert context attach', desc: 'Click the paper-clip / attach button to link a specific SIEM alert to your question. The AI receives the full alert metadata and raw log as context for its answer.' },
+      { name: 'Chat history', desc: 'Left sidebar shows past conversation sessions grouped by date. Click any session to reload it. History is stored per user in the database.' },
+      { name: 'Suggested prompts', desc: 'Quick-start buttons appear when chat is empty: "Summarize today\'s threats", "What is our highest-risk agent?", "Explain this alert", etc.' },
+      { name: 'Model', desc: 'Uses the LangChain ReAct agent (GPT-4) as the backend. Responses may include tool calls to search alerts, enrich IOCs, or query UEBA — shown as expandable "tool use" blocks in the chat.' },
+    ]
+  },
+  langchain: {
+    title: 'LangChain Agent',
+    desc: 'Direct interface to the LangChain ReAct investigation agent. Use this for controlled, single-shot investigations and to test agent behavior.',
+    sections: [
+      { name: 'Health status', desc: 'Header shows whether the langchain-agent service is reachable and which LLM is active (primary: GPT-4, fallback: Mistral). Green = healthy, Red = unreachable.' },
+      { name: 'Investigate endpoint', desc: 'Deep multi-step investigation mode. The agent runs up to 10 reasoning steps using all 6 tools. Returns a comprehensive report. Best for complex incidents.' },
+      { name: 'Triage endpoint', desc: 'Fast single-step triage. Returns a quick severity assessment and recommended action. Best for high-volume alert processing.' },
+      { name: 'Enrich endpoint', desc: 'IOC enrichment mode. Enter an indicator and the agent runs VirusTotal + AbuseIPDB + OTX lookups and returns a structured threat profile.' },
+      { name: 'Attach alert', desc: 'Attach a SIEM alert to provide the agent with full context (rule, raw log, agent, source IP) before running the investigation.' },
+      { name: 'Reasoning trace', desc: 'Output panel shows each reasoning step: Thought → Action (tool name + input) → Observation (tool result) → Final Answer. Useful for debugging agent behavior.' },
+    ]
+  },
+  assets: {
+    title: 'Assets',
+    desc: 'Network asset inventory. Assets are discovered via nmap scanning and cross-referenced with Wazuh agent enrollment to identify unmonitored hosts.',
+    sections: [
+      { name: 'Asset table', desc: 'All discovered assets with: IP address, Hostname, OS detection, Open ports list, Criticality tier (critical/high/medium/low), Wazuh Agent status (Enrolled / Not Enrolled), Last Seen, and Status.' },
+      { name: 'Subnet management', desc: 'Define your network subnets (CIDR ranges) to scope asset discovery scans. Subnets panel shows each range, when it was last scanned, and asset count.' },
+      { name: 'Scan management', desc: '"Scan Now" triggers an immediate nmap scan of all configured subnets. Scan job status updates in real-time. Scan history shows past jobs with duration and assets found.' },
+      { name: 'Coverage gap detection', desc: 'Assets that are NOT enrolled in Wazuh are highlighted with an "Unmonitored" badge — these are blind spots in your detection coverage.' },
+      { name: 'Criticality tiers', desc: 'Assign criticality to assets: Critical (core infrastructure), High (important servers), Medium (workstations), Low (IoT/peripherals). Criticality affects Dark SOC playbook behavior — critical assets are never auto-isolated.' },
+      { name: 'Asset detail modal', desc: 'Click any asset row for full detail: all open ports with service names, OS fingerprint, Wazuh agent ID (if enrolled), vulnerability count from Wazuh, and action buttons.' },
+    ]
+  },
+  ueba: {
+    title: 'UEBA',
+    desc: 'User and Entity Behavior Analytics. Tracks user and host behavior over time in a Neo4j graph and scores anomalies like impossible travel, lateral movement, and privilege escalation.',
+    sections: [
+      { name: 'Risk leaderboard', desc: 'Top-risk entities ranked by composite score (0–100). Shows username/hostname, risk score, top anomaly type, and last activity. Red = high risk, needs investigation.' },
+      { name: 'Anomaly feed', desc: 'Recent detected anomalies with type, entity, score weight, and timestamp. Anomaly types: Impossible Travel (95pts), Lateral Movement (85), Privilege Escalation (80), New Host Access (75), New Process (70), After-Hours Access (55), High Frequency Login (50).' },
+      { name: 'Entity behavior modal', desc: 'Click any entity to see its full behavior profile: typical login hours heatmap, known hosts, process history, baseline vs. current deviation, and full anomaly list with timestamps.' },
+      { name: 'Entity force graph', desc: '"View Graph" button opens a D3.js force-directed graph showing relationships between users, hosts, processes, and network connections. Node size = risk score. Edge weight = relationship frequency.' },
+      { name: 'Weekly Digest', desc: 'AI-generated weekly summary of the highest-risk users and behavioral trends. Admin can generate on-demand. Digest is emailed if SMTP is configured.' },
+      { name: 'Filters', desc: 'Filter leaderboard by time window (24h/7d/30d) or anomaly type. Search by entity name.' },
+    ]
+  },
+  reports: {
+    title: 'Reports',
+    desc: 'Security metrics and reporting for management and compliance. Generate summaries of SOC activity over custom time periods.',
+    sections: [
+      { name: 'Metrics overview', desc: 'KPI summary: total alerts, investigations completed, cases created, Mean Time to Detect (MTTD), Mean Time to Respond (MTTR), and false positive rate for the selected period.' },
+      { name: 'Alert trend chart', desc: 'Line chart of alert volume per day over the report period. Shows severity breakdown as stacked areas.' },
+      { name: 'Top threats section', desc: 'Top 10 rules by fire count, top 10 attacking IPs, top 5 targeted agents, and most-detected MITRE techniques.' },
+      { name: 'Coverage report', desc: 'ATT&CK coverage snapshot: total techniques covered, coverage percentage by tactic, and gap list (techniques with 0 detections).' },
+      { name: 'Export', desc: 'Download report as JSON or use the browser print function for PDF. Future: scheduled email delivery.' },
+    ]
+  },
+  evidence: {
+    title: 'Evidence Upload',
+    desc: 'Upload investigation evidence files for AI-powered semantic search. Files are OCR-processed and embedded into the Qdrant vector database for natural language retrieval.',
+    sections: [
+      { name: 'Upload zone', desc: 'Drag-and-drop or click to upload files. Supported formats: PDF, Excel (.xlsx), CSV, TXT, images (PNG/JPG — OCR applied). Max file size enforced by nginx (default 50MB).' },
+      { name: 'Processing pipeline', desc: 'After upload: text is extracted (or OCR\'d for images), chunked into ~500-token segments, embedded using BAAI/bge-small-en-v1.5, and stored in the socpilots_evidence Qdrant collection.' },
+      { name: 'Evidence library', desc: 'Table of all uploaded files with filename, type, upload date, page/chunk count, and status (processing/ready/failed).' },
+      { name: 'Semantic search', desc: 'Search box at the top queries all evidence files using natural language. Results show the most relevant text chunks with source file and confidence score. Used by the LangChain agent during investigations.' },
+      { name: 'Delete evidence', desc: 'Each file row has a Delete button. Deletion removes both the database record and all associated vector embeddings from Qdrant.' },
+    ]
+  },
+  darksoc: {
+    title: 'Dark SOC',
+    desc: 'Automated response engine. When enabled, Dark SOC executes playbook actions automatically when alerts meet configured criteria — without requiring analyst approval (except for destructive actions).',
+    sections: [
+      { name: 'Enable/Disable toggle', desc: 'Master switch for the entire Dark SOC engine. DISABLED by default. When disabled, playbooks still run in simulation mode (logged but no real actions taken). Enable only after reviewing and testing all playbooks.' },
+      { name: 'Playbook library', desc: 'All configured response playbooks. Each has: name, trigger condition (severity + rule groups), actions list, and enabled/disabled toggle. Six action types: Block IP, Isolate Host, Kill Process, Disable User, Create Case, Close Case.' },
+      { name: 'Execution log', desc: 'Audit trail of every playbook action attempted: timestamp, playbook name, action type, target (IP/host/user), result (success/failed/skipped), and the analyst who approved (for consensus actions).' },
+      { name: 'Consensus approvals', desc: 'Isolate Host and Disable User require two-step consensus — a second analyst or LLM must agree before the action executes. Pending approvals appear here with a 30-minute expiry timer.' },
+      { name: 'Protected assets', desc: 'Assets in this list are NEVER auto-isolated regardless of playbook rules. Add your critical servers, domain controllers, and core infrastructure here. Critical-tier assets auto-escalate instead of isolating.' },
+      { name: 'False positive gate', desc: 'Each destructive action (block/isolate/disable) checks the FP probability before executing. If false positive likelihood exceeds the configured threshold, the action is skipped and logged.' },
+    ]
+  },
+  users: {
+    title: 'User Management',
+    desc: 'SOCPilots user administration (admin role required). Create, edit, and deactivate analyst accounts.',
+    sections: [
+      { name: 'User table', desc: 'All platform users with: username, display name, role badge, last login time, and active status. Admins can click any row to edit.' },
+      { name: 'Role system', desc: 'Four roles in hierarchy order: L1 (Viewer — read-only, no investigations), L2 / Analyst (standard analyst — can investigate and create cases), L3 / Senior Analyst (can manage playbooks and rules), Admin (full access including user management and Dark SOC).' },
+      { name: 'Create user', desc: '"Add User" button opens a form: username, password, display name, role selector. Password is bcrypt-hashed at creation.' },
+      { name: 'Edit / deactivate', desc: 'Click a user row to edit display name, role, or reset password. Deactivate instead of delete to preserve audit trails — deactivated users cannot log in.' },
+    ]
+  },
+  settings: {
+    title: 'Settings',
+    desc: 'Platform configuration for integrations, notifications, and SOC-wide behavior settings.',
+    sections: [
+      { name: 'SMTP email settings', desc: 'Configure outbound email for alert notifications and weekly digests: SMTP host, port, TLS toggle, sender address, username/password. Test button sends a test email.' },
+      { name: 'OTX AlienVault sync', desc: 'OTX feed configuration: API key status (read-only — set in .env), last sync time, IOC count, and manual "Sync Now" button. Feed syncs automatically every 6 hours.' },
+      { name: 'Dark SOC toggle', desc: 'Shortcut to enable/disable the Dark SOC engine. Same as the toggle on the Dark SOC page.' },
+      { name: 'Notification preferences', desc: 'Configure which event types generate in-app notifications: new investigations, case creation, playbook actions, correlations. Severity threshold for notifications.' },
+      { name: 'Integration health', desc: 'Status panel showing connectivity to all integrated services: Wazuh SIEM, TheHive, n8n, LangChain Agent, RAG service, Neo4j UEBA, Qdrant. Red = unreachable, Green = healthy.' },
+    ]
+  },
+  notifications: {
+    title: 'Notifications',
+    desc: 'Full notification history. All platform events that generated a notification, paginated and filterable.',
+    sections: [
+      { name: 'Notification list', desc: 'All notifications with: type icon, title, message, severity badge, timestamp, and read/unread status. Click any row to mark as read and navigate to the related module.' },
+      { name: 'Notification types', desc: 'Investigation (new AI investigation completed), Case Created (TheHive case opened), True Positive (confirmed TP from investigation), Correlation (new alert cluster found), Playbook (Dark SOC action executed).' },
+      { name: 'Mark all read', desc: '"Mark All Read" button clears the unread count badge in the bell icon in the header.' },
+      { name: 'Filters', desc: 'Filter by read/unread status or notification type. Sorted newest-first.' },
+      { name: 'Bell badge', desc: 'The bell icon in the top-right header shows unread count. Updates live via WebSocket when new events arrive — no page refresh needed.' },
+    ]
+  }
+};
+
+app.post('/api/help/chat', authMW, async (req, res) => {
+  try {
+    const { page, question, history = [] } = req.body;
+    if (!question?.trim()) return res.status(400).json({ error: 'question required' });
+    if (!OPENAI_API_KEY && !MISTRAL_API_KEY) {
+      return res.status(503).json({ error: 'No AI key configured. Set OPENAI_API_KEY or MISTRAL_API_KEY in .env' });
+    }
+
+    const ctx = PAGE_CONTEXTS[page] || { title: page, desc: 'SOCPilots security operations platform page.', sections: [] };
+    const sectionsText = ctx.sections.map(s => `• ${s.name}: ${s.desc}`).join('\n');
+
+    const systemPrompt = `You are the SOCPilots platform guide, embedded directly in the UI.
+The analyst is currently on the "${ctx.title}" page.
+
+Page purpose: ${ctx.desc}
+
+Sections and elements on this page:
+${sectionsText}
+
+Your rules:
+- Answer only about what exists on THIS page and this platform. Do not reference external docs.
+- Be concise and direct — analysts are mid-shift. No filler phrases.
+- If asked "explain everything" or "explain this page", give a structured overview of every section listed above.
+- Use bullet points for multi-part answers. Keep answers under 250 words unless the analyst asks for more detail.
+- Never say you don't know about a feature listed above — all context is provided to you.
+- You may reference other SOCPilots pages by name if explaining a workflow that spans pages.`;
+
+    const messages = [
+      { role: 'system', content: systemPrompt },
+      ...history.slice(-8),
+      { role: 'user', content: question.trim() }
+    ];
+
+    let answer;
+    if (OPENAI_API_KEY) {
+      const r = await axios.post('https://api.openai.com/v1/chat/completions', {
+        model: 'gpt-4o-mini',
+        max_tokens: 600,
+        temperature: 0.3,
+        messages,
+      }, {
+        headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
+        timeout: 30000,
+      });
+      answer = r.data.choices[0].message.content;
+    } else {
+      const r = await axios.post('https://api.mistral.ai/v1/chat/completions', {
+        model: 'mistral-small-latest',
+        max_tokens: 600,
+        temperature: 0.3,
+        messages,
+      }, {
+        headers: { Authorization: `Bearer ${MISTRAL_API_KEY}`, 'Content-Type': 'application/json' },
+        timeout: 30000,
+      });
+      answer = r.data.choices[0].message.content;
+    }
+
+    res.json({ answer });
+  } catch (e) {
+    console.error('[help-chat]', e.message);
+    res.status(502).json({ error: 'AI service unavailable. Check OPENAI_API_KEY in .env' });
+  }
+});
+
 // ─── STATIC (must be last — after all /api routes) ──────────────
 app.use(express.static(path.join(__dirname, '../../frontend')));
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, '../../frontend/index.html')));
