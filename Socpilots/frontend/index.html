@@ -10660,8 +10660,8 @@ async function loadArtWhitelist(page) {
       <td style="padding:9px 12px"><span class="wl-cat-badge wl-cat-${r.category}">${esc(r.category?.replace('_',' '))}</span></td>
       <td style="padding:9px 12px;font-size:11px;color:var(--txt3)">${esc(r.reason||'—')}</td>
       <td style="padding:9px 12px;font-size:11px;color:var(--txt3)">${esc(r.added_by||'—')}</td>
-      <td style="padding:9px 12px;font-size:11px;color:${expired?'var(--r)':'var(--txt3)'}">${r.expires_at?fmtDate(r.expires_at)+'(expired)':'Permanent'}</td>
-      <td style="padding:9px 12px;text-align:center"><span style="color:${r.enabled?'var(--g)':'var(--r)';font-size:11px">${r.enabled?'ON':'OFF'}</span></td>
+      <td style="padding:9px 12px;font-size:11px;color:${expired?'var(--r)':'var(--txt3)'}">${r.expires_at?fmtDate(r.expires_at)+' (expired)':'Permanent'}</td>
+      <td style="padding:9px 12px;text-align:center"><span style="color:${r.enabled?'var(--g)':'var(--r)'};font-size:11px">${r.enabled?'ON':'OFF'}</span></td>
       <td style="padding:9px 12px;text-align:center;white-space:nowrap">
         <button class="btn btn-sm btn-h" style="font-size:10px;padding:2px 7px" onclick="artWlToggle(${r.id},${!r.enabled})">${r.enabled?'Disable':'Enable'}</button>
         <button class="btn btn-sm btn-h" style="font-size:10px;padding:2px 7px;margin-left:3px;color:var(--r)" onclick="artWlDelete(${r.id})">✕</button>
@@ -10686,8 +10686,8 @@ async function artSaveWhitelist() {
 }
 
 async function artWlToggle(id, enabled) {
-  await P(`/api/ioc-whitelist/${id}`, { ...{}, enabled });
-  await fetch(`/api/ioc-whitelist/${id}`, { method:'PUT', headers:{'Content-Type':'application/json','Authorization':'Bearer '+localStorage.getItem('soc_token')||sessionStorage.getItem('soc_token')}, body:JSON.stringify({enabled}) });
+  const tok = sessionStorage.getItem('soc_token');
+  await fetch(`/api/ioc-whitelist/${id}`, { method:'PUT', headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok}, body:JSON.stringify({enabled}) });
   loadArtWhitelist(_artWlPage);
 }
 
