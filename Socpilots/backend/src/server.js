@@ -5603,6 +5603,417 @@ app.delete('/api/suppressions/:id', authMW, requireRole('l2'), async (req, res) 
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// ══════════════════════════════════════════════════════════════════
+// ARTIFACTS & IOC INTELLIGENCE
+// ══════════════════════════════════════════════════════════════════
+
+// ── IOC Extraction (regex engine) ────────────────────────────────
+const IOC_PATTERNS = {
+  ip:       /\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b/g,
+  domain:   /\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+(?:com|net|org|io|gov|edu|co|uk|de|ru|cn|br|fr|it|nl|es|se|no|fi|jp|au|ca|in|pk|mx|za|sg|hk|my|id|ph|vn|th|ae|sa|tr|pl|cz|ro|hu|bg|ua|gr|pt|dk|nz|nz|info|biz|online|xyz|club|site|web|tech|app|dev|cloud|ai|mobi|name|pro)\b/gi,
+  url:      /https?:\/\/[^\s"'<>\])\}]+/g,
+  email:    /\b[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}\b/g,
+  md5:      /\b[a-fA-F0-9]{32}\b/g,
+  sha1:     /\b[a-fA-F0-9]{40}\b/g,
+  sha256:   /\b[a-fA-F0-9]{64}\b/g,
+  cve:      /\bCVE-\d{4}-\d{4,7}\b/gi,
+  registry: /\bHKEY_(?:LOCAL_MACHINE|CURRENT_USER|CLASSES_ROOT|USERS|CURRENT_CONFIG)\\[^\s"']{3,}\b/gi,
+};
+
+const PRIVATE_IP_RE = /^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|127\.|0\.|::1|fe80|localhost)/i;
+
+function extractIOCsFromText(text) {
+  if (!text || typeof text !== 'string') return [];
+  const seen = new Set();
+  const results = [];
+  for (const [type, re] of Object.entries(IOC_PATTERNS)) {
+    re.lastIndex = 0;
+    const matches = text.match(re) || [];
+    for (const m of matches) {
+      const key = `${type}:${m.toLowerCase()}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      // Skip private IPs
+      if (type === 'ip' && PRIVATE_IP_RE.test(m)) continue;
+      // Skip domains that look like file extensions
+      if (type === 'domain' && m.split('.').length < 2) continue;
+      results.push({ indicator: m, ioc_type: type });
+    }
+  }
+  return results;
+}
+
+// ── Whitelist in-memory cache ─────────────────────────────────────
+let _wlCache = [], _wlCacheTime = 0;
+
+async function refreshWlCache() {
+  try {
+    const r = await db.pool.query(
+      `SELECT indicator, ioc_type FROM ioc_whitelist
+       WHERE enabled=TRUE AND (expires_at IS NULL OR expires_at > NOW())`
+    );
+    _wlCache = r.rows;
+    _wlCacheTime = Date.now();
+  } catch(e) { console.error('[whitelist-cache]', e.message); }
+}
+
+async function isWhitelisted(indicator) {
+  if (Date.now() - _wlCacheTime > 300_000) await refreshWlCache();
+  const lo = (indicator || '').toLowerCase();
+  return _wlCache.some(e => e.indicator.toLowerCase() === lo);
+}
+
+// ── Enrichment engine ─────────────────────────────────────────────
+const VT_BASE     = 'https://www.virustotal.com/api/v3';
+const ABIP_BASE   = 'https://api.abuseipdb.com/api/v2';
+const SHODAN_BASE = 'https://api.shodan.io';
+const GN_BASE     = 'https://api.greynoise.io/v3/community';
+const US_BASE     = 'https://urlscan.io/api/v1';
+
+async function callVT(path) {
+  const k = process.env.VIRUSTOTAL_API_KEY;
+  if (!k) return null;
+  try {
+    const r = await fetch(`${VT_BASE}${path}`, { headers: { 'x-apikey': k }, signal: AbortSignal.timeout(12000) });
+    if (!r.ok) return null;
+    return r.json();
+  } catch { return null; }
+}
+
+async function enrichIOC(ioc) {
+  const { id, indicator, ioc_type } = ioc;
+  const results = {};
+
+  if (ioc_type === 'ip') {
+    // VirusTotal
+    const vt = await callVT(`/ip_addresses/${encodeURIComponent(indicator)}`);
+    if (vt?.data?.attributes) {
+      const a = vt.data.attributes;
+      results.virustotal = { malicious: a.last_analysis_stats?.malicious || 0, total: Object.values(a.last_analysis_stats || {}).reduce((s,v)=>s+v,0), reputation: a.reputation, country: a.country, asn: a.asn, as_owner: a.as_owner, network: a.network };
+      await db.saveIOCEnrichment(id, 'virustotal', results.virustotal, 'success');
+    }
+    // AbuseIPDB
+    const abKey = process.env.ABUSEIPDB_API_KEY;
+    if (abKey) {
+      try {
+        const r = await fetch(`${ABIP_BASE}/check?ipAddress=${encodeURIComponent(indicator)}&maxAgeInDays=90`, { headers: { Key: abKey, Accept: 'application/json' }, signal: AbortSignal.timeout(10000) });
+        if (r.ok) { const d = await r.json(); results.abuseipdb = d.data; await db.saveIOCEnrichment(id, 'abuseipdb', d.data, 'success'); }
+      } catch { await db.saveIOCEnrichment(id, 'abuseipdb', null, 'error', 'timeout'); }
+    }
+    // Shodan
+    const shKey = process.env.SHODAN_API_KEY;
+    if (shKey) {
+      try {
+        const r = await fetch(`${SHODAN_BASE}/shodan/host/${encodeURIComponent(indicator)}?key=${shKey}`, { signal: AbortSignal.timeout(10000) });
+        if (r.ok) { const d = await r.json(); results.shodan = { ports: d.ports, hostnames: d.hostnames, country: d.country_name, org: d.org, vulns: Object.keys(d.vulns||{}) }; await db.saveIOCEnrichment(id, 'shodan', results.shodan, 'success'); }
+      } catch { await db.saveIOCEnrichment(id, 'shodan', null, 'error', 'timeout'); }
+    }
+    // GreyNoise
+    const gnKey = process.env.GREYNOISE_API_KEY;
+    if (gnKey) {
+      try {
+        const r = await fetch(`${GN_BASE}/${encodeURIComponent(indicator)}`, { headers: { key: gnKey }, signal: AbortSignal.timeout(10000) });
+        if (r.ok) { const d = await r.json(); results.greynoise = { noise: d.noise, riot: d.riot, classification: d.classification, name: d.name, message: d.message }; await db.saveIOCEnrichment(id, 'greynoise', results.greynoise, 'success'); }
+      } catch { await db.saveIOCEnrichment(id, 'greynoise', null, 'error', 'timeout'); }
+    }
+  } else if (ioc_type === 'domain') {
+    const vt = await callVT(`/domains/${encodeURIComponent(indicator)}`);
+    if (vt?.data?.attributes) {
+      const a = vt.data.attributes;
+      results.virustotal = { malicious: a.last_analysis_stats?.malicious || 0, total: Object.values(a.last_analysis_stats || {}).reduce((s,v)=>s+v,0), reputation: a.reputation, categories: a.categories, creation_date: a.creation_date, registrar: a.registrar };
+      await db.saveIOCEnrichment(id, 'virustotal', results.virustotal, 'success');
+    }
+    // URLScan
+    const usKey = process.env.URLSCAN_API_KEY;
+    if (usKey) {
+      try {
+        const r = await fetch(`${US_BASE}/search/?q=domain:${encodeURIComponent(indicator)}&size=1`, { headers: { 'API-Key': usKey }, signal: AbortSignal.timeout(12000) });
+        if (r.ok) { const d = await r.json(); if (d.results?.[0]) { results.urlscan = { task: d.results[0].task, stats: d.results[0].stats, verdict: d.results[0].verdicts }; await db.saveIOCEnrichment(id, 'urlscan', results.urlscan, 'success'); } }
+      } catch { await db.saveIOCEnrichment(id, 'urlscan', null, 'error', 'timeout'); }
+    }
+  } else if (ioc_type === 'url') {
+    const usKey = process.env.URLSCAN_API_KEY;
+    if (usKey) {
+      try {
+        const sr = await fetch(`${US_BASE}/search/?q=${encodeURIComponent(indicator)}&size=1`, { headers: { 'API-Key': usKey }, signal: AbortSignal.timeout(12000) });
+        if (sr.ok) { const d = await sr.json(); if (d.results?.[0]) { results.urlscan = d.results[0].verdicts; await db.saveIOCEnrichment(id, 'urlscan', results.urlscan, 'success'); } }
+      } catch { await db.saveIOCEnrichment(id, 'urlscan', null, 'error', 'timeout'); }
+    }
+  } else if (['md5','sha1','sha256'].includes(ioc_type)) {
+    const vt = await callVT(`/files/${encodeURIComponent(indicator)}`);
+    if (vt?.data?.attributes) {
+      const a = vt.data.attributes;
+      results.virustotal = { malicious: a.last_analysis_stats?.malicious || 0, total: Object.values(a.last_analysis_stats || {}).reduce((s,v)=>s+v,0), meaningful_name: a.meaningful_name, type_description: a.type_description, size: a.size, tags: a.tags, popular_threat_name: a.popular_threat_classification?.suggested_threat_label };
+      await db.saveIOCEnrichment(id, 'virustotal', results.virustotal, 'success');
+    }
+  }
+
+  // OTX cross-reference (all types via existing feed)
+  try {
+    const otx = await db.pool.query(
+      `SELECT pulse_name, indicator_type, tags, malware_families, threat_score
+       FROM otx_ioc_feed WHERE indicator=$1 LIMIT 5`, [indicator]
+    );
+    if (otx.rows.length) {
+      results.otx = otx.rows;
+      await db.saveIOCEnrichment(id, 'otx', otx.rows, 'success');
+    }
+  } catch { /* non-fatal */ }
+
+  // Derive overall reputation from enrichment results
+  const vtMal = results.virustotal?.malicious || 0;
+  const abConf = results.abuseipdb?.abuseConfidenceScore || 0;
+  const gnClass = results.greynoise?.classification;
+  const otxHit  = results.otx?.length > 0;
+  let reputation = 'unknown', risk = 0, confidence = 0;
+  if (vtMal >= 5 || abConf >= 50 || gnClass === 'malicious') { reputation = 'malicious'; risk = Math.min(100, Math.max(vtMal * 8, abConf, gnClass === 'malicious' ? 80 : 0)); confidence = 90; }
+  else if (vtMal >= 1 || abConf >= 10 || otxHit || gnClass === 'unknown') { reputation = 'suspicious'; risk = Math.max(vtMal * 5, abConf * 0.5, otxHit ? 40 : 0); confidence = 70; }
+  else if (gnClass === 'benign' && vtMal === 0 && abConf === 0) { reputation = 'trusted'; risk = 5; confidence = 80; }
+  await db.updateIOC(id, { reputation, risk_score: Math.round(risk), confidence, enriched_at: new Date() });
+  return { results, reputation, risk_score: Math.round(risk) };
+}
+
+// ── IOC Store routes ──────────────────────────────────────────────
+app.get('/api/ioc-store/stats', authMW, async (req, res) => {
+  try {
+    const stats = await db.getIOCStats();
+    // Enrichment source status
+    const sources = [
+      { name: 'VirusTotal',    key: 'VIRUSTOTAL_API_KEY',    configured: !!process.env.VIRUSTOTAL_API_KEY },
+      { name: 'AbuseIPDB',     key: 'ABUSEIPDB_API_KEY',     configured: !!process.env.ABUSEIPDB_API_KEY },
+      { name: 'Shodan',        key: 'SHODAN_API_KEY',         configured: !!process.env.SHODAN_API_KEY },
+      { name: 'GreyNoise',     key: 'GREYNOISE_API_KEY',      configured: !!process.env.GREYNOISE_API_KEY },
+      { name: 'URLScan',       key: 'URLSCAN_API_KEY',        configured: !!process.env.URLSCAN_API_KEY },
+      { name: 'OTX AlienVault',key: 'OTX_API_KEY',           configured: !!process.env.OTX_API_KEY },
+      { name: 'Hybrid Analysis',key:'HYBRID_ANALYSIS_API_KEY',configured: !!process.env.HYBRID_ANALYSIS_API_KEY },
+      { name: 'MISP',          key: 'MISP_URL',               configured: !!(process.env.MISP_URL && process.env.MISP_API_KEY) },
+      { name: 'OpenCTI',       key: 'OPENCTI_URL',            configured: !!(process.env.OPENCTI_URL && process.env.OPENCTI_API_KEY) },
+      { name: 'CrowdSec',      key: 'CROWDSEC_API_KEY',       configured: !!process.env.CROWDSEC_API_KEY },
+    ];
+    res.json({ ...stats, enrichment_sources: sources });
+  } catch(e) { console.error('[ioc-store/stats]', e.message); res.status(502).json({ error: e.message }); }
+});
+
+app.get('/api/ioc-store', authMW, async (req, res) => {
+  try {
+    const { page, page_size, ioc_type, reputation, q, sort_by, sort_dir } = req.query;
+    const { rows, total } = await db.listIOCs({ page, page_size, ioc_type, reputation, q, sort_by, sort_dir });
+    res.json({ items: rows, total, page: parseInt(page)||1, page_size: parseInt(page_size)||50, has_more: (parseInt(page)||1)*(parseInt(page_size)||50) < total });
+  } catch(e) { console.error('[ioc-store]', e.message); res.status(502).json({ error: e.message }); }
+});
+
+app.post('/api/ioc-store', authMW, async (req, res) => {
+  try {
+    const { indicator, ioc_type, reputation, confidence, risk_score, source, notes, tags, mitre_techniques, threat_actors, malware_families } = req.body;
+    if (!indicator?.trim() || !ioc_type) return res.status(400).json({ error: 'indicator and ioc_type required' });
+    if (await isWhitelisted(indicator.trim())) return res.status(409).json({ error: 'Indicator is whitelisted — remove from whitelist before adding' });
+    const row = await db.upsertIOC(indicator.trim(), ioc_type, { reputation, confidence, risk_score, source: source || 'manual', notes, tags, mitre_techniques, threat_actors, malware_families, created_by: req.user.username });
+    res.json(row);
+  } catch(e) { console.error('[ioc-store POST]', e.message); res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/ioc-store/export', authMW, async (req, res) => {
+  try {
+    const fmt = req.query.format || 'json';
+    const r = await db.pool.query(`SELECT * FROM ioc_store ORDER BY last_seen DESC LIMIT 10000`);
+    if (fmt === 'csv') {
+      const cols = ['id','indicator','ioc_type','reputation','confidence','risk_score','source','first_seen','last_seen'];
+      const csv = [cols.join(','), ...r.rows.map(row => cols.map(c => `"${(row[c]??'').toString().replace(/"/g,'""')}"`).join(','))].join('\n');
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', 'attachment; filename="iocs.csv"');
+      return res.send(csv);
+    }
+    res.setHeader('Content-Disposition', 'attachment; filename="iocs.json"');
+    res.json(r.rows);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/ioc-store/extract', authMW, async (req, res) => {
+  try {
+    const { text, auto_save = false } = req.body;
+    if (!text?.trim()) return res.status(400).json({ error: 'text required' });
+    const extracted = extractIOCsFromText(text);
+    let saved = 0;
+    if (auto_save) {
+      for (const ioc of extracted) {
+        if (!(await isWhitelisted(ioc.indicator))) {
+          await db.upsertIOC(ioc.indicator, ioc.ioc_type, { source: 'extraction', created_by: req.user.username });
+          saved++;
+        }
+      }
+    }
+    res.json({ extracted, count: extracted.length, saved });
+  } catch(e) { console.error('[ioc-store/extract]', e.message); res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/ioc-store/import', authMW, requireRole('l2'), async (req, res) => {
+  try {
+    const { items } = req.body;
+    if (!Array.isArray(items) || !items.length) return res.status(400).json({ error: 'items array required' });
+    let imported = 0, skipped = 0;
+    for (const item of items) {
+      if (!item.indicator || !item.ioc_type) { skipped++; continue; }
+      if (await isWhitelisted(item.indicator)) { skipped++; continue; }
+      try { await db.upsertIOC(item.indicator.trim(), item.ioc_type, { ...item, source: item.source || 'import', created_by: req.user.username }); imported++; }
+      catch { skipped++; }
+    }
+    res.json({ imported, skipped });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/ioc-store/:id', authMW, async (req, res) => {
+  try {
+    const ioc = await db.getIOC(parseInt(req.params.id));
+    if (!ioc) return res.status(404).json({ error: 'not found' });
+    const [enrichments, relations] = await Promise.all([db.getIOCEnrichments(ioc.id), db.getIOCRelations(ioc.id)]);
+    res.json({ ...ioc, enrichments, relations });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.put('/api/ioc-store/:id', authMW, async (req, res) => {
+  try {
+    const updated = await db.updateIOC(parseInt(req.params.id), req.body);
+    if (!updated) return res.status(404).json({ error: 'not found' });
+    res.json(updated);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/ioc-store/:id', authMW, requireRole('l2'), async (req, res) => {
+  try {
+    await db.deleteIOC(parseInt(req.params.id));
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/ioc-store/:id/enrich', authMW, async (req, res) => {
+  try {
+    const ioc = await db.getIOC(parseInt(req.params.id));
+    if (!ioc) return res.status(404).json({ error: 'not found' });
+    if (await isWhitelisted(ioc.indicator)) return res.status(409).json({ error: 'Indicator is whitelisted — enrichment skipped' });
+    const result = await enrichIOC(ioc);
+    res.json({ ok: true, ...result });
+  } catch(e) { console.error('[ioc-store/enrich]', e.message); res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/ioc-store/:id/enrichments', authMW, async (req, res) => {
+  try {
+    const enr = await db.getIOCEnrichments(parseInt(req.params.id));
+    res.json(enr);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/ioc-store/:id/relations', authMW, async (req, res) => {
+  try {
+    const rels = await db.getIOCRelations(parseInt(req.params.id));
+    res.json(rels);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/ioc-store/:id/relations', authMW, async (req, res) => {
+  try {
+    const { entity_type, entity_id, entity_label, rel_type } = req.body;
+    if (!entity_type || !entity_id) return res.status(400).json({ error: 'entity_type and entity_id required' });
+    const rel = await db.addIOCRelation(parseInt(req.params.id), entity_type, entity_id, entity_label, rel_type);
+    res.json(rel);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Whitelist routes ──────────────────────────────────────────────
+app.get('/api/ioc-whitelist/export', authMW, requireRole('l2'), async (req, res) => {
+  try {
+    const r = await db.pool.query(`SELECT indicator,ioc_type,category,reason,added_by,expires_at,enabled FROM ioc_whitelist ORDER BY created_at DESC`);
+    const fmt = req.query.format || 'json';
+    if (fmt === 'csv') {
+      const cols = ['indicator','ioc_type','category','reason','added_by','expires_at','enabled'];
+      const csv = [cols.join(','), ...r.rows.map(row => cols.map(c => `"${(row[c]??'').toString().replace(/"/g,'""')}"`).join(','))].join('\n');
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', 'attachment; filename="whitelist.csv"');
+      return res.send(csv);
+    }
+    res.setHeader('Content-Disposition', 'attachment; filename="whitelist.json"');
+    res.json(r.rows);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/ioc-whitelist/check', authMW, async (req, res) => {
+  try {
+    const { indicator, ioc_type } = req.body;
+    if (!indicator) return res.status(400).json({ error: 'indicator required' });
+    const entry = await db.checkWhitelisted(indicator, ioc_type || 'any');
+    res.json({ whitelisted: !!entry, entry: entry || null });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/ioc-whitelist/import', authMW, requireRole('l2'), async (req, res) => {
+  try {
+    const { items } = req.body;
+    if (!Array.isArray(items) || !items.length) return res.status(400).json({ error: 'items array required' });
+    const result = await db.bulkImportWhitelist(items, req.user.username);
+    _wlCacheTime = 0; // invalidate cache
+    res.json(result);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/ioc-whitelist', authMW, async (req, res) => {
+  try {
+    const { page, page_size, ioc_type, category, q, show_expired } = req.query;
+    const { rows, total } = await db.listWhitelist({ page, page_size, ioc_type, category, q, show_expired: show_expired === 'true' });
+    res.json({ items: rows, total, page: parseInt(page)||1, page_size: parseInt(page_size)||50, has_more: (parseInt(page)||1)*(parseInt(page_size)||50) < total });
+  } catch(e) { res.status(502).json({ error: e.message }); }
+});
+
+app.post('/api/ioc-whitelist', authMW, requireRole('l2'), async (req, res) => {
+  try {
+    const { indicator, ioc_type, category, reason, expires_at, approved_by } = req.body;
+    if (!indicator?.trim() || !ioc_type || !category) return res.status(400).json({ error: 'indicator, ioc_type, category required' });
+    // Risk warning: check if IOC is known malicious
+    const existing = await db.pool.query(`SELECT reputation, risk_score FROM ioc_store WHERE indicator=$1 AND ioc_type=$2`, [indicator.trim(), ioc_type]);
+    let risk_warning = null;
+    if (existing.rows[0]?.reputation === 'malicious') risk_warning = `Warning: This indicator has been classified as MALICIOUS (risk: ${existing.rows[0].risk_score}/100)`;
+    else if (existing.rows[0]?.reputation === 'suspicious') risk_warning = `Warning: This indicator was previously flagged as SUSPICIOUS (risk: ${existing.rows[0].risk_score}/100)`;
+    const entry = await db.createWhitelistEntry({ indicator: indicator.trim(), ioc_type, category, reason, expires_at: expires_at || null, approved_by, risk_warning }, req.user.username);
+    _wlCacheTime = 0;
+    res.json(entry);
+  } catch(e) {
+    if (e.code === '23505') return res.status(409).json({ error: 'Indicator already whitelisted' });
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/ioc-whitelist/:id', authMW, async (req, res) => {
+  try {
+    const e = await db.getWhitelistEntry(parseInt(req.params.id));
+    if (!e) return res.status(404).json({ error: 'not found' });
+    const audit = await db.getWhitelistAudit(e.id);
+    res.json({ ...e, audit });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.put('/api/ioc-whitelist/:id', authMW, requireRole('l2'), async (req, res) => {
+  try {
+    const updated = await db.updateWhitelistEntry(parseInt(req.params.id), req.body, req.user.username);
+    if (!updated) return res.status(404).json({ error: 'not found' });
+    _wlCacheTime = 0;
+    res.json(updated);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/ioc-whitelist/:id', authMW, requireRole('admin'), async (req, res) => {
+  try {
+    const ok = await db.deleteWhitelistEntry(parseInt(req.params.id), req.user.username);
+    if (!ok) return res.status(404).json({ error: 'not found' });
+    _wlCacheTime = 0;
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/ioc-whitelist/:id/audit', authMW, async (req, res) => {
+  try {
+    const audit = await db.getWhitelistAudit(parseInt(req.params.id));
+    res.json(audit);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 // ─── STATIC (must be last — after all /api routes) ──────────────
 app.use(express.static(path.join(__dirname, '../../frontend')));
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, '../../frontend/index.html')));

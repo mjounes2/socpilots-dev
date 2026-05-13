@@ -602,6 +602,47 @@ body::before{
 .mc-rec-impact{font-size:11px;color:var(--txt2);line-height:1.4}
 .mc-rec-tech{font-size:9px;font-family:var(--fm);color:var(--c);margin-top:3px}
 .mc-section-hd{font-size:11px;font-weight:700;color:var(--txt2);text-transform:uppercase;letter-spacing:.8px;margin:14px 0 8px;padding-bottom:4px;border-bottom:1px solid rgba(255,255,255,.07)}
+/* ── Artifacts & IOC Intelligence ── */
+.art-kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px}
+@media(max-width:900px){.art-kpi-grid{grid-template-columns:repeat(2,1fr)}}
+.ioc-type-badge{display:inline-block;padding:2px 8px;border-radius:3px;font-size:10px;font-weight:700;font-family:var(--fm);text-transform:uppercase;letter-spacing:.5px}
+.ioc-t-ip{background:rgba(0,229,255,.12);color:var(--c);border:1px solid rgba(0,229,255,.2)}
+.ioc-t-domain{background:rgba(0,230,118,.12);color:var(--g);border:1px solid rgba(0,230,118,.2)}
+.ioc-t-url{background:rgba(255,152,0,.12);color:var(--o);border:1px solid rgba(255,152,0,.2)}
+.ioc-t-email{background:rgba(124,77,255,.12);color:#b39ddb;border:1px solid rgba(124,77,255,.2)}
+.ioc-t-md5,.ioc-t-sha1,.ioc-t-sha256{background:rgba(255,23,68,.12);color:var(--r);border:1px solid rgba(255,23,68,.2)}
+.ioc-t-cve{background:rgba(255,193,7,.12);color:var(--y);border:1px solid rgba(255,193,7,.2)}
+.ioc-t-hostname,.ioc-t-username,.ioc-t-process{background:rgba(138,176,208,.1);color:var(--txt2);border:1px solid rgba(138,176,208,.15)}
+.ioc-t-registry{background:rgba(100,181,246,.1);color:#90caf9;border:1px solid rgba(100,181,246,.2)}
+.ioc-t-mitre{background:rgba(244,67,54,.12);color:#ef9a9a;border:1px solid rgba(244,67,54,.2)}
+.ioc-t-filename,.ioc-t-cloud,.ioc-t-yara{background:rgba(78,205,196,.1);color:#80cbc4;border:1px solid rgba(78,205,196,.2)}
+.ioc-rep-badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px}
+.ioc-rep-malicious{background:rgba(255,23,68,.15);color:var(--r)}
+.ioc-rep-suspicious{background:rgba(255,152,0,.15);color:var(--o)}
+.ioc-rep-trusted{background:rgba(0,230,118,.15);color:var(--g)}
+.ioc-rep-unknown{background:rgba(138,176,208,.1);color:var(--txt3)}
+.ioc-risk-bar{height:4px;border-radius:2px;background:var(--b1);position:relative;width:60px;display:inline-block;vertical-align:middle}
+.ioc-risk-fill{height:100%;border-radius:2px;position:absolute;top:0;left:0}
+.art-src-card{background:var(--bg2);border:1px solid var(--b1);border-radius:var(--r3);padding:12px;display:flex;flex-direction:column;gap:6px}
+.art-src-status{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.art-src-ok{background:var(--g)}
+.art-src-off{background:var(--txt3)}
+.wl-cat-badge{display:inline-block;padding:2px 8px;border-radius:3px;font-size:10px;font-weight:600;text-transform:uppercase}
+.wl-cat-trusted_internal{background:rgba(0,230,118,.12);color:var(--g)}
+.wl-cat-false_positive{background:rgba(0,229,255,.12);color:var(--c)}
+.wl-cat-approved_service{background:rgba(124,77,255,.12);color:#b39ddb}
+.wl-cat-vendor{background:rgba(255,152,0,.12);color:var(--o)}
+.wl-cat-temporary{background:rgba(255,193,7,.12);color:var(--y)}
+.art-extract-drop{border:2px dashed var(--b2);border-radius:var(--r3);padding:24px;text-align:center;color:var(--txt3);transition:.2s;cursor:pointer}
+.art-extract-drop:hover{border-color:var(--c);color:var(--c)}
+.art-ioc-chip{display:inline-flex;align-items:center;gap:5px;background:var(--bg2);border:1px solid var(--b1);border-radius:4px;padding:3px 8px;margin:2px;font-size:11px;font-family:var(--fm);cursor:pointer}
+.art-ioc-chip:hover{border-color:var(--c)}
+.art-enr-source{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,.05)}
+.art-enr-source:last-child{border-bottom:none}
+.hunt-query-card{background:var(--bg2);border:1px solid var(--b1);border-radius:var(--r3);padding:14px;margin-bottom:8px;cursor:pointer;transition:.15s}
+.hunt-query-card:hover{border-color:var(--c);background:rgba(0,229,255,.04)}
+.hunt-query-card h4{font-size:12px;font-weight:600;color:var(--txt);margin:0 0 4px}
+.hunt-query-card p{font-size:11px;color:var(--txt3);margin:0}
 </style>
 </head>
 <body>
@@ -634,6 +675,7 @@ if(localStorage.getItem("soc_dim")==="1")document.body.classList.add("dim");
     <div class="sbi" onclick="go('rules')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><span class="sbi-lbl">Detection Rules</span></div>
     <div class="sbi" onclick="go('mitre')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="4" height="4" rx="1"/><rect x="10" y="3" width="4" height="4" rx="1"/><rect x="17" y="3" width="4" height="4" rx="1"/><rect x="3" y="10" width="4" height="4" rx="1"/><rect x="10" y="10" width="4" height="4" rx="1"/><rect x="17" y="10" width="4" height="4" rx="1"/><rect x="3" y="17" width="4" height="4" rx="1"/><rect x="10" y="17" width="4" height="4" rx="1"/><rect x="17" y="17" width="4" height="4" rx="1"/></svg><span class="sbi-lbl">ATT&CK Coverage</span></div>
     <div class="sbi" onclick="go('log-sources')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="4" rx="1"/><rect x="2" y="10" width="20" height="4" rx="1"/><rect x="2" y="17" width="20" height="4" rx="1"/><circle cx="6" cy="5" r="1" fill="currentColor" stroke="none"/><circle cx="6" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="6" cy="19" r="1" fill="currentColor" stroke="none"/></svg><span class="sbi-lbl">Log Sources</span><span class="sbi-n" id="n-log-sources">—</span></div>
+    <div class="sbi" onclick="go('artifacts')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg><span class="sbi-lbl">Artifacts & IOC</span><span class="sbi-n" id="n-artifacts">—</span></div>
 
     <div class="sb-sec">Investigation</div>
     <div class="sbi" onclick="go('cases')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v16"/></svg><span class="sbi-lbl">Cases</span><span class="sbi-n" id="n-cases">—</span></div>
@@ -2738,6 +2780,384 @@ sshd: Failed" style="min-height:80px"></textarea></div>
   </div>
 </div>
 
+<!-- ARTIFACTS & IOC INTELLIGENCE -->
+<div class="page" id="page-artifacts">
+  <div class="ph"><h1>ARTIFACTS & IOC INTELLIGENCE</h1><p>Centralized IOC database — extract, classify, enrich, correlate, and manage all security indicators</p></div>
+
+  <!-- Tab nav -->
+  <div class="inv-tabs" style="margin-bottom:14px">
+    <button class="inv-tab active" id="art-tab-overview"    onclick="switchArtTab('overview')">Overview</button>
+    <button class="inv-tab"        id="art-tab-ioc"         onclick="switchArtTab('ioc')">IOC Intelligence</button>
+    <button class="inv-tab"        id="art-tab-extract"     onclick="switchArtTab('extract')">File Analysis</button>
+    <button class="inv-tab"        id="art-tab-enrichment"  onclick="switchArtTab('enrichment')">Enrichment</button>
+    <button class="inv-tab"        id="art-tab-hunt"        onclick="switchArtTab('hunt')">Threat Hunting</button>
+    <button class="inv-tab"        id="art-tab-graph"       onclick="switchArtTab('graph')">Relationship Graph</button>
+    <button class="inv-tab"        id="art-tab-whitelist"   onclick="switchArtTab('whitelist')">Whitelist</button>
+    <button class="inv-tab"        id="art-tab-settings"    onclick="switchArtTab('settings')">Settings</button>
+  </div>
+
+  <!-- ── OVERVIEW ── -->
+  <div id="art-panel-overview">
+    <div class="art-kpi-grid">
+      <div class="kpi cl"><div class="kpi-lbl">Total IOCs</div><div class="kpi-val" id="art-kpi-total">—</div><div class="kpi-sub">in database</div></div>
+      <div class="kpi cr"><div class="kpi-lbl">Malicious</div><div class="kpi-val" id="art-kpi-mal">—</div><div class="kpi-sub">confirmed threats</div></div>
+      <div class="kpi co"><div class="kpi-lbl">Suspicious</div><div class="kpi-val" id="art-kpi-sus">—</div><div class="kpi-sub">under review</div></div>
+      <div class="kpi cg"><div class="kpi-lbl">New (24h)</div><div class="kpi-val" id="art-kpi-new">—</div><div class="kpi-sub">first seen today</div></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
+      <!-- Type distribution -->
+      <div class="card" style="padding:14px">
+        <div class="card-ttl" style="margin-bottom:10px">IOC TYPE DISTRIBUTION</div>
+        <div id="art-type-bars"></div>
+      </div>
+      <!-- Enrichment coverage -->
+      <div class="card" style="padding:14px">
+        <div class="card-ttl" style="margin-bottom:10px">ENRICHMENT COVERAGE</div>
+        <div id="art-enr-coverage"></div>
+      </div>
+    </div>
+    <!-- Recent malicious IOCs -->
+    <div class="card" style="padding:0">
+      <div class="card-hd" style="padding:12px 16px"><div class="card-ttl">RECENT HIGH-RISK IOCs</div></div>
+      <div class="tbl"><table style="width:100%;border-collapse:collapse">
+        <thead><tr style="border-bottom:1px solid var(--b1)">
+          <th style="padding:8px 12px;text-align:left;font-size:10px;color:var(--txt2);font-weight:600">INDICATOR</th>
+          <th style="padding:8px 12px;text-align:left;font-size:10px;color:var(--txt2);font-weight:600">TYPE</th>
+          <th style="padding:8px 12px;text-align:left;font-size:10px;color:var(--txt2);font-weight:600">REPUTATION</th>
+          <th style="padding:8px 12px;text-align:right;font-size:10px;color:var(--txt2);font-weight:600">RISK</th>
+          <th style="padding:8px 12px;text-align:left;font-size:10px;color:var(--txt2);font-weight:600">SOURCE</th>
+          <th style="padding:8px 12px;text-align:left;font-size:10px;color:var(--txt2);font-weight:600">LAST SEEN</th>
+        </tr></thead>
+        <tbody id="art-recent-body"><tr><td colspan="6" style="padding:24px;text-align:center"><div class="loading"><div class="spin"></div></div></td></tr></tbody>
+      </table></div>
+    </div>
+  </div>
+
+  <!-- ── IOC INTELLIGENCE ── -->
+  <div id="art-panel-ioc" style="display:none">
+    <div class="card" style="padding:12px;margin-bottom:12px">
+      <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+        <input class="fi" id="art-ioc-q" placeholder="Search indicator…" oninput="artIocDebounce()" style="width:220px">
+        <select class="fi" id="art-ioc-type" onchange="loadArtIOCs(1)" style="width:150px">
+          <option value="">All Types</option>
+          <option value="ip">IP Address</option>
+          <option value="domain">Domain</option>
+          <option value="url">URL</option>
+          <option value="email">Email</option>
+          <option value="md5">MD5</option>
+          <option value="sha1">SHA1</option>
+          <option value="sha256">SHA256</option>
+          <option value="cve">CVE</option>
+          <option value="hostname">Hostname</option>
+          <option value="username">Username</option>
+          <option value="process">Process</option>
+          <option value="registry">Registry Key</option>
+          <option value="filename">Filename</option>
+          <option value="mitre">MITRE Technique</option>
+          <option value="cloud">Cloud Indicator</option>
+          <option value="yara">YARA Match</option>
+        </select>
+        <select class="fi" id="art-ioc-rep" onchange="loadArtIOCs(1)" style="width:140px">
+          <option value="">All Reputations</option>
+          <option value="malicious">Malicious</option>
+          <option value="suspicious">Suspicious</option>
+          <option value="trusted">Trusted</option>
+          <option value="unknown">Unknown</option>
+        </select>
+        <div style="margin-left:auto;display:flex;gap:8px">
+          <button class="btn btn-sm" onclick="openModal('modal-add-ioc')">+ Add IOC</button>
+          <button class="btn btn-h btn-sm" onclick="artExportIOCs()">Export</button>
+          <button class="btn btn-h btn-sm" onclick="loadArtIOCs(1)">↻</button>
+        </div>
+      </div>
+    </div>
+    <div class="card" style="padding:0">
+      <div class="tbl"><table style="width:100%;border-collapse:collapse">
+        <thead><tr style="border-bottom:1px solid var(--b1)">
+          <th style="padding:9px 12px;text-align:left;font-size:10px;color:var(--txt2);font-weight:600">INDICATOR</th>
+          <th style="padding:9px 12px;text-align:left;font-size:10px;color:var(--txt2);font-weight:600">TYPE</th>
+          <th style="padding:9px 12px;text-align:left;font-size:10px;color:var(--txt2);font-weight:600">REPUTATION</th>
+          <th style="padding:9px 12px;text-align:right;font-size:10px;color:var(--txt2);font-weight:600">RISK</th>
+          <th style="padding:9px 12px;text-align:left;font-size:10px;color:var(--txt2);font-weight:600">SOURCE</th>
+          <th style="padding:9px 12px;text-align:left;font-size:10px;color:var(--txt2);font-weight:600">FIRST SEEN</th>
+          <th style="padding:9px 12px;text-align:left;font-size:10px;color:var(--txt2);font-weight:600">LAST SEEN</th>
+          <th style="padding:9px 12px;text-align:center;font-size:10px;color:var(--txt2);font-weight:600">ACTIONS</th>
+        </tr></thead>
+        <tbody id="art-ioc-body"><tr><td colspan="8" style="padding:24px;text-align:center"><div class="loading"><div class="spin"></div></div></td></tr></tbody>
+      </table></div>
+      <div id="art-ioc-pgn" style="padding:10px 16px;display:flex;justify-content:center"></div>
+    </div>
+  </div>
+
+  <!-- ── FILE ANALYSIS / EXTRACTION ── -->
+  <div id="art-panel-extract" style="display:none">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+      <div class="card" style="padding:16px">
+        <div class="card-ttl" style="margin-bottom:12px">PASTE TEXT / LOG FOR IOC EXTRACTION</div>
+        <textarea id="art-extract-text" rows="12" class="fi" style="width:100%;resize:vertical;font-family:var(--fm);font-size:11px;line-height:1.5" placeholder="Paste alert text, log lines, email body, investigation report, CSV, or any unstructured text…"></textarea>
+        <div style="display:flex;gap:8px;margin-top:10px;align-items:center">
+          <button class="btn btn-p" onclick="artExtractIOCs(false)">Extract IOCs</button>
+          <button class="btn" onclick="artExtractIOCs(true)">Extract & Auto-Save</button>
+          <label style="font-size:11px;color:var(--txt3);display:flex;align-items:center;gap:5px;cursor:pointer;margin-left:auto">
+            <input type="checkbox" id="art-skip-private" checked> Skip private IPs
+          </label>
+        </div>
+      </div>
+      <div class="card" style="padding:16px">
+        <div class="card-ttl" style="margin-bottom:12px">EXTRACTION RESULTS</div>
+        <div id="art-extract-results"><div class="empty"><p>Paste text and click Extract</p></div></div>
+      </div>
+    </div>
+    <!-- Supported types reference -->
+    <div class="card" style="padding:14px;margin-top:12px">
+      <div class="card-ttl" style="margin-bottom:10px">SUPPORTED INDICATOR TYPES</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px">
+        ${['ip','domain','url','email','md5','sha1','sha256','cve','registry'].map(t=>`<span class="ioc-type-badge ioc-t-${t}">${t}</span>`).join('')}
+        <span style="font-size:11px;color:var(--txt3);align-self:center;margin-left:4px">+ hostname, username, process (manual classification)</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── ENRICHMENT ── -->
+  <div id="art-panel-enrichment" style="display:none">
+    <div class="card" style="padding:14px;margin-bottom:14px">
+      <div class="card-ttl" style="margin-bottom:12px">ENRICHMENT SOURCES STATUS</div>
+      <div id="art-enr-sources"></div>
+    </div>
+    <div class="card" style="padding:14px">
+      <div class="card-ttl" style="margin-bottom:12px">BULK ENRICHMENT</div>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <select class="fi" id="art-bulk-enr-type" style="width:160px">
+          <option value="">All unenriched IOCs</option>
+          <option value="ip">IPs only</option>
+          <option value="domain">Domains only</option>
+          <option value="md5,sha1,sha256">Hashes only</option>
+        </select>
+        <button class="btn btn-p" id="art-bulk-enr-btn" onclick="artBulkEnrich()">Start Bulk Enrichment</button>
+        <span id="art-bulk-enr-status" style="font-size:11px;color:var(--txt3)"></span>
+      </div>
+      <div id="art-enr-queue" style="margin-top:14px"></div>
+    </div>
+  </div>
+
+  <!-- ── THREAT HUNTING ── -->
+  <div id="art-panel-hunt" style="display:none">
+    <div style="display:grid;grid-template-columns:300px 1fr;gap:14px">
+      <div>
+        <div class="card" style="padding:12px;margin-bottom:10px">
+          <div class="card-ttl" style="margin-bottom:10px">HUNT TEMPLATES</div>
+          <div id="art-hunt-templates"></div>
+        </div>
+      </div>
+      <div class="card" style="padding:14px">
+        <div class="card-ttl" style="margin-bottom:10px">IOC HUNT BUILDER</div>
+        <div class="fg"><label class="fl">IOC / Indicator</label>
+          <input class="fi" id="art-hunt-indicator" placeholder="IP, domain, hash, username…">
+        </div>
+        <div class="fg"><label class="fl">Timeframe</label>
+          <select class="fi" id="art-hunt-hours">
+            <option value="24">Last 24h</option><option value="72">Last 3d</option>
+            <option value="168">Last 7d</option><option value="720">Last 30d</option>
+          </select>
+        </div>
+        <div class="fg"><label class="fl">Search Field</label>
+          <select class="fi" id="art-hunt-field">
+            <option value="auto">Auto-detect</option>
+            <option value="data.srcip">Source IP</option>
+            <option value="data.dstip">Destination IP</option>
+            <option value="data.dstuser">Username</option>
+            <option value="full_log">Full Log</option>
+            <option value="rule.description">Rule Description</option>
+          </select>
+        </div>
+        <button class="btn btn-p" onclick="artRunHunt()">Run Hunt</button>
+        <div id="art-hunt-results" style="margin-top:14px"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── RELATIONSHIP GRAPH ── -->
+  <div id="art-panel-graph" style="display:none">
+    <div class="card" style="padding:12px;margin-bottom:12px">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <input class="fi" id="art-graph-q" placeholder="IOC to pivot from (IP, domain, hash…)" style="width:260px">
+        <button class="btn btn-p" onclick="artBuildGraph()">Build Graph</button>
+        <span style="font-size:11px;color:var(--txt3);margin-left:auto">Click nodes to drill down · Scroll to zoom</span>
+      </div>
+    </div>
+    <div class="card" style="padding:0;min-height:480px;position:relative">
+      <div id="art-graph-legend" style="position:absolute;top:14px;left:14px;z-index:2;display:flex;flex-direction:column;gap:5px"></div>
+      <svg id="art-graph-svg" style="width:100%;height:480px"></svg>
+      <div id="art-graph-empty" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;color:var(--txt3)"><p>Enter an IOC above and click Build Graph</p></div>
+    </div>
+  </div>
+
+  <!-- ── WHITELIST & EXCLUSIONS ── -->
+  <div id="art-panel-whitelist" style="display:none">
+    <div class="card" style="padding:12px;margin-bottom:12px">
+      <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+        <input class="fi" id="art-wl-q" placeholder="Search whitelist…" oninput="artWlDebounce()" style="width:200px">
+        <select class="fi" id="art-wl-type" onchange="loadArtWhitelist(1)" style="width:130px">
+          <option value="">All Types</option>
+          <option value="ip">IP</option><option value="domain">Domain</option>
+          <option value="url">URL</option><option value="email">Email</option>
+          <option value="md5">MD5</option><option value="sha256">SHA256</option>
+          <option value="hostname">Hostname</option>
+        </select>
+        <select class="fi" id="art-wl-cat" onchange="loadArtWhitelist(1)" style="width:160px">
+          <option value="">All Categories</option>
+          <option value="trusted_internal">Trusted Internal</option>
+          <option value="false_positive">False Positive</option>
+          <option value="approved_service">Approved Service</option>
+          <option value="vendor">Vendor</option>
+          <option value="temporary">Temporary</option>
+        </select>
+        <div style="margin-left:auto;display:flex;gap:8px">
+          <button class="btn btn-sm" onclick="openModal('modal-add-wl')">+ Add Exclusion</button>
+          <button class="btn btn-h btn-sm" onclick="artExportWhitelist()">Export</button>
+        </div>
+      </div>
+    </div>
+    <div class="card" style="padding:0">
+      <div class="tbl"><table style="width:100%;border-collapse:collapse">
+        <thead><tr style="border-bottom:1px solid var(--b1)">
+          <th style="padding:9px 12px;text-align:left;font-size:10px;color:var(--txt2);font-weight:600">INDICATOR</th>
+          <th style="padding:9px 12px;text-align:left;font-size:10px;color:var(--txt2);font-weight:600">TYPE</th>
+          <th style="padding:9px 12px;text-align:left;font-size:10px;color:var(--txt2);font-weight:600">CATEGORY</th>
+          <th style="padding:9px 12px;text-align:left;font-size:10px;color:var(--txt2);font-weight:600">REASON</th>
+          <th style="padding:9px 12px;text-align:left;font-size:10px;color:var(--txt2);font-weight:600">ADDED BY</th>
+          <th style="padding:9px 12px;text-align:left;font-size:10px;color:var(--txt2);font-weight:600">EXPIRES</th>
+          <th style="padding:9px 12px;text-align:center;font-size:10px;color:var(--txt2);font-weight:600">ENABLED</th>
+          <th style="padding:9px 12px;text-align:center;font-size:10px;color:var(--txt2);font-weight:600">ACTIONS</th>
+        </tr></thead>
+        <tbody id="art-wl-body"><tr><td colspan="8" style="padding:24px;text-align:center"><div class="loading"><div class="spin"></div></div></td></tr></tbody>
+      </table></div>
+      <div id="art-wl-pgn" style="padding:10px 16px;display:flex;justify-content:center"></div>
+    </div>
+  </div>
+
+  <!-- ── SETTINGS ── -->
+  <div id="art-panel-settings" style="display:none">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+      <div class="card" style="padding:16px">
+        <div class="card-ttl" style="margin-bottom:14px">ENRICHMENT SOURCE CONFIGURATION</div>
+        <div id="art-settings-sources"></div>
+      </div>
+      <div class="card" style="padding:16px">
+        <div class="card-ttl" style="margin-bottom:14px">EXTRACTION SETTINGS</div>
+        <div style="font-size:12px;color:var(--txt2);line-height:1.8">
+          <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.05)">
+            <span>Auto-save extracted IOCs</span>
+            <span style="color:var(--txt3)">Manual (toggle per session)</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.05)">
+            <span>Skip private IP ranges</span>
+            <span style="color:var(--g)">Enabled (RFC 1918 + loopback)</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.05)">
+            <span>Whitelist check on save</span>
+            <span style="color:var(--g)">Enabled (blocks whitelisted IOCs)</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;padding:8px 0">
+            <span>IOC deduplication</span>
+            <span style="color:var(--g)">Enabled (indicator + type unique)</span>
+          </div>
+        </div>
+        <div class="card-ttl" style="margin:16px 0 10px">WHITELIST SETTINGS</div>
+        <div style="font-size:12px;color:var(--txt2);line-height:1.8">
+          <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.05)">
+            <span>Cache TTL</span><span style="color:var(--c)">5 minutes</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.05)">
+            <span>Deletion requires</span><span style="color:var(--o)">Admin role</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;padding:8px 0">
+            <span>Audit trail</span><span style="color:var(--g)">Full audit log per entry</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Add IOC Modal -->
+<div class="modal-ov" id="modal-add-ioc">
+  <div class="modal" style="width:480px">
+    <div class="modal-hd"><div class="modal-ttl">Add IOC / Artifact</div><button class="modal-x" onclick="closeModal('modal-add-ioc')">✕</button></div>
+    <div style="padding:16px;display:flex;flex-direction:column;gap:10px">
+      <div class="fg"><label class="fl">Indicator *</label><input class="fi" id="add-ioc-val" placeholder="IP, domain, hash, CVE…"></div>
+      <div class="fg"><label class="fl">Type *</label>
+        <select class="fi" id="add-ioc-type">
+          <option value="ip">IP Address</option><option value="domain">Domain</option>
+          <option value="url">URL</option><option value="email">Email</option>
+          <option value="md5">MD5</option><option value="sha1">SHA1</option>
+          <option value="sha256">SHA256</option><option value="cve">CVE</option>
+          <option value="hostname">Hostname</option><option value="username">Username</option>
+          <option value="process">Process</option><option value="registry">Registry Key</option>
+          <option value="filename">Filename</option><option value="mitre">MITRE Technique</option>
+          <option value="cloud">Cloud Indicator</option><option value="yara">YARA Match</option>
+        </select>
+      </div>
+      <div class="fg"><label class="fl">Reputation</label>
+        <select class="fi" id="add-ioc-rep">
+          <option value="unknown">Unknown</option><option value="malicious">Malicious</option>
+          <option value="suspicious">Suspicious</option><option value="trusted">Trusted</option>
+        </select>
+      </div>
+      <div class="fg"><label class="fl">Source</label><input class="fi" id="add-ioc-source" placeholder="alert, investigation, manual…" value="manual"></div>
+      <div class="fg"><label class="fl">Notes</label><input class="fi" id="add-ioc-notes" placeholder="Optional context…"></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px">
+        <button class="btn btn-h" onclick="closeModal('modal-add-ioc')">Cancel</button>
+        <button class="btn btn-p" onclick="artSaveIOC()">Save IOC</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Add Whitelist Entry Modal -->
+<div class="modal-ov" id="modal-add-wl">
+  <div class="modal" style="width:520px">
+    <div class="modal-hd"><div class="modal-ttl">Add Whitelist Exclusion</div><button class="modal-x" onclick="closeModal('modal-add-wl')">✕</button></div>
+    <div style="padding:16px;display:flex;flex-direction:column;gap:10px">
+      <div id="wl-risk-warning" style="display:none;padding:10px;border-radius:4px;background:rgba(255,152,0,.1);border:1px solid rgba(255,152,0,.3);color:var(--o);font-size:12px"></div>
+      <div class="fg"><label class="fl">Indicator *</label><input class="fi" id="add-wl-val" placeholder="IP, domain, hash, hostname…" oninput="checkWlRisk()"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div class="fg"><label class="fl">Type *</label>
+          <select class="fi" id="add-wl-type">
+            <option value="ip">IP Address</option><option value="domain">Domain</option>
+            <option value="url">URL</option><option value="email">Email</option>
+            <option value="md5">MD5</option><option value="sha256">SHA256</option>
+            <option value="hostname">Hostname</option><option value="any">Any Type</option>
+          </select>
+        </div>
+        <div class="fg"><label class="fl">Category *</label>
+          <select class="fi" id="add-wl-cat">
+            <option value="trusted_internal">Trusted Internal</option>
+            <option value="false_positive">False Positive</option>
+            <option value="approved_service">Approved Service</option>
+            <option value="vendor">Vendor</option>
+            <option value="temporary">Temporary</option>
+          </select>
+        </div>
+      </div>
+      <div class="fg"><label class="fl">Reason</label><input class="fi" id="add-wl-reason" placeholder="Why is this indicator trusted?"></div>
+      <div class="fg"><label class="fl">Expires (leave blank for permanent)</label><input class="fi" id="add-wl-expires" type="datetime-local"></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px">
+        <button class="btn btn-h" onclick="closeModal('modal-add-wl')">Cancel</button>
+        <button class="btn btn-p" onclick="artSaveWhitelist()">Add to Whitelist</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- IOC Detail Modal -->
+<div class="modal-ov" id="modal-ioc-detail">
+  <div class="modal" style="width:680px;max-height:85vh;overflow-y:auto">
+    <div class="modal-hd"><div class="modal-ttl" id="ioc-detail-title">IOC Detail</div><button class="modal-x" onclick="closeModal('modal-ioc-detail')">✕</button></div>
+    <div id="ioc-detail-body" style="padding:16px"></div>
+  </div>
+</div>
+
 <!-- MITRE Technique Detail Modal -->
 <div class="modal-ov" id="modal-mitre-tech">
   <div class="modal" style="width:680px;max-height:80vh;overflow:hidden;display:flex;flex-direction:column">
@@ -3348,6 +3768,7 @@ let _cPage=1,_cPageSize=20,_cTimeframe='all',_cChartSev=null,_cSearchTimer=null;
 let CUR='dashboard';
 const LOAD_MAP={dashboard:loadDashboard,agents:loadAgents,alerts:loadAlerts,rules:loadRules,mitre:loadMitre,'log-sources':loadLogSources,'create-rules':loadCustomRules,investigation:()=>{loadInvAlerts();loadAutoTriageSettings();loadInvHistory();},
   cases:()=>{setCaseTimeframe(_cTimeframe);},'hive-alerts':()=>{setHaTimeframe(_haTimeframe);},threatmap:loadThreatMap,
+  artifacts:()=>{loadArtStats();},
   ioc:()=>{loadIOCQuick();loadOtxFeed();},reports:loadReportMetrics,
   assets:()=>{loadSubnets();loadAssets();loadScanStatus();},
   ueba:()=>{loadUebaStats();loadUebaAnomalies();loadUebaDigests();},
@@ -9856,6 +10277,471 @@ window.addEventListener('resize', () => {
     }
   }, 250);
 });
+</script>
+<script>
+// ══════════════════════════════════════════════════════════════════
+// ARTIFACTS & IOC INTELLIGENCE
+// ══════════════════════════════════════════════════════════════════
+let _artStats = null, _artIocPage = 1, _artIocSize = 50, _artWlPage = 1, _artWlSize = 50;
+let _artIocTimer = null, _artWlTimer = null;
+
+const IOC_TYPE_LABELS = { ip:'IP Address', domain:'Domain', url:'URL', email:'Email', md5:'MD5', sha1:'SHA1', sha256:'SHA256', cve:'CVE', hostname:'Hostname', username:'Username', process:'Process', registry:'Registry Key', filename:'Filename', mitre:'MITRE Technique', cloud:'Cloud Indicator', yara:'YARA Match' };
+
+function iocTypeBadge(t) { return `<span class="ioc-type-badge ioc-t-${t||'unknown'}">${esc(IOC_TYPE_LABELS[t]||t||'?')}</span>`; }
+function iocRepBadge(r)  { return `<span class="ioc-rep-badge ioc-rep-${r||'unknown'}">${esc(r||'unknown')}</span>`; }
+function iocRiskBar(risk) {
+  const pct = Math.min(100, risk||0);
+  const col = pct >= 70 ? 'var(--r)' : pct >= 40 ? 'var(--o)' : pct >= 15 ? 'var(--y)' : 'var(--g)';
+  return `<div class="ioc-risk-bar"><div class="ioc-risk-fill" style="width:${pct}%;background:${col}"></div></div> <span style="font-size:10px;color:${col};font-family:var(--fm)">${pct}</span>`;
+}
+
+function switchArtTab(tab) {
+  ['overview','ioc','extract','enrichment','hunt','graph','whitelist','settings'].forEach(t => {
+    const btn = document.getElementById(`art-tab-${t}`);
+    const panel = document.getElementById(`art-panel-${t}`);
+    if (btn) btn.classList.toggle('active', t === tab);
+    if (panel) panel.style.display = t === tab ? '' : 'none';
+  });
+  if (tab === 'overview')   loadArtStats();
+  if (tab === 'ioc')        loadArtIOCs(1);
+  if (tab === 'enrichment') loadArtEnrichmentSources();
+  if (tab === 'hunt')       loadHuntTemplates();
+  if (tab === 'whitelist')  loadArtWhitelist(1);
+  if (tab === 'settings')   loadArtSettings();
+}
+
+async function loadArtStats() {
+  const d = await G('/api/ioc-store/stats');
+  if (!d) return;
+  _artStats = d;
+  const s = d.summary || {};
+  document.getElementById('art-kpi-total').textContent = s.total || 0;
+  document.getElementById('art-kpi-mal').textContent   = s.malicious || 0;
+  document.getElementById('art-kpi-sus').textContent   = s.suspicious || 0;
+  document.getElementById('art-kpi-new').textContent   = s.new_24h || 0;
+  // Nav badge
+  const nb = document.getElementById('n-artifacts');
+  if (nb) { nb.textContent = s.malicious || 0; nb.style.display = (s.malicious||0) > 0 ? '' : 'none'; }
+  // Type distribution bars
+  const typesEl = document.getElementById('art-type-bars');
+  if (typesEl && d.by_type?.length) {
+    const max = d.by_type[0].cnt;
+    typesEl.innerHTML = d.by_type.slice(0,8).map(t => `
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        ${iocTypeBadge(t.ioc_type)}
+        <div style="flex:1;height:4px;background:var(--b1);border-radius:2px;overflow:hidden">
+          <div style="height:100%;width:${Math.round(t.cnt/max*100)}%;background:var(--c);border-radius:2px"></div>
+        </div>
+        <span style="font-size:11px;color:var(--txt3);font-family:var(--fm);width:40px;text-align:right">${t.cnt}</span>
+      </div>`).join('');
+  }
+  // Enrichment coverage
+  const covEl = document.getElementById('art-enr-coverage');
+  if (covEl && s.total) {
+    const pct = s.enriched ? Math.round(s.enriched / s.total * 100) : 0;
+    covEl.innerHTML = `
+      <div style="text-align:center;margin-bottom:12px">
+        <div style="font-size:36px;font-weight:700;color:${pct>70?'var(--g)':pct>30?'var(--o)':'var(--r)'};font-family:var(--fm)">${pct}%</div>
+        <div style="font-size:11px;color:var(--txt3)">${s.enriched||0} of ${s.total} IOCs enriched</div>
+      </div>
+      <div style="height:8px;background:var(--b1);border-radius:4px;overflow:hidden">
+        <div style="height:100%;width:${pct}%;background:var(--g);border-radius:4px"></div>
+      </div>`;
+  }
+  // Recent high-risk IOCs
+  const recent = await G('/api/ioc-store?sort_by=risk_score&sort_dir=desc&page_size=10');
+  const body = document.getElementById('art-recent-body');
+  if (body && recent?.items?.length) {
+    body.innerHTML = recent.items.map(r => `
+      <tr style="border-bottom:1px solid rgba(255,255,255,.04);cursor:pointer" onclick="showIOCDetail(${r.id})">
+        <td style="padding:9px 12px;font-family:var(--fm);font-size:12px;color:var(--txt)">${esc(r.indicator)}</td>
+        <td style="padding:9px 12px">${iocTypeBadge(r.ioc_type)}</td>
+        <td style="padding:9px 12px">${iocRepBadge(r.reputation)}</td>
+        <td style="padding:9px 12px;text-align:right">${iocRiskBar(r.risk_score)}</td>
+        <td style="padding:9px 12px;font-size:11px;color:var(--txt3)">${esc(r.source||'—')}</td>
+        <td style="padding:9px 12px;font-size:11px;color:var(--txt3)">${fmtDate(r.last_seen)}</td>
+      </tr>`).join('');
+  } else if (body) {
+    body.innerHTML = `<tr><td colspan="6">${empty('No IOCs in database yet — add or extract some')}</td></tr>`;
+  }
+}
+
+function artIocDebounce() { clearTimeout(_artIocTimer); _artIocTimer = setTimeout(()=>loadArtIOCs(1), 250); }
+function artWlDebounce()  { clearTimeout(_artWlTimer);  _artWlTimer  = setTimeout(()=>loadArtWhitelist(1), 250); }
+
+async function loadArtIOCs(page) {
+  if (page) _artIocPage = page;
+  const body = document.getElementById('art-ioc-body');
+  if (body) body.innerHTML = `<tr><td colspan="8" style="padding:24px;text-align:center"><div class="loading"><div class="spin"></div></div></td></tr>`;
+  const q = document.getElementById('art-ioc-q')?.value || '';
+  const ioc_type = document.getElementById('art-ioc-type')?.value || '';
+  const reputation = document.getElementById('art-ioc-rep')?.value || '';
+  const d = await G(`/api/ioc-store?page=${_artIocPage}&page_size=${_artIocSize}&q=${encodeURIComponent(q)}&ioc_type=${ioc_type}&reputation=${reputation}&sort_by=last_seen&sort_dir=desc`);
+  if (!d || d.error) { if (body) body.innerHTML = `<tr><td colspan="8">${errBnr(d?.error||'Failed to load IOCs')}</td></tr>`; return; }
+  if (body) body.innerHTML = (d.items||[]).map(r => `
+    <tr style="border-bottom:1px solid rgba(255,255,255,.04);cursor:pointer" onclick="showIOCDetail(${r.id})">
+      <td style="padding:9px 12px;font-family:var(--fm);font-size:12px;color:var(--txt);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(r.indicator)}">${r.is_whitelisted?'<span title="Whitelisted" style="color:var(--g);margin-right:4px">WL</span>':''}${esc(r.indicator)}</td>
+      <td style="padding:9px 12px">${iocTypeBadge(r.ioc_type)}</td>
+      <td style="padding:9px 12px">${iocRepBadge(r.reputation)}</td>
+      <td style="padding:9px 12px;text-align:right">${iocRiskBar(r.risk_score)}</td>
+      <td style="padding:9px 12px;font-size:11px;color:var(--txt3)">${esc(r.source||'—')}</td>
+      <td style="padding:9px 12px;font-size:11px;color:var(--txt3)">${fmtDate(r.first_seen)}</td>
+      <td style="padding:9px 12px;font-size:11px;color:var(--txt3)">${fmtDate(r.last_seen)}</td>
+      <td style="padding:9px 12px;text-align:center;white-space:nowrap">
+        <button class="btn btn-sm" style="font-size:10px;padding:2px 7px" onclick="event.stopPropagation();artEnrichOne(${r.id})">Enrich</button>
+        <button class="btn btn-sm btn-h" style="font-size:10px;padding:2px 7px;margin-left:3px" onclick="event.stopPropagation();artDeleteIOC(${r.id})">✕</button>
+      </td>
+    </tr>`).join('') || `<tr><td colspan="8">${empty('No IOCs match current filters')}</td></tr>`;
+  const pgn = document.getElementById('art-ioc-pgn');
+  if (pgn) pgn.innerHTML = buildPaginator(_artIocPage, _artIocSize, d.total, 'loadArtIOCs(_artIocPage-1)', 'loadArtIOCs(_artIocPage+1)', null);
+}
+
+async function showIOCDetail(id) {
+  const d = await G(`/api/ioc-store/${id}`);
+  if (!d) return;
+  document.getElementById('ioc-detail-title').textContent = `IOC: ${d.indicator}`;
+  const enrHtml = (d.enrichments||[]).map(e => {
+    const ok = e.status === 'success';
+    const data = e.result ? (typeof e.result === 'string' ? JSON.parse(e.result) : e.result) : null;
+    return `<div class="art-enr-source"><div class="art-src-status ${ok?'art-src-ok':'art-src-off'}"></div>
+      <div style="flex:1"><div style="font-size:12px;font-weight:600;color:var(--txt)">${esc(e.source)}</div>
+      ${ok && data ? `<div style="font-size:11px;color:var(--txt3);font-family:var(--fm);margin-top:2px">${esc(JSON.stringify(data).slice(0,120))}…</div>` : `<div style="font-size:11px;color:var(--txt3)">${e.error||e.status}</div>`}
+      </div><div style="font-size:10px;color:var(--txt3)">${fmtDate(e.fetched_at)}</div></div>`;
+  }).join('') || '<div style="color:var(--txt3);font-size:12px">Not enriched yet</div>';
+  const relsHtml = (d.relations||[]).map(r =>
+    `<div style="font-size:11px;color:var(--txt2);padding:3px 0">${esc(r.rel_type)} → <span style="color:var(--c)">${esc(r.entity_type)}</span>: ${esc(r.entity_label||r.entity_id)}</div>`
+  ).join('') || '<div style="color:var(--txt3);font-size:12px">No relations recorded</div>';
+  document.getElementById('ioc-detail-body').innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">
+      <div><div style="font-size:10px;color:var(--txt3);margin-bottom:4px">TYPE</div>${iocTypeBadge(d.ioc_type)}</div>
+      <div><div style="font-size:10px;color:var(--txt3);margin-bottom:4px">REPUTATION</div>${iocRepBadge(d.reputation)}</div>
+      <div><div style="font-size:10px;color:var(--txt3);margin-bottom:4px">RISK SCORE</div>${iocRiskBar(d.risk_score)}</div>
+      <div><div style="font-size:10px;color:var(--txt3);margin-bottom:4px">CONFIDENCE</div><span style="font-size:13px;color:var(--txt);font-family:var(--fm)">${d.confidence||0}%</span></div>
+      <div><div style="font-size:10px;color:var(--txt3);margin-bottom:4px">FIRST SEEN</div><span style="font-size:12px;color:var(--txt2)">${fmtDate(d.first_seen)}</span></div>
+      <div><div style="font-size:10px;color:var(--txt3);margin-bottom:4px">LAST SEEN</div><span style="font-size:12px;color:var(--txt2)">${fmtDate(d.last_seen)}</span></div>
+      <div><div style="font-size:10px;color:var(--txt3);margin-bottom:4px">SOURCE</div><span style="font-size:12px;color:var(--txt)">${esc(d.source||'—')}</span></div>
+      <div><div style="font-size:10px;color:var(--txt3);margin-bottom:4px">ENRICHED</div><span style="font-size:12px;color:${d.enriched_at?'var(--g)':'var(--txt3)'}">${d.enriched_at?fmtDate(d.enriched_at):'Not enriched'}</span></div>
+    </div>
+    ${d.notes?`<div style="margin-bottom:12px"><div style="font-size:10px;color:var(--txt3);margin-bottom:4px">NOTES</div><div style="font-size:12px;color:var(--txt2)">${esc(d.notes)}</div></div>`:''}
+    ${(d.mitre_techniques||[]).length?`<div style="margin-bottom:12px"><div style="font-size:10px;color:var(--txt3);margin-bottom:4px">MITRE TECHNIQUES</div><div>${d.mitre_techniques.map(t=>`<span style="background:rgba(244,67,54,.1);color:#ef9a9a;padding:2px 7px;border-radius:3px;font-size:11px;margin:2px;display:inline-block">${esc(t)}</span>`).join('')}</div></div>`:''}
+    <div style="margin-bottom:12px"><div style="font-size:10px;color:var(--txt3);margin-bottom:6px">ENRICHMENT RESULTS</div>${enrHtml}</div>
+    <div style="margin-bottom:12px"><div style="font-size:10px;color:var(--txt3);margin-bottom:6px">RELATIONS</div>${relsHtml}</div>
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <button class="btn btn-p btn-sm" onclick="artEnrichOne(${d.id});closeModal('modal-ioc-detail')">Enrich Now</button>
+      <button class="btn btn-sm" onclick="artAddToWhitelistFromDetail('${esc(d.indicator)}','${esc(d.ioc_type)}');closeModal('modal-ioc-detail')">Add to Whitelist</button>
+      <button class="btn btn-sm btn-h" onclick="artDeleteIOC(${d.id});closeModal('modal-ioc-detail')">Delete</button>
+    </div>`;
+  openModal('modal-ioc-detail');
+}
+
+async function artSaveIOC() {
+  const indicator = document.getElementById('add-ioc-val').value.trim();
+  const ioc_type  = document.getElementById('add-ioc-type').value;
+  if (!indicator) { alert('Indicator is required'); return; }
+  const r = await P('/api/ioc-store', { indicator, ioc_type, reputation: document.getElementById('add-ioc-rep').value, source: document.getElementById('add-ioc-source').value, notes: document.getElementById('add-ioc-notes').value });
+  if (!r || r.error) { alert(r?.error||'Failed to save IOC'); return; }
+  closeModal('modal-add-ioc');
+  ['add-ioc-val','add-ioc-notes'].forEach(id => { const el = document.getElementById(id); if (el) el.value=''; });
+  loadArtIOCs(_artIocPage);
+  loadArtStats();
+}
+
+async function artEnrichOne(id) {
+  const r = await P(`/api/ioc-store/${id}/enrich`, {});
+  if (!r || r.error) { alert(r?.error||'Enrichment failed'); return; }
+  alert(`Enrichment complete. Reputation: ${r.reputation||'unknown'}, Risk: ${r.risk_score||0}`);
+  loadArtIOCs(_artIocPage);
+  loadArtStats();
+}
+
+async function artDeleteIOC(id) {
+  if (!confirm('Delete this IOC from the database?')) return;
+  await D(`/api/ioc-store/${id}`);
+  loadArtIOCs(_artIocPage);
+  loadArtStats();
+}
+
+async function artExportIOCs() {
+  window.open('/api/ioc-store/export?format=csv', '_blank');
+}
+
+async function artExtractIOCs(autoSave) {
+  const text = document.getElementById('art-extract-text')?.value || '';
+  if (!text.trim()) { alert('Paste some text first'); return; }
+  const resultsEl = document.getElementById('art-extract-results');
+  if (resultsEl) resultsEl.innerHTML = spin('Extracting…');
+  const r = await P('/api/ioc-store/extract', { text, auto_save: autoSave });
+  if (!r || r.error) { if (resultsEl) resultsEl.innerHTML = errBnr(r?.error||'Extraction failed'); return; }
+  if (!r.extracted?.length) { if (resultsEl) resultsEl.innerHTML = empty('No IOCs found in the provided text'); return; }
+  // Group by type
+  const byType = {};
+  for (const ioc of r.extracted) { (byType[ioc.ioc_type] = byType[ioc.ioc_type]||[]).push(ioc.indicator); }
+  if (resultsEl) resultsEl.innerHTML = `
+    <div style="font-size:12px;color:var(--g);margin-bottom:10px">Found ${r.extracted.length} indicators${autoSave?` · Saved ${r.saved}`:''}.</div>
+    ${Object.entries(byType).map(([type, inds]) => `
+      <div style="margin-bottom:10px">
+        <div style="font-size:10px;color:var(--txt3);margin-bottom:5px;text-transform:uppercase">${type} (${inds.length})</div>
+        <div style="display:flex;flex-wrap:wrap;gap:4px">
+          ${inds.map(v=>`<span class="art-ioc-chip" onclick="artQuickAdd('${esc(v)}','${type}')">${esc(v)}</span>`).join('')}
+        </div>
+      </div>`).join('')}
+    ${!autoSave?`<button class="btn btn-p" style="margin-top:6px" onclick="artSaveAllExtracted(${JSON.stringify(r.extracted).replace(/"/g,'&quot;')})">Save All to Database</button>`:''}`;
+}
+
+async function artSaveAllExtracted(items) {
+  const r = await P('/api/ioc-store/import', { items: items.map(i=>({...i, source:'extraction'})) });
+  if (!r) return;
+  alert(`Saved ${r.imported}, skipped ${r.skipped} (whitelisted or duplicate)`);
+  loadArtStats();
+}
+
+function artQuickAdd(indicator, ioc_type) {
+  document.getElementById('add-ioc-val').value = indicator;
+  document.getElementById('add-ioc-type').value = ioc_type;
+  openModal('modal-add-ioc');
+}
+
+async function loadArtEnrichmentSources() {
+  const d = await G('/api/ioc-store/stats');
+  if (!d) return;
+  const el = document.getElementById('art-enr-sources');
+  if (!el) return;
+  el.innerHTML = (d.enrichment_sources||[]).map(s => `
+    <div class="art-enr-source">
+      <div class="art-src-status ${s.configured?'art-src-ok':'art-src-off'}"></div>
+      <div style="flex:1">
+        <div style="font-size:12px;font-weight:600;color:var(--txt)">${esc(s.name)}</div>
+        <div style="font-size:11px;color:var(--txt3)">${s.configured?'API key configured — active':'Not configured — add '+esc(s.key)+' to .env'}</div>
+      </div>
+      <span style="font-size:10px;font-weight:600;color:${s.configured?'var(--g)':'var(--txt3)'}">${s.configured?'ACTIVE':'INACTIVE'}</span>
+    </div>`).join('');
+}
+
+async function artBulkEnrich() {
+  const btn = document.getElementById('art-bulk-enr-btn');
+  const status = document.getElementById('art-bulk-enr-status');
+  if (btn) { btn.disabled = true; btn.textContent = 'Running…'; }
+  if (status) status.textContent = 'Fetching unenriched IOCs…';
+  const type = document.getElementById('art-bulk-enr-type')?.value || '';
+  const d = await G(`/api/ioc-store?page_size=50&sort_by=last_seen&sort_dir=asc${type?'&ioc_type='+type:''}`);
+  const unenriched = (d?.items||[]).filter(i => !i.enriched_at);
+  if (!unenriched.length) { if (status) status.textContent = 'All IOCs are already enriched'; if (btn) { btn.disabled=false; btn.textContent='Start Bulk Enrichment'; } return; }
+  const queueEl = document.getElementById('art-enr-queue');
+  if (queueEl) queueEl.innerHTML = unenriched.map(i=>`<div id="enr-row-${i.id}" style="padding:5px 0;font-size:11px;color:var(--txt3);font-family:var(--fm)">${esc(i.indicator)} <span style="color:var(--txt3)">pending…</span></div>`).join('');
+  let done = 0;
+  for (const ioc of unenriched) {
+    if (status) status.textContent = `Enriching ${done+1}/${unenriched.length}: ${ioc.indicator}`;
+    const r = await P(`/api/ioc-store/${ioc.id}/enrich`, {});
+    const row = document.getElementById(`enr-row-${ioc.id}`);
+    if (row) row.innerHTML = `${esc(ioc.indicator)} <span style="color:${r?.reputation==='malicious'?'var(--r)':r?.reputation==='suspicious'?'var(--o)':'var(--g)'}">${r?.reputation||'done'} (risk:${r?.risk_score||0})</span>`;
+    done++;
+  }
+  if (status) status.textContent = `Done — enriched ${done} IOCs`;
+  if (btn) { btn.disabled=false; btn.textContent='Start Bulk Enrichment'; }
+  loadArtStats();
+}
+
+const HUNT_TEMPLATES = [
+  { name: 'C2 Beaconing', desc: 'Detect repeated connections to external IP', field: 'data.srcip', hint: 'Enter C2 IP or known-malicious domain' },
+  { name: 'Lateral Movement', desc: 'Find same user on multiple hosts', field: 'data.dstuser', hint: 'Enter compromised username' },
+  { name: 'Hash Hunt', desc: 'Find known malicious file hash in SIEM', field: 'full_log', hint: 'Enter MD5/SHA256 hash' },
+  { name: 'Domain Lookup', desc: 'Find all references to a domain', field: 'full_log', hint: 'Enter domain name' },
+  { name: 'Exploit CVE', desc: 'Search for CVE exploitation attempts', field: 'full_log', hint: 'Enter CVE-YYYY-XXXX' },
+  { name: 'Suspicious Process', desc: 'Hunt for process name in SIEM logs', field: 'full_log', hint: 'Enter process name' },
+];
+
+function loadHuntTemplates() {
+  const el = document.getElementById('art-hunt-templates');
+  if (!el) return;
+  el.innerHTML = HUNT_TEMPLATES.map((t,i) => `
+    <div class="hunt-query-card" onclick="applyHuntTemplate(${i})">
+      <h4>${esc(t.name)}</h4>
+      <p>${esc(t.desc)}</p>
+    </div>`).join('');
+}
+
+function applyHuntTemplate(i) {
+  const t = HUNT_TEMPLATES[i];
+  document.getElementById('art-hunt-field').value = t.field;
+  document.getElementById('art-hunt-indicator').placeholder = t.hint;
+  document.getElementById('art-hunt-indicator').focus();
+}
+
+async function artRunHunt() {
+  const indicator = document.getElementById('art-hunt-indicator')?.value?.trim();
+  const hours     = document.getElementById('art-hunt-hours')?.value || '24';
+  const field     = document.getElementById('art-hunt-field')?.value || 'auto';
+  if (!indicator) { alert('Enter an indicator to hunt for'); return; }
+  const resultsEl = document.getElementById('art-hunt-results');
+  if (resultsEl) resultsEl.innerHTML = spin('Hunting…');
+  // Use the correlate API (already exists) for quick hunt
+  const r = await P('/api/correlate', { indicator });
+  if (!r || r.error) { if (resultsEl) resultsEl.innerHTML = errBnr(r?.error||'Hunt failed'); return; }
+  const siemHits = r.siem_hits || [];
+  const hiveHits = r.hive_hits || [];
+  if (resultsEl) resultsEl.innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div>
+        <div style="font-size:11px;font-weight:700;color:var(--o);margin-bottom:6px">SIEM HITS (${siemHits.length})</div>
+        ${siemHits.length ? siemHits.map(h=>`<div style="padding:7px;background:var(--bg2);border-radius:4px;margin-bottom:5px;font-size:11px">
+          <div style="color:var(--txt);margin-bottom:2px">${esc(h.rule?.description||h._source?.rule?.description||'Alert')}</div>
+          <div style="color:var(--txt3);font-family:var(--fm)">${esc(h.agent?.name||'')} · ${fmtDate(h['@timestamp']||h.timestamp)}</div>
+        </div>`).join('') : empty('No SIEM matches')}
+      </div>
+      <div>
+        <div style="font-size:11px;font-weight:700;color:var(--c);margin-bottom:6px">SP-CM CASES (${hiveHits.length})</div>
+        ${hiveHits.length ? hiveHits.map(h=>`<div style="padding:7px;background:var(--bg2);border-radius:4px;margin-bottom:5px;font-size:11px">
+          <div style="color:var(--txt);margin-bottom:2px">${esc(h.title||'Case')}</div>
+          <div style="color:var(--txt3)">${esc(h.status||'')} · ${esc(h.severity||'')}</div>
+        </div>`).join('') : empty('No case matches')}
+      </div>
+    </div>
+    ${r.ai_analysis?`<div style="margin-top:12px;padding:10px;background:rgba(0,229,255,.05);border:1px solid rgba(0,229,255,.15);border-radius:4px;font-size:12px;color:var(--txt2)">${esc(r.ai_analysis)}</div>`:''}`;
+}
+
+async function artBuildGraph() {
+  const q = document.getElementById('art-graph-q')?.value?.trim();
+  if (!q) { alert('Enter an IOC to pivot from'); return; }
+  const svgEl = document.getElementById('art-graph-svg');
+  const emptyEl = document.getElementById('art-graph-empty');
+  if (emptyEl) emptyEl.style.display = 'none';
+  // Fetch data
+  const [iocs, corr] = await Promise.all([
+    G(`/api/ioc-store?q=${encodeURIComponent(q)}&page_size=20`),
+    P('/api/correlate', { indicator: q })
+  ]);
+  const siemHits = corr?.siem_hits || [];
+  const hiveHits = corr?.hive_hits || [];
+  const relIOCs  = iocs?.items || [];
+  // Build D3 graph
+  const nodes = [{ id: `ioc:${q}`, label: q, type: 'root', r: 18 }];
+  const links = [];
+  relIOCs.slice(0,8).forEach((i,idx) => { nodes.push({id:`rel:${i.id}`,label:i.indicator,type:i.ioc_type,r:10}); links.push({source:`ioc:${q}`,target:`rel:${i.id}`}); });
+  siemHits.slice(0,5).forEach((h,idx) => { const label=h.rule?.description||h._source?.rule?.description||'Alert'; nodes.push({id:`siem:${idx}`,label:label.slice(0,30),type:'siem',r:10}); links.push({source:`ioc:${q}`,target:`siem:${idx}`}); });
+  hiveHits.slice(0,4).forEach((h,idx) => { nodes.push({id:`hive:${idx}`,label:(h.title||'Case').slice(0,30),type:'hive',r:10}); links.push({source:`ioc:${q}`,target:`hive:${idx}`}); });
+  // Color map
+  const COLOR = { root:'#00e5ff', ip:'#00e5ff', domain:'#00e676', url:'#ff9800', email:'#b39ddb', md5:'#ff1744', sha256:'#ff1744', sha1:'#ff1744', siem:'#ff9800', hive:'#7c4dff', default:'#8ab0d0' };
+  // Render legend
+  const legendEl = document.getElementById('art-graph-legend');
+  if (legendEl) legendEl.innerHTML = [['Root IOC','#00e5ff'],['Related IOC','#8ab0d0'],['SIEM Alert','#ff9800'],['SP-CM Case','#7c4dff']].map(([l,c])=>`<div style="display:flex;align-items:center;gap:5px"><div style="width:8px;height:8px;border-radius:50%;background:${c}"></div><span style="font-size:10px;color:var(--txt3)">${l}</span></div>`).join('');
+  if (!svgEl || !nodes.length) return;
+  const W = svgEl.clientWidth || 700, H = 480;
+  svgEl.innerHTML = '';
+  const svg = d3.select(svgEl);
+  const g = svg.append('g');
+  svg.call(d3.zoom().scaleExtent([0.3,3]).on('zoom', e => g.attr('transform', e.transform)));
+  const sim = d3.forceSimulation(nodes)
+    .force('link', d3.forceLink(links).id(d=>d.id).distance(90))
+    .force('charge', d3.forceManyBody().strength(-220))
+    .force('center', d3.forceCenter(W/2, H/2))
+    .force('collision', d3.forceCollide().radius(d=>d.r+10));
+  const link = g.append('g').selectAll('line').data(links).join('line').attr('stroke','rgba(255,255,255,.15)').attr('stroke-width',1.5);
+  const node = g.append('g').selectAll('g').data(nodes).join('g').call(d3.drag().on('start',(e,d)=>{if(!e.active)sim.alphaTarget(.3).restart();d.fx=d.x;d.fy=d.y;}).on('drag',(e,d)=>{d.fx=e.x;d.fy=e.y;}).on('end',(e,d)=>{if(!e.active)sim.alphaTarget(0);d.fx=null;d.fy=null;}));
+  node.append('circle').attr('r',d=>d.r).attr('fill',d=>COLOR[d.type]||COLOR.default).attr('fill-opacity',.2).attr('stroke',d=>COLOR[d.type]||COLOR.default).attr('stroke-width',1.5);
+  node.append('text').text(d=>d.label?.slice(0,22)||(d.id)).attr('text-anchor','middle').attr('dy','0.35em').attr('font-size',d=>d.type==='root'?10:9).attr('fill',d=>COLOR[d.type]||COLOR.default).attr('pointer-events','none');
+  sim.on('tick',()=>{ link.attr('x1',d=>d.source.x).attr('y1',d=>d.source.y).attr('x2',d=>d.target.x).attr('y2',d=>d.target.y); node.attr('transform',d=>`translate(${d.x},${d.y})`); });
+}
+
+async function loadArtWhitelist(page) {
+  if (page) _artWlPage = page;
+  const body = document.getElementById('art-wl-body');
+  if (body) body.innerHTML = `<tr><td colspan="8" style="padding:24px;text-align:center"><div class="loading"><div class="spin"></div></div></td></tr>`;
+  const q    = document.getElementById('art-wl-q')?.value || '';
+  const type = document.getElementById('art-wl-type')?.value || '';
+  const cat  = document.getElementById('art-wl-cat')?.value || '';
+  const d = await G(`/api/ioc-whitelist?page=${_artWlPage}&page_size=${_artWlSize}&q=${encodeURIComponent(q)}&ioc_type=${type}&category=${cat}`);
+  if (!d || d.error) { if (body) body.innerHTML = `<tr><td colspan="8">${errBnr(d?.error||'Failed')}</td></tr>`; return; }
+  const now = Date.now();
+  if (body) body.innerHTML = (d.items||[]).map(r => {
+    const expired = r.expires_at && new Date(r.expires_at).getTime() < now;
+    return `<tr style="border-bottom:1px solid rgba(255,255,255,.04);${expired?'opacity:.5':''}">
+      <td style="padding:9px 12px;font-family:var(--fm);font-size:12px;color:var(--txt)">${esc(r.indicator)}${r.risk_warning?`<div style="font-size:9px;color:var(--o);margin-top:2px">⚠ ${esc(r.risk_warning.slice(0,60))}</div>`:''}</td>
+      <td style="padding:9px 12px">${iocTypeBadge(r.ioc_type)}</td>
+      <td style="padding:9px 12px"><span class="wl-cat-badge wl-cat-${r.category}">${esc(r.category?.replace('_',' '))}</span></td>
+      <td style="padding:9px 12px;font-size:11px;color:var(--txt3)">${esc(r.reason||'—')}</td>
+      <td style="padding:9px 12px;font-size:11px;color:var(--txt3)">${esc(r.added_by||'—')}</td>
+      <td style="padding:9px 12px;font-size:11px;color:${expired?'var(--r)':'var(--txt3)'}">${r.expires_at?fmtDate(r.expires_at)+'(expired)':'Permanent'}</td>
+      <td style="padding:9px 12px;text-align:center"><span style="color:${r.enabled?'var(--g)':'var(--r)';font-size:11px">${r.enabled?'ON':'OFF'}</span></td>
+      <td style="padding:9px 12px;text-align:center;white-space:nowrap">
+        <button class="btn btn-sm btn-h" style="font-size:10px;padding:2px 7px" onclick="artWlToggle(${r.id},${!r.enabled})">${r.enabled?'Disable':'Enable'}</button>
+        <button class="btn btn-sm btn-h" style="font-size:10px;padding:2px 7px;margin-left:3px;color:var(--r)" onclick="artWlDelete(${r.id})">✕</button>
+      </td>
+    </tr>`;
+  }).join('') || `<tr><td colspan="8">${empty('No whitelist entries yet — add trusted indicators to exclude them from automation')}</td></tr>`;
+  const pgn = document.getElementById('art-wl-pgn');
+  if (pgn) pgn.innerHTML = buildPaginator(_artWlPage, _artWlSize, d.total, 'loadArtWhitelist(_artWlPage-1)', 'loadArtWhitelist(_artWlPage+1)', null);
+}
+
+async function artSaveWhitelist() {
+  const indicator = document.getElementById('add-wl-val')?.value?.trim();
+  const ioc_type  = document.getElementById('add-wl-type')?.value;
+  const category  = document.getElementById('add-wl-cat')?.value;
+  if (!indicator || !ioc_type || !category) { alert('Indicator, type and category are required'); return; }
+  const expires_at = document.getElementById('add-wl-expires')?.value || null;
+  const reason     = document.getElementById('add-wl-reason')?.value || null;
+  const r = await P('/api/ioc-whitelist', { indicator, ioc_type, category, reason, expires_at });
+  if (!r || r.error) { alert(r?.error||'Failed to add whitelist entry'); return; }
+  closeModal('modal-add-wl');
+  loadArtWhitelist(1);
+}
+
+async function artWlToggle(id, enabled) {
+  await P(`/api/ioc-whitelist/${id}`, { ...{}, enabled });
+  await fetch(`/api/ioc-whitelist/${id}`, { method:'PUT', headers:{'Content-Type':'application/json','Authorization':'Bearer '+localStorage.getItem('soc_token')||sessionStorage.getItem('soc_token')}, body:JSON.stringify({enabled}) });
+  loadArtWhitelist(_artWlPage);
+}
+
+async function artWlDelete(id) {
+  if (!confirm('Remove this whitelist entry?')) return;
+  await D(`/api/ioc-whitelist/${id}`);
+  loadArtWhitelist(_artWlPage);
+}
+
+async function artExportWhitelist() {
+  window.open('/api/ioc-whitelist/export?format=csv', '_blank');
+}
+
+function artAddToWhitelistFromDetail(indicator, ioc_type) {
+  document.getElementById('add-wl-val').value = indicator;
+  document.getElementById('add-wl-type').value = ioc_type;
+  switchArtTab('whitelist');
+  openModal('modal-add-wl');
+}
+
+let _wlCheckTimer = null;
+async function checkWlRisk() {
+  clearTimeout(_wlCheckTimer);
+  _wlCheckTimer = setTimeout(async () => {
+    const indicator = document.getElementById('add-wl-val')?.value?.trim();
+    const ioc_type  = document.getElementById('add-wl-type')?.value;
+    const warnEl    = document.getElementById('wl-risk-warning');
+    if (!indicator || !warnEl) return;
+    const r = await P('/api/ioc-whitelist/check', { indicator, ioc_type });
+    if (r?.whitelisted) { warnEl.style.display=''; warnEl.textContent='Already whitelisted: '+r.entry?.category; return; }
+    // Check IOC reputation
+    const iocs = await G(`/api/ioc-store?q=${encodeURIComponent(indicator)}&page_size=1`);
+    const match = iocs?.items?.find(i=>i.indicator===indicator);
+    if (match?.reputation === 'malicious') { warnEl.style.display=''; warnEl.textContent=`⚠ WARNING: This indicator is marked MALICIOUS (risk: ${match.risk_score}). Whitelisting will suppress all automated actions.`; }
+    else if (match?.reputation === 'suspicious') { warnEl.style.display=''; warnEl.textContent=`⚠ NOTE: This indicator was previously flagged as SUSPICIOUS (risk: ${match.risk_score}).`; }
+    else { warnEl.style.display='none'; }
+  }, 500);
+}
+
+async function loadArtSettings() {
+  const el = document.getElementById('art-settings-sources');
+  if (!el) return;
+  const d = await G('/api/ioc-store/stats');
+  if (!d?.enrichment_sources) return;
+  el.innerHTML = (d.enrichment_sources||[]).map(s => `
+    <div class="art-enr-source">
+      <div class="art-src-status ${s.configured?'art-src-ok':'art-src-off'}"></div>
+      <div style="flex:1">
+        <div style="font-size:12px;font-weight:600;color:var(--txt)">${esc(s.name)}</div>
+        <div style="font-size:11px;color:var(--txt3);font-family:var(--fm)">${esc(s.key)}</div>
+      </div>
+      <span style="font-size:10px;padding:2px 8px;border-radius:3px;background:${s.configured?'rgba(0,230,118,.1)':'rgba(138,176,208,.08)'};color:${s.configured?'var(--g)':'var(--txt3)'}">${s.configured?'Configured':'Not Set'}</span>
+    </div>`).join('');
+}
 </script>
 
 <!-- UEBA Graph Tooltip -->

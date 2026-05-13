@@ -568,6 +568,82 @@ async function initSchema() {
     )`,
     `CREATE INDEX IF NOT EXISTS idx_lsh_first_seen ON log_source_history(first_seen DESC)`,
     `CREATE INDEX IF NOT EXISTS idx_lsh_notified   ON log_source_history(notified)`,
+
+    // ── Artifacts & IOC Intelligence ─────────────────────────────
+    `CREATE TABLE IF NOT EXISTS ioc_store (
+      id               SERIAL PRIMARY KEY,
+      indicator        TEXT NOT NULL,
+      ioc_type         VARCHAR(50) NOT NULL,
+      reputation       VARCHAR(20) DEFAULT 'unknown',
+      confidence       INT DEFAULT 0,
+      risk_score       INT DEFAULT 0,
+      source           VARCHAR(100) DEFAULT 'manual',
+      source_ref       TEXT,
+      tags             TEXT[] DEFAULT '{}',
+      notes            TEXT,
+      mitre_techniques TEXT[] DEFAULT '{}',
+      threat_actors    TEXT[] DEFAULT '{}',
+      malware_families TEXT[] DEFAULT '{}',
+      is_whitelisted   BOOLEAN DEFAULT FALSE,
+      enriched_at      TIMESTAMPTZ,
+      first_seen       TIMESTAMPTZ DEFAULT NOW(),
+      last_seen        TIMESTAMPTZ DEFAULT NOW(),
+      created_by       TEXT,
+      created_at       TIMESTAMPTZ DEFAULT NOW(),
+      updated_at       TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(indicator, ioc_type)
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_ioc_indicator   ON ioc_store(indicator)`,
+    `CREATE INDEX IF NOT EXISTS idx_ioc_type        ON ioc_store(ioc_type)`,
+    `CREATE INDEX IF NOT EXISTS idx_ioc_reputation  ON ioc_store(reputation)`,
+    `CREATE INDEX IF NOT EXISTS idx_ioc_risk        ON ioc_store(risk_score DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_ioc_last_seen   ON ioc_store(last_seen DESC)`,
+    `CREATE TABLE IF NOT EXISTS ioc_enrichments (
+      id         SERIAL PRIMARY KEY,
+      ioc_id     INT REFERENCES ioc_store(id) ON DELETE CASCADE,
+      source     VARCHAR(50) NOT NULL,
+      result     JSONB,
+      status     VARCHAR(20) DEFAULT 'pending',
+      error      TEXT,
+      fetched_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(ioc_id, source)
+    )`,
+    `CREATE TABLE IF NOT EXISTS ioc_relations (
+      id           SERIAL PRIMARY KEY,
+      ioc_id       INT REFERENCES ioc_store(id) ON DELETE CASCADE,
+      entity_type  VARCHAR(50) NOT NULL,
+      entity_id    TEXT NOT NULL,
+      entity_label TEXT,
+      rel_type     VARCHAR(50) DEFAULT 'observed_in',
+      created_at   TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(ioc_id, entity_type, entity_id)
+    )`,
+    `CREATE TABLE IF NOT EXISTS ioc_whitelist (
+      id           SERIAL PRIMARY KEY,
+      indicator    TEXT NOT NULL,
+      ioc_type     VARCHAR(50) NOT NULL,
+      category     VARCHAR(50) NOT NULL,
+      reason       TEXT,
+      added_by     TEXT,
+      approved_by  TEXT,
+      expires_at   TIMESTAMPTZ,
+      enabled      BOOLEAN DEFAULT TRUE,
+      risk_warning TEXT,
+      created_at   TIMESTAMPTZ DEFAULT NOW(),
+      updated_at   TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(indicator, ioc_type)
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_wl_indicator ON ioc_whitelist(indicator)`,
+    `CREATE INDEX IF NOT EXISTS idx_wl_enabled   ON ioc_whitelist(enabled)`,
+    `CREATE TABLE IF NOT EXISTS ioc_whitelist_audit (
+      id           SERIAL PRIMARY KEY,
+      whitelist_id INT,
+      action       VARCHAR(20) NOT NULL,
+      performed_by TEXT,
+      details      JSONB,
+      created_at   TIMESTAMPTZ DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_wla_wid ON ioc_whitelist_audit(whitelist_id)`,
   ];
 
   for (const q of queries) {
@@ -1879,6 +1955,261 @@ async function ping() {
   } catch { return false; }
 }
 
+// ── Artifacts / IOC Store ─────────────────────────────────────
+async function upsertIOC(indicator, iocType, data = {}) {
+  const r = await pool.query(
+    `INSERT INTO ioc_store
+       (indicator, ioc_type, reputation, confidence, risk_score, source, source_ref,
+        tags, notes, mitre_techniques, threat_actors, malware_families, created_by,
+        first_seen, last_seen)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,NOW(),NOW())
+     ON CONFLICT (indicator, ioc_type) DO UPDATE
+       SET reputation=EXCLUDED.reputation, confidence=EXCLUDED.confidence,
+           risk_score=EXCLUDED.risk_score, source=EXCLUDED.source,
+           source_ref=EXCLUDED.source_ref, tags=EXCLUDED.tags,
+           notes=EXCLUDED.notes, mitre_techniques=EXCLUDED.mitre_techniques,
+           threat_actors=EXCLUDED.threat_actors, malware_families=EXCLUDED.malware_families,
+           last_seen=NOW(), updated_at=NOW()
+     RETURNING *, (xmax = 0) AS is_insert`,
+    [indicator, iocType,
+     data.reputation || 'unknown', data.confidence || 0, data.risk_score || 0,
+     data.source || 'manual', data.source_ref || null,
+     data.tags || [], data.notes || null,
+     data.mitre_techniques || [], data.threat_actors || [], data.malware_families || [],
+     data.created_by || null]
+  );
+  return r.rows[0];
+}
+
+async function getIOC(id) {
+  const r = await pool.query(`SELECT * FROM ioc_store WHERE id=$1`, [id]);
+  return r.rows[0] || null;
+}
+
+async function listIOCs({ page = 1, page_size = 50, ioc_type, reputation, q, sort_by = 'last_seen', sort_dir = 'desc' } = {}) {
+  const ALLOWED_SORT = { last_seen: 'last_seen', first_seen: 'first_seen', risk_score: 'risk_score', created_at: 'created_at', indicator: 'indicator' };
+  const col = ALLOWED_SORT[sort_by] || 'last_seen';
+  const dir = sort_dir === 'asc' ? 'ASC' : 'DESC';
+  page_size = Math.min(parseInt(page_size) || 50, 200);
+  const offset = (Math.max(parseInt(page) || 1, 1) - 1) * page_size;
+  const conditions = ['1=1'];
+  const vals = [];
+  if (ioc_type) { conditions.push(`ioc_type=$${vals.push(ioc_type)}`); }
+  if (reputation) { conditions.push(`reputation=$${vals.push(reputation)}`); }
+  if (q) { conditions.push(`(indicator ILIKE $${vals.push('%'+q+'%')} OR notes ILIKE $${vals.length})`); }
+  const where = conditions.join(' AND ');
+  vals.push(page_size, offset);
+  const r = await pool.query(
+    `SELECT *, COUNT(*) OVER() AS total_count FROM ioc_store WHERE ${where}
+     ORDER BY ${col} ${dir} LIMIT $${vals.length - 1} OFFSET $${vals.length}`,
+    vals
+  );
+  return { rows: r.rows, total: parseInt(r.rows[0]?.total_count || 0) };
+}
+
+async function updateIOC(id, data) {
+  const allowed = ['reputation','confidence','risk_score','tags','notes','mitre_techniques','threat_actors','malware_families','is_whitelisted','enriched_at','source','source_ref'];
+  const sets = [], vals = [];
+  for (const [k, v] of Object.entries(data)) {
+    if (allowed.includes(k)) { vals.push(v); sets.push(`${k}=$${vals.length}`); }
+  }
+  if (!sets.length) return null;
+  vals.push(id);
+  const r = await pool.query(
+    `UPDATE ioc_store SET ${sets.join(',')},updated_at=NOW() WHERE id=$${vals.length} RETURNING *`, vals
+  );
+  return r.rows[0] || null;
+}
+
+async function deleteIOC(id) {
+  await pool.query(`DELETE FROM ioc_store WHERE id=$1`, [id]);
+}
+
+async function getIOCStats() {
+  const r = await pool.query(`
+    SELECT
+      COUNT(*)                                              AS total,
+      COUNT(*) FILTER (WHERE reputation='malicious')        AS malicious,
+      COUNT(*) FILTER (WHERE reputation='suspicious')       AS suspicious,
+      COUNT(*) FILTER (WHERE reputation='trusted')          AS trusted,
+      COUNT(*) FILTER (WHERE reputation='unknown')          AS unknown_rep,
+      COUNT(*) FILTER (WHERE enriched_at IS NOT NULL)       AS enriched,
+      COUNT(*) FILTER (WHERE last_seen > NOW()-INTERVAL '24h') AS seen_24h,
+      COUNT(*) FILTER (WHERE first_seen > NOW()-INTERVAL '24h') AS new_24h
+    FROM ioc_store`);
+  const byType = await pool.query(
+    `SELECT ioc_type, COUNT(*) AS cnt FROM ioc_store GROUP BY ioc_type ORDER BY cnt DESC`
+  );
+  return { summary: r.rows[0], by_type: byType.rows };
+}
+
+async function saveIOCEnrichment(iocId, source, result, status, error) {
+  const r = await pool.query(
+    `INSERT INTO ioc_enrichments (ioc_id, source, result, status, error, fetched_at)
+     VALUES ($1,$2,$3,$4,$5,NOW())
+     ON CONFLICT (ioc_id, source) DO UPDATE
+       SET result=$3, status=$4, error=$5, fetched_at=NOW()
+     RETURNING *`,
+    [iocId, source, result ? JSON.stringify(result) : null, status || 'success', error || null]
+  );
+  // Stamp enriched_at on parent
+  if (status === 'success') {
+    await pool.query(`UPDATE ioc_store SET enriched_at=NOW(), updated_at=NOW() WHERE id=$1`, [iocId]);
+  }
+  return r.rows[0];
+}
+
+async function getIOCEnrichments(iocId) {
+  const r = await pool.query(
+    `SELECT * FROM ioc_enrichments WHERE ioc_id=$1 ORDER BY fetched_at DESC`, [iocId]
+  );
+  return r.rows;
+}
+
+async function addIOCRelation(iocId, entityType, entityId, entityLabel, relType) {
+  const r = await pool.query(
+    `INSERT INTO ioc_relations (ioc_id, entity_type, entity_id, entity_label, rel_type)
+     VALUES ($1,$2,$3,$4,$5)
+     ON CONFLICT (ioc_id, entity_type, entity_id) DO UPDATE SET entity_label=$4, rel_type=$5
+     RETURNING *`,
+    [iocId, entityType, entityId, entityLabel || null, relType || 'observed_in']
+  );
+  return r.rows[0];
+}
+
+async function getIOCRelations(iocId) {
+  const r = await pool.query(
+    `SELECT * FROM ioc_relations WHERE ioc_id=$1 ORDER BY created_at DESC`, [iocId]
+  );
+  return r.rows;
+}
+
+async function listIOCsByEntity(entityType, entityId) {
+  const r = await pool.query(
+    `SELECT s.*, r.rel_type, r.entity_label FROM ioc_store s
+     JOIN ioc_relations r ON r.ioc_id=s.id
+     WHERE r.entity_type=$1 AND r.entity_id=$2 ORDER BY s.risk_score DESC`,
+    [entityType, entityId]
+  );
+  return r.rows;
+}
+
+// ── IOC Whitelist ─────────────────────────────────────────────
+async function createWhitelistEntry(data, username) {
+  const r = await pool.query(
+    `INSERT INTO ioc_whitelist
+       (indicator, ioc_type, category, reason, added_by, approved_by, expires_at, enabled, risk_warning)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+    [data.indicator, data.ioc_type, data.category, data.reason || null,
+     username, data.approved_by || null, data.expires_at || null,
+     data.enabled !== false, data.risk_warning || null]
+  );
+  await pool.query(
+    `INSERT INTO ioc_whitelist_audit (whitelist_id, action, performed_by, details)
+     VALUES ($1,'created',$2,$3)`,
+    [r.rows[0].id, username, JSON.stringify(r.rows[0])]
+  );
+  // Mark IOC as whitelisted if it exists
+  await pool.query(
+    `UPDATE ioc_store SET is_whitelisted=TRUE, updated_at=NOW()
+     WHERE indicator=$1 AND ioc_type=$2`, [data.indicator, data.ioc_type]
+  );
+  return r.rows[0];
+}
+
+async function updateWhitelistEntry(id, data, username) {
+  const old = await pool.query(`SELECT * FROM ioc_whitelist WHERE id=$1`, [id]);
+  if (!old.rows[0]) return null;
+  const allowed = ['category','reason','approved_by','expires_at','enabled','risk_warning'];
+  const sets = [], vals = [];
+  for (const [k, v] of Object.entries(data)) {
+    if (allowed.includes(k)) { vals.push(v); sets.push(`${k}=$${vals.length}`); }
+  }
+  if (!sets.length) return old.rows[0];
+  vals.push(id);
+  const r = await pool.query(
+    `UPDATE ioc_whitelist SET ${sets.join(',')},updated_at=NOW() WHERE id=$${vals.length} RETURNING *`, vals
+  );
+  await pool.query(
+    `INSERT INTO ioc_whitelist_audit (whitelist_id, action, performed_by, details)
+     VALUES ($1,$2,$3,$4)`,
+    [id, data.enabled !== undefined ? (data.enabled ? 'enabled' : 'disabled') : 'updated',
+     username, JSON.stringify({ old: old.rows[0], new: r.rows[0] })]
+  );
+  return r.rows[0];
+}
+
+async function deleteWhitelistEntry(id, username) {
+  const old = await pool.query(`SELECT * FROM ioc_whitelist WHERE id=$1`, [id]);
+  if (!old.rows[0]) return false;
+  await pool.query(`DELETE FROM ioc_whitelist WHERE id=$1`, [id]);
+  await pool.query(
+    `INSERT INTO ioc_whitelist_audit (whitelist_id, action, performed_by, details)
+     VALUES ($1,'deleted',$2,$3)`,
+    [id, username, JSON.stringify(old.rows[0])]
+  );
+  await pool.query(
+    `UPDATE ioc_store SET is_whitelisted=FALSE, updated_at=NOW()
+     WHERE indicator=$1 AND ioc_type=$2`,
+    [old.rows[0].indicator, old.rows[0].ioc_type]
+  );
+  return true;
+}
+
+async function listWhitelist({ page = 1, page_size = 50, ioc_type, category, q, show_expired = false } = {}) {
+  page_size = Math.min(parseInt(page_size) || 50, 200);
+  const offset = (Math.max(parseInt(page) || 1, 1) - 1) * page_size;
+  const conditions = ['1=1'];
+  const vals = [];
+  if (ioc_type) { conditions.push(`ioc_type=$${vals.push(ioc_type)}`); }
+  if (category) { conditions.push(`category=$${vals.push(category)}`); }
+  if (q) { conditions.push(`indicator ILIKE $${vals.push('%'+q+'%')}`); }
+  if (!show_expired) { conditions.push(`(expires_at IS NULL OR expires_at > NOW())`); }
+  const where = conditions.join(' AND ');
+  vals.push(page_size, offset);
+  const r = await pool.query(
+    `SELECT *, COUNT(*) OVER() AS total_count FROM ioc_whitelist
+     WHERE ${where} ORDER BY created_at DESC LIMIT $${vals.length-1} OFFSET $${vals.length}`,
+    vals
+  );
+  return { rows: r.rows, total: parseInt(r.rows[0]?.total_count || 0) };
+}
+
+async function getWhitelistEntry(id) {
+  const r = await pool.query(`SELECT * FROM ioc_whitelist WHERE id=$1`, [id]);
+  return r.rows[0] || null;
+}
+
+async function checkWhitelisted(indicator, iocType) {
+  const r = await pool.query(
+    `SELECT id, category, reason, expires_at FROM ioc_whitelist
+     WHERE indicator=$1 AND (ioc_type=$2 OR ioc_type='any')
+       AND enabled=TRUE AND (expires_at IS NULL OR expires_at > NOW())
+     LIMIT 1`,
+    [indicator, iocType]
+  );
+  return r.rows[0] || null;
+}
+
+async function getWhitelistAudit(whitelistId) {
+  const r = await pool.query(
+    `SELECT * FROM ioc_whitelist_audit WHERE whitelist_id=$1 ORDER BY created_at DESC LIMIT 50`,
+    [whitelistId]
+  );
+  return r.rows;
+}
+
+async function bulkImportWhitelist(entries, username) {
+  let imported = 0, skipped = 0;
+  for (const e of entries) {
+    try {
+      await createWhitelistEntry(e, username);
+      imported++;
+    } catch { skipped++; }
+  }
+  return { imported, skipped };
+}
+
 // ── Log Source Onboarding History ────────────────────────────
 async function upsertLogSourceHistory(src) {
   const r = await pool.query(
@@ -2075,6 +2406,27 @@ module.exports = {
   getUnnotifiedLogSources,
   markLogSourcesNotified,
   getLogSourceHistory,
+  // IOC Store
+  upsertIOC,
+  getIOC,
+  listIOCs,
+  updateIOC,
+  deleteIOC,
+  getIOCStats,
+  saveIOCEnrichment,
+  getIOCEnrichments,
+  addIOCRelation,
+  getIOCRelations,
+  listIOCsByEntity,
+  // IOC Whitelist
+  createWhitelistEntry,
+  updateWhitelistEntry,
+  deleteWhitelistEntry,
+  listWhitelist,
+  getWhitelistEntry,
+  checkWhitelisted,
+  getWhitelistAudit,
+  bulkImportWhitelist,
 };
 
 // ── Evidence Files CRUD ──────────────────────────────────
