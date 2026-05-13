@@ -10937,123 +10937,128 @@ async function loadArtSettings() {
 </div>
 
 <script>
-const PAGE_TITLES={dashboard:'Dashboard',agents:'Agents',alerts:'Alerts',rules:'Detection Rules',mitre:'ATT&CK Coverage','log-sources':'Log Sources',artifacts:'Artifacts & IOC',cases:'Cases','hive-alerts':'SP-CM Alerts',hunt:'Threat Hunt',ioc:'IOC Enrichment',correlate:'Correlation',threatmap:'Live Threat Map','create-rules':'Create Rules',investigation:'AI Investigation',copilot:'SOCPilots AI',langchain:'LangChain Agent',assets:'Assets',ueba:'UEBA',reports:'Reports',evidence:'Evidence Upload',darksoc:'Dark SOC',users:'User Management',settings:'Settings',notifications:'Notifications'};
-const PAGE_QUICK={dashboard:['Explain this page','What do the KPI cards mean?','What is the MITRE widget?'],alerts:['Explain this page','How do I investigate an alert?','What does severity mean?'],rules:['Explain this page','What is a rule level?','What is the MITRE column?'],'create-rules':['Explain everything','What is Generated Rule XML?','What does Test Rule do?','How do I deploy a rule?'],mitre:['Explain this page','What do the colors mean?','How do I export to Navigator?'],ueba:['Explain this page','What is an anomaly score?','What is impossible travel?'],darksoc:['Explain this page','What actions are automated?','What needs consensus approval?'],investigation:['Explain this page','How does the AI investigate?','What tools does the agent use?'],ioc:['Explain this page','What sources are queried?','What is the threat score?'],assets:['Explain this page','What is a coverage gap?','What are criticality tiers?'],copilot:['What can I ask here?','How do I attach an alert?'],langchain:['Explain the endpoints','What is the reasoning trace?'],evidence:['Explain this page','What file types are supported?','How does semantic search work?'],cases:['Explain this page','What are TLP levels?'],hunt:['Explain this page','How do I schedule a hunt?'],correlate:['Explain this page','What is a risk score?'],artifacts:['Explain this page','What is auto-ingest?','What is a threat score?']};
+(function(){
+  const PAGE_TITLES={dashboard:'Dashboard',agents:'Agents',alerts:'Alerts',rules:'Detection Rules',mitre:'ATT&CK Coverage','log-sources':'Log Sources',artifacts:'Artifacts & IOC',cases:'Cases','hive-alerts':'SP-CM Alerts',hunt:'Threat Hunt',ioc:'IOC Enrichment',correlate:'Correlation',threatmap:'Live Threat Map','create-rules':'Create Rules',investigation:'AI Investigation',copilot:'SOCPilots AI',langchain:'LangChain Agent',assets:'Assets',ueba:'UEBA',reports:'Reports',evidence:'Evidence Upload',darksoc:'Dark SOC',users:'User Management',settings:'Settings',notifications:'Notifications'};
+  const PAGE_QUICK={dashboard:['Explain this page','What do the KPI cards mean?','What is the MITRE widget?'],alerts:['Explain this page','How do I investigate an alert?','What does severity mean?'],rules:['Explain this page','What is a rule level?','What is the MITRE column?'],'create-rules':['Explain everything','What is Generated Rule XML?','What does Test Rule do?','How do I deploy a rule?'],mitre:['Explain this page','What do the colors mean?','How do I export to Navigator?'],ueba:['Explain this page','What is an anomaly score?','What is impossible travel?'],darksoc:['Explain this page','What actions are automated?','What needs consensus approval?'],investigation:['Explain this page','How does the AI investigate?','What tools does the agent use?'],ioc:['Explain this page','What sources are queried?','What is the threat score?'],assets:['Explain this page','What is a coverage gap?','What are criticality tiers?'],copilot:['What can I ask here?','How do I attach an alert?'],langchain:['Explain the endpoints','What is the reasoning trace?'],evidence:['Explain this page','What file types are supported?','How does semantic search work?'],cases:['Explain this page','What are TLP levels?'],hunt:['Explain this page','How do I schedule a hunt?'],correlate:['Explain this page','What is a risk score?'],artifacts:['Explain this page','What is auto-ingest?','What is a threat score?']};
 
-let _helpOpen=false,_helpHistory=[],_helpBusy=false;
+  let _open=false, _history=[], _busy=false, _lastPage='';
 
-function helpToggle(){
-  _helpOpen=!_helpOpen;
-  const panel=document.getElementById('help-panel');
-  if(_helpOpen){
-    panel.classList.add('open');
-    helpSetPage(CUR);
-    if(!_helpHistory.length) helpWelcome(CUR);
-    setTimeout(()=>document.getElementById('help-input').focus(),120);
-  } else {
-    panel.classList.remove('open');
+  function _panel(){return document.getElementById('help-panel');}
+  function _msgsEl(){return document.getElementById('help-msgs');}
+
+  window.helpToggle=function(){
+    try{
+      _open=!_open;
+      const panel=_panel();
+      if(_open){
+        panel.style.cssText='display:flex;animation:helpSlideIn .22s ease';
+        const cur=(typeof CUR!=='undefined')?CUR:'dashboard';
+        if(cur!==_lastPage){
+          _msgsEl().innerHTML='';
+          _history=[];
+          _lastPage=cur;
+        }
+        _setPage(cur);
+        if(!_msgsEl().children.length) _welcome(cur);
+        setTimeout(function(){document.getElementById('help-input').focus();},100);
+      } else {
+        panel.style.display='none';
+      }
+    }catch(err){console.error('[help]',err);}
+  };
+
+  function _setPage(p){
+    document.getElementById('help-hd-page').textContent=PAGE_TITLES[p]||p;
+    const chips=PAGE_QUICK[p]||['Explain this page','What are the main sections?'];
+    document.getElementById('help-quick').innerHTML=chips.map(function(c){return '<div class="hq-chip" onclick="helpAsk('+JSON.stringify(c)+')">'+esc(c)+'</div>';}).join('');
   }
-}
 
-function helpSetPage(p){
-  const title=PAGE_TITLES[p]||p;
-  document.getElementById('help-hd-page').textContent=title;
-  const chips=PAGE_QUICK[p]||['Explain this page','What are the main sections?'];
-  document.getElementById('help-quick').innerHTML=chips.map(c=>`<div class="hq-chip" onclick="helpAsk(${JSON.stringify(c)})">${esc(c)}</div>`).join('');
-}
+  function _welcome(p){
+    const title=PAGE_TITLES[p]||p;
+    _addMsg('bot','Hi! I\'m your SOCPilots page guide.\n\nYou\'re on the **'+title+'** page. Ask me anything — what each section does, how to use a feature, or what any term means.\n\nTip: use the quick buttons below, or ask **"Explain everything about this page"**');
+  }
 
-function helpWelcome(p){
-  const title=PAGE_TITLES[p]||p;
-  _helpAddMsg('bot','Hi! I\'m your SOCPilots page guide.\n\nYou\'re on the **'+title+'** page. Ask me anything — what each section does, how to use a feature, or what any term means.\n\nTip: click a quick-action chip below, or ask **"Explain everything about this page"**');
-}
+  window.helpAsk=function(q){
+    document.getElementById('help-input').value=q;
+    window.helpSend();
+  };
 
-function helpAsk(q){
-  document.getElementById('help-input').value=q;
-  helpSend();
-}
+  window.helpKey=function(e){
+    if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();window.helpSend();}
+  };
 
-function helpResize(el){
-  el.style.height='auto';
-  el.style.height=Math.min(el.scrollHeight,80)+'px';
-}
+  window.helpResize=function(el){
+    el.style.height='auto';
+    el.style.height=Math.min(el.scrollHeight,80)+'px';
+  };
 
-function helpKey(e){
-  if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();helpSend();}
-}
-
-async function helpSend(){
-  const inp=document.getElementById('help-input');
-  const q=inp.value.trim();
-  if(!q||_helpBusy) return;
-  inp.value='';inp.style.height='auto';
-  document.getElementById('help-quick').innerHTML='';
-  _helpAddMsg('user',q);
-  _helpHistory.push({role:'user',content:q});
-  _helpBusy=true;
-  document.getElementById('help-send').disabled=true;
-  const typId='typ_'+Date.now();
-  _helpAddTyping(typId);
-  try{
-    const r=await P('/api/help/chat',{page:CUR,question:q,history:_helpHistory.slice(-8)});
-    _helpRemoveTyping(typId);
-    if(r&&r.answer){
-      _helpAddMsg('bot',r.answer);
-      _helpHistory.push({role:'assistant',content:r.answer});
-    } else {
-      _helpAddMsg('bot','No response received. Ensure OPENAI_API_KEY is set in .env.');
+  window.helpSend=async function(){
+    try{
+      const inp=document.getElementById('help-input');
+      const q=inp.value.trim();
+      if(!q||_busy)return;
+      inp.value='';inp.style.height='auto';
+      document.getElementById('help-quick').innerHTML='';
+      _addMsg('user',q);
+      _history.push({role:'user',content:q});
+      _busy=true;
+      document.getElementById('help-send').disabled=true;
+      const typId='typ_'+Date.now();
+      _addTyping(typId);
+      const cur=(typeof CUR!=='undefined')?CUR:_lastPage;
+      const r=await P('/api/help/chat',{page:cur,question:q,history:_history.slice(-8)});
+      _removeTyping(typId);
+      if(r&&r.answer){
+        _addMsg('bot',r.answer);
+        _history.push({role:'assistant',content:r.answer});
+      } else {
+        _addMsg('bot','No response. Ensure OPENAI_API_KEY is set in .env');
+      }
+    }catch(err){
+      document.querySelectorAll('[id^="typ_"]').forEach(function(el){el.remove();});
+      _addMsg('bot','Connection error — help service unavailable.');
+      console.error('[help]',err);
+    }finally{
+      _busy=false;
+      document.getElementById('help-send').disabled=false;
+      document.getElementById('help-input').focus();
     }
-  }catch(e){
-    _helpRemoveTyping(typId);
-    _helpAddMsg('bot','Connection error — help service may be unavailable.');
+  };
+
+  function _renderBot(raw){
+    let t=raw.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    t=t.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>');
+    t=t.replace(/`([^`\n]+)`/g,'<code>$1</code>');
+    // convert bullet lines to li, then wrap groups in ul
+    t=t.replace(/^[•\-] (.+)$/gm,'<li>$1</li>');
+    t=t.replace(/(<\/li>)\n(<li>)/g,'$1$2');
+    t=t.replace(/(<li>(?:(?!<li>)[\s\S])*<\/li>)/g,'<ul>$1</ul>');
+    t=t.replace(/\n/g,'<br>');
+    return t;
   }
-  _helpBusy=false;
-  document.getElementById('help-send').disabled=false;
-  document.getElementById('help-input').focus();
-}
 
-function _helpRenderBot(raw){
-  // Escape HTML first, then apply simple markdown
-  let t=raw.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  // Bold
-  t=t.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>');
-  // Inline code
-  t=t.replace(/`([^`\n]+)`/g,'<code>$1</code>');
-  // Bullet lines → li items, then wrap consecutive li in ul
-  t=t.replace(/^[•\-\*] (.+)$/gm,'<li>$1</li>');
-  t=t.replace(/(<\/li>\n?<li>|<\/li><li>)/g,'</li><li>');
-  t=t.replace(/(<li>[\s\S]+?<\/li>)/g,'<ul>$1</ul>');
-  // Newlines
-  t=t.replace(/\n/g,'<br>');
-  return t;
-}
+  function _addMsg(role,text){
+    const el=_msgsEl();
+    const div=document.createElement('div');
+    div.className=role==='user'?'hm-user':'hm-bot';
+    if(role==='bot') div.innerHTML=_renderBot(text);
+    else div.textContent=text;
+    el.appendChild(div);
+    el.scrollTop=el.scrollHeight;
+  }
 
-function _helpAddMsg(role,text){
-  const el=document.getElementById('help-msgs');
-  const div=document.createElement('div');
-  div.className=role==='user'?'hm-user':'hm-bot';
-  if(role==='bot') div.innerHTML=_helpRenderBot(text);
-  else div.textContent=text;
-  el.appendChild(div);
-  el.scrollTop=el.scrollHeight;
-}
+  function _addTyping(id){
+    const el=_msgsEl();
+    const div=document.createElement('div');
+    div.className='hm-typing';div.id=id;
+    div.innerHTML='<span></span><span></span><span></span>';
+    el.appendChild(div);el.scrollTop=el.scrollHeight;
+  }
 
-function _helpAddTyping(id){
-  const el=document.getElementById('help-msgs');
-  const div=document.createElement('div');
-  div.className='hm-typing';div.id=id;
-  div.innerHTML='<span></span><span></span><span></span>';
-  el.appendChild(div);el.scrollTop=el.scrollHeight;
-}
-
-function _helpRemoveTyping(id){
-  document.getElementById(id)?.remove();
-}
-
-// Update the panel header when the analyst navigates (hooks into existing _pageLoadHooks)
-if(typeof _pageLoadHooks!=='undefined'){
-  const _origHooks=window.go;
-  window.go=function(p){if(_origHooks)_origHooks(p);if(_helpOpen)helpSetPage(p);};
-}
+  function _removeTyping(id){
+    document.getElementById(id)?.remove();
+  }
+})();
 </script>
 
 <!-- Live toast notification container (Socket.IO events) -->
