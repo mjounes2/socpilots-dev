@@ -93,15 +93,20 @@ _sync_client = httpx.Client(verify=False, timeout=30.0)
 # ── LangChain Tools (all synchronous) ───────────────────────
 
 @tool
-def search_alerts(query: str) -> str:
+def search_alerts(query: str, hours: int = 24) -> str:
     """
     Search Wazuh/OpenSearch for security alerts related to an IP, hostname, user, or keyword.
-    Input: a search string like '192.168.1.5' or 'failed login root' or 'agent_name:webserver'.
-    Returns: list of recent matching alerts with timestamp, rule, severity, agent.
+    Input:
+      query — search string like '192.168.1.5', 'failed login root', 'gsuite', 'agent_name:webserver'
+      hours — how far back to search (default 24). Use larger values like 168 (7 days) or 720 (30 days)
+              when looking for historical events, inactive integrations, or rare alert types.
+    Returns: list of matching alerts with timestamp, rule, severity, agent, and source IP.
+    Examples: search_alerts("gsuite", 168) to find Google Workspace events from the past week.
     """
     if not OPENSEARCH_URL:
         return "OpenSearch not configured"
     try:
+        lookback_hours = max(1, min(int(hours), 720))  # clamp 1h–30d
         body = {
             "size": 10,
             "sort": [{"@timestamp": {"order": "desc"}}],
@@ -111,10 +116,11 @@ def search_alerts(query: str) -> str:
                         "multi_match": {
                             "query": query,
                             "fields": ["data.srcip", "agent.name", "full_log",
-                                       "rule.description", "data.dstuser"]
+                                       "rule.description", "data.dstuser",
+                                       "data.integration", "rule.groups"]
                         }
                     }],
-                    "filter": [{"range": {"@timestamp": {"gte": "now-24h"}}}]
+                    "filter": [{"range": {"@timestamp": {"gte": f"now-{lookback_hours}h"}}}]
                 }
             }
         }
@@ -123,18 +129,23 @@ def search_alerts(query: str) -> str:
             json=body,
             auth=(OPENSEARCH_USER, OPENSEARCH_PASS)
         )
-        hits = r.json().get("hits", {}).get("hits", [])
+        data = r.json()
+        hits = data.get("hits", {}).get("hits", [])
+        total = data.get("hits", {}).get("total", {}).get("value", 0)
         if not hits:
-            return "No alerts found matching: " + query
-        results = []
+            return f"No alerts found matching '{query}' in the last {lookback_hours}h"
+        results = [f"Found {total} alert(s) matching '{query}' in the last {lookback_hours}h (showing {len(hits)}):"]
         for h in hits:
             s = h["_source"]
+            integ = s.get("data", {}).get("integration", "")
+            integ_str = f" | Integration: {integ}" if integ else ""
             results.append(
                 f"[{s.get('@timestamp','')}] Rule {s.get('rule',{}).get('id','')} "
                 f"(level {s.get('rule',{}).get('level','?')}) — "
                 f"{s.get('rule',{}).get('description','')} | "
                 f"Agent: {s.get('agent',{}).get('name','')} | "
                 f"SrcIP: {s.get('data',{}).get('srcip','')}"
+                f"{integ_str}"
             )
         return "\n".join(results)
     except Exception as e:
