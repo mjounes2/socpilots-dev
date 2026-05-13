@@ -565,25 +565,24 @@ app.get('/api/dashboard', authMW, async (req, res) => {
     const [agentAgg, hiveCases] = await Promise.allSettled([
       osSearch({
         size: 0,
+        track_total_hits: true,
         aggs: {
           agents: { terms: { field: 'agent.name', size: 100 } },
-          by_sev: { range: { field: 'rule.level',
-            ranges: [
-              { key: 'critical', from: 12 },
-              { key: 'high',     from: 8,  to: 12 },
-              { key: 'medium',   from: 5,  to: 8  },
-              { key: 'low',      to: 5 },
-            ]
-          }},
+          // Use filter aggs (not range agg) — range agg over-counts when combined with
+          // a time-range query across many indices (OpenSearch fielddata scoping issue)
+          sev_critical: { filter: { range: { 'rule.level': { gte: 12          } } } },
+          sev_high:     { filter: { range: { 'rule.level': { gte: 8,  lt: 12  } } } },
+          sev_medium:   { filter: { range: { 'rule.level': { gte: 5,  lt: 8   } } } },
+          sev_low:      { filter: { range: { 'rule.level': {           lt: 5   } } } },
           over_time: {
             date_histogram: { field: '@timestamp', calendar_interval: calInterval, min_doc_count: 0,
               extended_bounds: { min: boundsMin, max: boundsMax }
             },
             aggs: {
-              critical: { filter: { range: { 'rule.level': { gte: 12 } } } },
-              high:     { filter: { range: { 'rule.level': { gte: 8, lt: 12 } } } },
-              medium:   { filter: { range: { 'rule.level': { gte: 5, lt: 8  } } } },
-              low:      { filter: { range: { 'rule.level': { lt: 5 } } } },
+              critical: { filter: { range: { 'rule.level': { gte: 12         } } } },
+              high:     { filter: { range: { 'rule.level': { gte: 8, lt: 12  } } } },
+              medium:   { filter: { range: { 'rule.level': { gte: 5, lt: 8   } } } },
+              low:      { filter: { range: { 'rule.level': {          lt: 5   } } } },
             }
           }
         },
@@ -595,11 +594,12 @@ app.get('/api/dashboard', authMW, async (req, res) => {
       ]).catch(() => null),
     ]);
 
-    const aggs    = agentAgg.value?.aggregations;
-    const sevBkts = aggs?.by_sev?.buckets || [];
-    const getSev  = key => sevBkts.find(b => b.key === key)?.doc_count || 0;
+    const aggs      = agentAgg.value?.aggregations;
     const periodCount = agentAgg.value?.hits?.total?.value || 0;
-    const critCount   = getSev('critical');
+    const critCount   = aggs?.sev_critical?.doc_count || 0;
+    const highCount   = aggs?.sev_high?.doc_count     || 0;
+    const medCount    = aggs?.sev_medium?.doc_count   || 0;
+    const lowCount    = aggs?.sev_low?.doc_count      || 0;
     const timeline = (aggs?.over_time?.buckets || []).map(b => ({
       time:     b.key_as_string || new Date(b.key).toISOString(),
       count:    b.doc_count,
@@ -614,13 +614,13 @@ app.get('/api/dashboard', authMW, async (req, res) => {
       totalAlerts:    periodCount,
       alerts24h:      periodCount,
       criticalAlerts: critCount,
-      highAlerts:     getSev('high'),
-      mediumAlerts:   getSev('medium'),
-      lowAlerts:      getSev('low'),
+      highAlerts:     highCount,
+      mediumAlerts:   medCount,
+      lowAlerts:      lowCount,
       totalAgents:    aggs?.agents?.buckets?.length || 0,
       openCases:      Array.isArray(hiveCases.value) ? hiveCases.value.length : 0,
       timeline,
-      sevBreakdown: { critical: critCount, high: getSev('high'), medium: getSev('medium'), low: getSev('low') },
+      sevBreakdown: { critical: critCount, high: highCount, medium: medCount, low: lowCount },
       periodLabel: fromTs
         ? `${new Date(fromTs).toLocaleDateString()} – ${toTs ? new Date(toTs).toLocaleDateString() : 'now'}`
         : `Last ${hours >= 720 ? Math.round(hours/720)+'mo' : hours >= 168 ? Math.round(hours/168)+'w' : hours >= 24 ? Math.round(hours/24)+'d' : hours+'h'}`,
