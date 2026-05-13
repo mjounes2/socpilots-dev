@@ -5854,6 +5854,118 @@ async function enrichIOC(ioc) {
   return { results, reputation, risk_score: Math.round(risk) };
 }
 
+// ── Alert → IOC auto-ingestion job ────────────────────────────────
+let _iocIngestRunning = false;
+let _iocIngestLastRun = null;
+let _iocIngestLastCount = 0;
+
+async function autoIngestAlerts(windowMinutes = 15) {
+  if (_iocIngestRunning) return;
+  _iocIngestRunning = true;
+  let newCount = 0, updCount = 0;
+  try {
+    // Reload whitelist before starting
+    await refreshWlCache();
+
+    // Query OpenSearch for alerts in the window — pull key IOC fields
+    const since = `now-${windowMinutes}m`;
+    let r;
+    try {
+      r = await osSearch({
+        size: 500,
+        // Request parent objects so all subfields are included
+        _source: ['@timestamp', 'rule', 'agent', 'data', 'syscheck', 'full_log', 'srcip', 'location'],
+        query: { bool: { must: [
+          { range: { '@timestamp': { gte: since } } },
+          { range: { 'rule.level': { gte: 3 } } },   // skip informational
+        ]}}
+      });
+    } catch(e) {
+      console.error('[ioc-ingest] OpenSearch error:', e.message);
+      return;
+    }
+
+    const hits = r.hits?.hits || [];
+    const seen = new Set();  // dedup within this run
+
+    for (const hit of hits) {
+      const s = hit._source || {};
+      const ruleId = s.rule?.id || 'unknown';
+      const ruleLevel = s.rule?.level || 0;
+      const agentName = s.agent?.name || '';
+      const candidates = [];
+
+      // ── Structured IP fields ────────────────────────────────────
+      const ipFields = [
+        s.data?.srcip, s.data?.dstip, s.data?.dest_ip, s.data?.src_ip,
+        s.data?.win?.eventdata?.sourceIp, s.data?.win?.eventdata?.destinationIp,
+      ];
+      for (const ip of ipFields) {
+        if (ip && typeof ip === 'string' && !PRIVATE_IP_RE.test(ip))
+          candidates.push({ indicator: ip, ioc_type: 'ip' });
+      }
+
+      // ── Hash fields (syscheck) ──────────────────────────────────
+      const hashes = [
+        [s.syscheck?.sha256_after, 'sha256'], [s.syscheck?.sha256_before, 'sha256'],
+        [s.syscheck?.sha1_after,   'sha1'],   [s.syscheck?.sha1_before,   'sha1'],
+        [s.syscheck?.md5_after,    'md5'],    [s.syscheck?.md5_before,    'md5'],
+      ];
+      for (const [h, ht] of hashes) {
+        if (h && typeof h === 'string') candidates.push({ indicator: h.toLowerCase(), ioc_type: ht });
+      }
+
+      // ── URL / domain fields ─────────────────────────────────────
+      if (s.data?.url)                         candidates.push({ indicator: s.data.url, ioc_type: 'url' });
+      if (s.data?.win?.eventdata?.queryName)   candidates.push({ indicator: s.data.win.eventdata.queryName, ioc_type: 'domain' });
+      if (s.data?.win?.eventdata?.destinationHostname) candidates.push({ indicator: s.data.win.eventdata.destinationHostname, ioc_type: 'hostname' });
+
+      // ── Text extraction from description + full_log ─────────────
+      const textSources = [s.rule?.description, s.full_log].filter(Boolean).join(' ');
+      if (textSources) {
+        const extracted = extractIOCsFromText(textSources);
+        for (const e of extracted) candidates.push(e);
+      }
+
+      // ── Upsert each unique candidate ────────────────────────────
+      for (const { indicator, ioc_type } of candidates) {
+        const ind = String(indicator).trim();
+        if (!ind || ind.length < 3 || ind.length > 512) continue;
+        const key = `${ioc_type}:${ind.toLowerCase()}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        if (await isWhitelisted(ind)) continue;
+
+        try {
+          const result = await db.upsertIOC(ind, ioc_type, {
+            reputation: 'unknown', source: 'alert',
+            source_ref: `rule:${ruleId}`,
+            notes: `Auto-extracted from Wazuh rule ${ruleId} (level ${ruleLevel}) on agent ${agentName}`,
+            created_by: 'system',
+          });
+          if (result?.is_insert) newCount++;
+          else updCount++;
+        } catch(e) { /* skip individual upsert errors */ }
+      }
+    }
+
+    _iocIngestLastRun = new Date().toISOString();
+    _iocIngestLastCount = newCount;
+    if (newCount > 0 || updCount > 0)
+      console.log(`[ioc-ingest] window=${windowMinutes}m hits=${hits.length} new=${newCount} updated=${updCount}`);
+
+    // Create notification if significant new IOCs found
+    if (newCount >= 5) {
+      db.createNotification('investigation', 'IOC Auto-Ingest', `${newCount} new indicators extracted from ${hits.length} alerts`, 'low', 'system', {}).catch(()=>{});
+    }
+  } catch(e) {
+    console.error('[ioc-ingest] job error:', e.message);
+  } finally {
+    _iocIngestRunning = false;
+  }
+  return { new: newCount, updated: updCount };
+}
+
 // ── IOC Store routes ──────────────────────────────────────────────
 app.get('/api/ioc-store/stats', authMW, async (req, res) => {
   try {
@@ -5871,8 +5983,20 @@ app.get('/api/ioc-store/stats', authMW, async (req, res) => {
       { name: 'MISP',            key: 'MISP_URL',               configured: !!(process.env.MISP_URL && process.env.MISP_API_KEY) },
       { name: 'CrowdSec',        key: 'CROWDSEC_API_KEY',       configured: !!process.env.CROWDSEC_API_KEY, note: 'Commercial — key required' },
     ];
-    res.json({ ...stats, enrichment_sources: sources });
+    res.json({
+      ...stats,
+      enrichment_sources: sources,
+      ingest: { last_run: _iocIngestLastRun, running: _iocIngestRunning, last_new: _iocIngestLastCount },
+    });
   } catch(e) { console.error('[ioc-store/stats]', e.message); res.status(502).json({ error: e.message }); }
+});
+
+// Manual trigger — runs the ingest job now (returns immediately if already running)
+app.post('/api/ioc-store/ingest-alerts', authMW, requireRole('l2'), async (req, res) => {
+  if (_iocIngestRunning) return res.json({ status: 'already_running' });
+  const window = Math.min(parseInt(req.body?.window_minutes) || 60, 1440); // cap at 24h
+  autoIngestAlerts(window).catch(() => {});
+  res.json({ status: 'started', window_minutes: window });
 });
 
 app.get('/api/ioc-store', authMW, async (req, res) => {
@@ -6103,6 +6227,11 @@ app.get('*', (req, res) => res.sendFile(path.join(__dirname, '../../frontend/ind
 db.initSchema()
   .then(() => seedUsersFromEnv())
   .then(() => startHuntScheduler())
+  .then(() => {
+    // IOC auto-ingest: every 15 min; first run 2 min after boot to let OpenSearch warm up
+    setInterval(() => autoIngestAlerts(15), 15 * 60_000);
+    setTimeout(()  => autoIngestAlerts(60), 2 * 60_000);  // first run: last 60 min
+  })
   .catch(e => console.error('[DB] init failed:', e.message));
 ueba.initSchema()
   .then(() => ueba.backfillRiskScores())

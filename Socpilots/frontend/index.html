@@ -2798,6 +2798,21 @@ sshd: Failed" style="min-height:80px"></textarea></div>
 
   <!-- ── OVERVIEW ── -->
   <div id="art-panel-overview">
+    <!-- Auto-ingest status bar -->
+    <div class="card" style="padding:10px 16px;margin-bottom:12px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+      <div style="display:flex;align-items:center;gap:8px;flex:1">
+        <div id="art-ingest-dot" style="width:8px;height:8px;border-radius:50%;background:var(--txt3);flex-shrink:0"></div>
+        <div>
+          <div style="font-size:11px;font-weight:600;color:var(--txt)">SIEM → IOC Auto-Ingest</div>
+          <div style="font-size:10px;color:var(--txt3)" id="art-ingest-status">Runs every 15 min — scanning alerts for IPs, hashes, domains, URLs</div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <div style="font-size:10px;color:var(--txt3)">Last run: <span id="art-ingest-last" style="color:var(--txt2)">—</span></div>
+        <div style="font-size:10px;color:var(--txt3)">New: <span id="art-ingest-new" style="color:var(--c);font-family:var(--fm)">—</span></div>
+        <button class="btn btn-sm" id="art-ingest-btn" onclick="artTriggerIngest()" style="font-size:10px">↻ Sync Now</button>
+      </div>
+    </div>
     <div class="art-kpi-grid">
       <div class="kpi cl"><div class="kpi-lbl">Total IOCs</div><div class="kpi-val" id="art-kpi-total">—</div><div class="kpi-sub">in database</div></div>
       <div class="kpi cr"><div class="kpi-lbl">Malicious</div><div class="kpi-val" id="art-kpi-mal">—</div><div class="kpi-sub">confirmed threats</div></div>
@@ -2818,7 +2833,10 @@ sshd: Failed" style="min-height:80px"></textarea></div>
     </div>
     <!-- Recent malicious IOCs -->
     <div class="card" style="padding:0">
-      <div class="card-hd" style="padding:12px 16px"><div class="card-ttl">RECENT HIGH-RISK IOCs</div></div>
+      <div class="card-hd" style="padding:12px 16px">
+        <div class="card-ttl">RECENT HIGH-RISK IOCs</div>
+        <div style="font-size:10px;color:var(--txt3)" id="art-alert-source-lbl"></div>
+      </div>
       <div class="tbl"><table style="width:100%;border-collapse:collapse">
         <thead><tr style="border-bottom:1px solid var(--b1)">
           <th style="padding:8px 12px;text-align:left;font-size:10px;color:var(--txt2);font-weight:600">INDICATOR</th>
@@ -10311,6 +10329,21 @@ function switchArtTab(tab) {
   if (tab === 'settings')   loadArtSettings();
 }
 
+async function artTriggerIngest() {
+  const btn = document.getElementById('art-ingest-btn');
+  const lbl = document.getElementById('art-ingest-status');
+  if (btn) { btn.disabled = true; btn.textContent = 'Syncing…'; }
+  if (lbl) lbl.textContent = 'Scanning last 60 minutes of alerts…';
+  const r = await P('/api/ioc-store/ingest-alerts', { window_minutes: 60 });
+  if (btn) { btn.disabled = false; btn.textContent = '↻ Sync Now'; }
+  if (r?.status === 'already_running') {
+    if (lbl) lbl.textContent = 'Already running — check back in a moment';
+  } else {
+    if (lbl) lbl.textContent = 'Sync started — refreshing in 5 seconds…';
+    setTimeout(() => loadArtStats(), 5000);
+  }
+}
+
 async function loadArtStats() {
   const d = await G('/api/ioc-store/stats');
   if (!d) return;
@@ -10323,6 +10356,18 @@ async function loadArtStats() {
   // Nav badge
   const nb = document.getElementById('n-artifacts');
   if (nb) { nb.textContent = s.malicious || 0; nb.style.display = (s.malicious||0) > 0 ? '' : 'none'; }
+  // Ingest status bar
+  const ingest = d.ingest || {};
+  const dot = document.getElementById('art-ingest-dot');
+  const lbl = document.getElementById('art-ingest-status');
+  const lastEl = document.getElementById('art-ingest-last');
+  const newEl = document.getElementById('art-ingest-new');
+  if (dot) dot.style.background = ingest.running ? 'var(--o)' : (ingest.last_run ? 'var(--g)' : 'var(--txt3)');
+  if (lbl) lbl.textContent = ingest.running ? 'Running now — scanning alerts…' : 'Auto-runs every 15 min — scanning alerts for IPs, hashes, domains, URLs';
+  if (lastEl) lastEl.textContent = ingest.last_run ? fmtDate(ingest.last_run) : 'Not yet run (runs 2 min after boot)';
+  if (newEl) newEl.textContent = ingest.last_run ? String(ingest.last_new || 0) : '—';
+  const srcLbl = document.getElementById('art-alert-source-lbl');
+  if (srcLbl && s.total > 0) srcLbl.textContent = `${s.total} total IOCs — ${s.seen_24h || 0} seen in last 24h`;
   // Type distribution bars
   const typesEl = document.getElementById('art-type-bars');
   if (typesEl && d.by_type?.length) {
