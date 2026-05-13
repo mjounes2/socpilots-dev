@@ -760,9 +760,9 @@ if(localStorage.getItem("soc_dim")==="1")document.body.classList.add("dim");
   <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;padding:8px 12px;background:var(--bg1);border:1px solid var(--b1);border-radius:4px;flex-wrap:wrap">
     <span style="font-size:9px;font-family:var(--fm);color:var(--txt3);letter-spacing:1px;white-space:nowrap">TIME RANGE</span>
     <div style="display:flex;gap:3px;flex-wrap:wrap" id="dash-preset-btns">
-      <button class="btn btn-h btn-sm" data-hrs="1"   onclick="setDashRange(1)">1h</button>
+      <button class="btn btn-p btn-sm" data-hrs="1"   onclick="setDashRange(1)">1h</button>
       <button class="btn btn-h btn-sm" data-hrs="6"   onclick="setDashRange(6)">6h</button>
-      <button class="btn btn-p btn-sm" data-hrs="24"  onclick="setDashRange(24)">24h</button>
+      <button class="btn btn-h btn-sm" data-hrs="24"  onclick="setDashRange(24)">24h</button>
       <button class="btn btn-h btn-sm" data-hrs="168" onclick="setDashRange(168)">7d</button>
       <button class="btn btn-h btn-sm" data-hrs="720" onclick="setDashRange(720)">30d</button>
       <button class="btn btn-h btn-sm" data-hrs="2160" onclick="setDashRange(2160)">90d</button>
@@ -777,13 +777,29 @@ if(localStorage.getItem("soc_dim")==="1")document.body.classList.add("dim");
     <span style="font-size:10px;font-family:var(--fm);color:var(--c);margin-left:4px" id="dash-range-lbl">Last 24h</span>
   </div>
   <!-- Row 1: Alert KPIs -->
-  <div class="kpi-row" style="grid-template-columns:repeat(4,1fr) 1.2fr 1.2fr;margin-bottom:10px">
-    <div class="kpi cl"><div class="kpi-lbl">Total Alerts</div><div class="kpi-val" id="k-total">—</div><div class="kpi-sub">all time</div></div>
-    <div class="kpi cr"><div class="kpi-lbl">Period Alerts</div><div class="kpi-val" id="k-24h">—</div><div class="kpi-sub" id="k-24h-sub">last 24 hours</div></div>
-    <div class="kpi co"><div class="kpi-lbl">Critical</div><div class="kpi-val" id="k-crit">—</div><div class="kpi-sub">level ≥ 12</div></div>
-    <div class="kpi cy"><div class="kpi-lbl">High</div><div class="kpi-val" id="k-high">—</div><div class="kpi-sub">level 8–11</div></div>
+  <div class="kpi-row" style="grid-template-columns:repeat(6,1fr);margin-bottom:10px">
+    <div class="kpi cl" onclick="go('alerts')" style="cursor:pointer" title="View alerts">
+      <div class="kpi-lbl">Total Alerts</div>
+      <div class="kpi-val" id="k-total">—</div>
+      <div class="kpi-sub" id="k-24h-sub">last 1 hour</div>
+    </div>
+    <div class="kpi cr" onclick="go('alerts')" style="cursor:pointer" title="View critical alerts">
+      <div class="kpi-lbl">Critical</div>
+      <div class="kpi-val" id="k-crit">—</div>
+      <div class="kpi-sub">level ≥ 12</div>
+    </div>
+    <div class="kpi co" onclick="go('alerts')" style="cursor:pointer" title="View high alerts">
+      <div class="kpi-lbl">High</div>
+      <div class="kpi-val" id="k-high">—</div>
+      <div class="kpi-sub">level 8–11</div>
+    </div>
+    <div class="kpi cy" onclick="go('alerts')" style="cursor:pointer" title="View medium alerts">
+      <div class="kpi-lbl">Medium</div>
+      <div class="kpi-val" id="k-med">—</div>
+      <div class="kpi-sub">level 5–7</div>
+    </div>
     <div class="kpi cp"><div class="kpi-lbl">Open Cases</div><div class="kpi-val" id="k-cases">—</div><div class="kpi-sub">SP-CM</div></div>
-    <div class="kpi" style="--kc:var(--g)" onclick="go('cases')" title="Click to view closed cases">
+    <div class="kpi" style="--kc:var(--g)" onclick="go('cases')" title="Click to view closed cases" style="cursor:pointer">
       <div class="kpi-lbl">Closed Cases</div>
       <div class="kpi-val" id="k-closed-cases">—</div>
       <div class="kpi-sub">SP-CM resolved</div>
@@ -4085,7 +4101,7 @@ function renderDots(dots,dotsId,ll2xy,W,H){
 let chTime=null,chSev=null,_dashMap=null;
 
 // ── Dashboard time range state ────────────────────────────────
-let _dashRange={hours:24};
+let _dashRange={hours:1};
 function setDashRange(hrs){
   _dashRange={hours:hrs};
   document.querySelectorAll('#dash-preset-btns .btn').forEach(b=>{
@@ -4128,6 +4144,7 @@ async function loadDashboard(){
   else if(_dashRange.hours) p.set('hours',_dashRange.hours);
   const d=await G('/api/dashboard?'+p);
   if(!d||d.error){document.getElementById('dash-sub').textContent='Error connecting — check Settings';return;}
+  if(d.pending){document.getElementById('dash-sub').textContent='⏳ SIEM indexer starting…';setTimeout(()=>{if(CUR==='dashboard')loadDashboard();},10000);return;}
   document.getElementById('dash-sub').textContent=`SIEM + SP-CM connected`;
   document.getElementById('dash-updated').textContent=`Updated ${new Date().toLocaleTimeString('en',{hour12:false})} UTC`;
   // Update range label
@@ -4136,9 +4153,9 @@ async function loadDashboard(){
   const sub=document.getElementById('k-24h-sub'); if(sub)sub.textContent=lbl;
   const set=(id,v)=>{const el=document.getElementById(id);if(el)el.textContent=v??'—';};
   set('k-total',d.totalAlerts?.toLocaleString());
-  set('k-24h',d.alerts24h?.toLocaleString());
   set('k-crit',d.criticalAlerts?.toLocaleString());
   set('k-high',d.highAlerts?.toLocaleString());
+  set('k-med',d.mediumAlerts?.toLocaleString());
   set('k-cases',d.openCases?.toLocaleString());
   // Load closed cases count
   (async()=>{
@@ -5261,6 +5278,12 @@ async function loadLogSources() {
   const d = await G('/api/log-sources');
   if (!d || d.error) {
     if (body) body.innerHTML = `<tr><td colspan="9">${errBnr(d?.error||'Failed to load log sources')}</td></tr>`;
+    return;
+  }
+  // pending:true means SIEM is starting up; auto-retry in 10s
+  if (d.pending) {
+    if (body) body.innerHTML = `<tr><td colspan="9" style="padding:32px;text-align:center;color:var(--txt2)">⏳ SIEM indexer starting — retrying in 10s…</td></tr>`;
+    setTimeout(() => { if (CUR === 'log-sources') loadLogSources(); }, 10000);
     return;
   }
   _lsData = d;

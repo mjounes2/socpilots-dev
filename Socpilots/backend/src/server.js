@@ -237,60 +237,94 @@ async function seedUsersFromEnv() {
   }
 }
 
+// ─── OPENSEARCH CONCURRENCY LIMITER ────────────────────────
+// Caps simultaneous in-flight OpenSearch queries to prevent 429 storms
+// when multiple background jobs fire together after container restart.
+let _osInFlight = 0;
+const _OS_MAX_CONCURRENT = 2;
+const _osQueue = [];
+function _osAcquire() {
+  return new Promise(resolve => {
+    if (_osInFlight < _OS_MAX_CONCURRENT) { _osInFlight++; resolve(); }
+    else _osQueue.push(resolve);
+  });
+}
+function _osRelease() {
+  if (_osQueue.length) { const next = _osQueue.shift(); next(); }
+  else _osInFlight = Math.max(0, _osInFlight - 1);
+}
+// Background jobs call this before issuing OS queries; skips the run if the
+// queue is already backed up so user-facing requests are not starved.
+function _osBackpressure(label) {
+  if (_osQueue.length >= 4) {
+    console.warn(`[${label}] OS queue depth ${_osQueue.length} — skipping this run`);
+    return true;
+  }
+  return false;
+}
+
 // ─── OPENSEARCH HELPER ─────────────────────────────────────
-async function osSearch(body, index = IDX, size = 200, _retry = 0) {
-  const MAX_OS_RETRIES = 3;
+// maxRetries: default 3 (~14s max). Pass 2 for fast-fail paths, higher for critical user routes.
+async function osSearch(body, index = IDX, size = 200, _retry = 0, maxRetries = 3) {
+  await _osAcquire();
+  let r;
   try {
-    const r = await axios.post(`${OS_URL}/${index}/_search`, body, {
+    r = await axios.post(`${OS_URL}/${index}/_search`, body, {
       auth: { username: OS_USER, password: OS_PASS },
       httpsAgent, timeout: 15000,
       headers: { 'Content-Type': 'application/json' },
       validateStatus: s => s < 500 || s === 503,
     });
-    if (r.status === 429 && _retry < MAX_OS_RETRIES) {
-      const wait = (2 ** _retry) * 2000 + Math.random() * 1000; // 2s, 4s, 8s + jitter
-      console.warn(`[osSearch] 429 — retry ${_retry + 1}/${MAX_OS_RETRIES} in ${Math.round(wait)}ms`);
-      await new Promise(res => setTimeout(res, wait));
-      return osSearch(body, index, size, _retry + 1);
-    }
-    if (r.status >= 400) throw new Error(`Request failed with status code ${r.status}`);
-    return r.data;
   } catch (e) {
-    if (e.response?.status === 429 && _retry < MAX_OS_RETRIES) {
+    _osRelease();
+    if (e.response?.status === 429 && _retry < maxRetries) {
       const wait = (2 ** _retry) * 2000 + Math.random() * 1000;
-      console.warn(`[osSearch] 429 (catch) — retry ${_retry + 1}/${MAX_OS_RETRIES} in ${Math.round(wait)}ms`);
+      console.warn(`[osSearch] 429 — retry ${_retry + 1}/${maxRetries} in ${Math.round(wait)}ms`);
       await new Promise(res => setTimeout(res, wait));
-      return osSearch(body, index, size, _retry + 1);
+      return osSearch(body, index, size, _retry + 1, maxRetries);
     }
     throw e;
   }
+  _osRelease();
+  if (r.status === 429 && _retry < maxRetries) {
+    const wait = (2 ** _retry) * 2000 + Math.random() * 1000;
+    console.warn(`[osSearch] 429 — retry ${_retry + 1}/${maxRetries} in ${Math.round(wait)}ms`);
+    await new Promise(res => setTimeout(res, wait));
+    return osSearch(body, index, size, _retry + 1, maxRetries);
+  }
+  if (r.status >= 400) throw new Error(`Request failed with status code ${r.status}`);
+  return r.data;
 }
 
-async function osCount(body, index = IDX, _retry = 0) {
-  const MAX_OS_RETRIES = 3;
+async function osCount(body, index = IDX, _retry = 0, maxRetries = 3) {
+  await _osAcquire();
+  let r;
   try {
-    const r = await axios.post(`${OS_URL}/${index}/_count`, body, {
+    r = await axios.post(`${OS_URL}/${index}/_count`, body, {
       auth: { username: OS_USER, password: OS_PASS },
       httpsAgent, timeout: 10000,
       headers: { 'Content-Type': 'application/json' },
       validateStatus: s => s < 500 || s === 503,
     });
-    if (r.status === 429 && _retry < MAX_OS_RETRIES) {
-      const wait = (2 ** _retry) * 2000 + Math.random() * 1000;
-      console.warn(`[osCount] 429 — retry ${_retry + 1}/${MAX_OS_RETRIES} in ${Math.round(wait)}ms`);
-      await new Promise(res => setTimeout(res, wait));
-      return osCount(body, index, _retry + 1);
-    }
-    if (r.status >= 400) throw new Error(`Request failed with status code ${r.status}`);
-    return r.data.count || 0;
   } catch (e) {
-    if (e.response?.status === 429 && _retry < MAX_OS_RETRIES) {
+    _osRelease();
+    if (e.response?.status === 429 && _retry < maxRetries) {
       const wait = (2 ** _retry) * 2000 + Math.random() * 1000;
+      console.warn(`[osCount] 429 — retry ${_retry + 1}/${maxRetries} in ${Math.round(wait)}ms`);
       await new Promise(res => setTimeout(res, wait));
-      return osCount(body, index, _retry + 1);
+      return osCount(body, index, _retry + 1, maxRetries);
     }
     throw e;
   }
+  _osRelease();
+  if (r.status === 429 && _retry < maxRetries) {
+    const wait = (2 ** _retry) * 2000 + Math.random() * 1000;
+    console.warn(`[osCount] 429 — retry ${_retry + 1}/${maxRetries} in ${Math.round(wait)}ms`);
+    await new Promise(res => setTimeout(res, wait));
+    return osCount(body, index, _retry + 1, maxRetries);
+  }
+  if (r.status >= 400) throw new Error(`Request failed with status code ${r.status}`);
+  return r.data.count || 0;
 }
 
 // ─── THEHIVE HELPER ────────────────────────────────────────
@@ -481,18 +515,24 @@ app.get('/api/status', authMW, async (req, res) => {
 });
 
 // ── DASHBOARD ─── OpenSearch aggregations ──
+const _dashCache = {};
+const _dashCacheTime = {};
 app.get('/api/dashboard', authMW, async (req, res) => {
   try {
-    // Time range: hours preset OR absolute from/to
     const hours   = parseInt(req.query.hours) || 24;
     const fromTs  = req.query.from || null;
     const toTs    = req.query.to   || null;
+    const cacheKey = fromTs ? `${fromTs}_${toTs}` : `${hours}h`;
+    const now = Date.now();
+
+    if (_dashCache[cacheKey] && now - (_dashCacheTime[cacheKey] || 0) < 30000) {
+      return res.json(_dashCache[cacheKey]);
+    }
 
     const tsRange = fromTs
       ? { gte: fromTs, ...(toTs ? { lte: toTs } : {}) }
       : { gte: `now-${hours}h` };
 
-    // Pick histogram interval based on window size
     let calInterval = 'hour';
     if (fromTs && toTs) {
       const diffH = (new Date(toTs) - new Date(fromTs)) / 3600000;
@@ -503,18 +543,8 @@ app.get('/api/dashboard', authMW, async (req, res) => {
     const boundsMin = fromTs || `now-${hours}h`;
     const boundsMax = toTs   || 'now';
 
-    // Run 5 queries in parallel
-    const [totalAlerts, critAlerts, periodAlerts, agentAgg, hiveCases] = await Promise.allSettled([
-      // All-time total
-      osCount({ query: { match_all: {} } }),
-      // Critical in selected period
-      osCount({ query: { bool: { must: [
-        { range: { 'rule.level': { gte: 12 } } },
-        { range: { '@timestamp': tsRange } },
-      ]}}}),
-      // Total in selected period
-      osCount({ query: { range: { '@timestamp': tsRange } } }),
-      // Unique agents + severity breakdown + timeline — all scoped to period
+    // 2 queries instead of 4: main agg provides counts + timeline; separate TheHive call
+    const [agentAgg, hiveCases] = await Promise.allSettled([
       osSearch({
         size: 0,
         aggs: {
@@ -540,8 +570,7 @@ app.get('/api/dashboard', authMW, async (req, res) => {
           }
         },
         query: { range: { '@timestamp': tsRange } }
-      }),
-      // SP-CM open cases
+      }, IDX, 200, 0, 2),
       hiveQuery([
         { _name: 'listCase' },
         { _name: 'filter', _field: 'status', _value: 'New' }
@@ -551,6 +580,8 @@ app.get('/api/dashboard', authMW, async (req, res) => {
     const aggs    = agentAgg.value?.aggregations;
     const sevBkts = aggs?.by_sev?.buckets || [];
     const getSev  = key => sevBkts.find(b => b.key === key)?.doc_count || 0;
+    const periodCount = agentAgg.value?.hits?.total?.value || 0;
+    const critCount   = getSev('critical');
     const timeline = (aggs?.over_time?.buckets || []).map(b => ({
       time:     b.key_as_string || new Date(b.key).toISOString(),
       count:    b.doc_count,
@@ -559,30 +590,31 @@ app.get('/api/dashboard', authMW, async (req, res) => {
       medium:   b.medium?.doc_count   || 0,
       low:      b.low?.doc_count      || 0,
     }));
-    const agentCount = aggs?.agents?.buckets?.length || 0;
 
-    res.json({
-      totalAlerts:    totalAlerts.value   || 0,
-      alerts24h:      periodAlerts.value  || 0,   // "period" alerts — label updated on frontend
-      criticalAlerts: critAlerts.value    || 0,
+    const osFailed = agentAgg.status === 'rejected';
+    const result = {
+      totalAlerts:    periodCount,
+      alerts24h:      periodCount,
+      criticalAlerts: critCount,
       highAlerts:     getSev('high'),
       mediumAlerts:   getSev('medium'),
       lowAlerts:      getSev('low'),
-      totalAgents:    agentCount,
+      totalAgents:    aggs?.agents?.buckets?.length || 0,
       openCases:      Array.isArray(hiveCases.value) ? hiveCases.value.length : 0,
       timeline,
-      sevBreakdown: {
-        critical: critAlerts.value || 0,
-        high:     getSev('high'),
-        medium:   getSev('medium'),
-        low:      getSev('low'),
-      },
+      sevBreakdown: { critical: critCount, high: getSev('high'), medium: getSev('medium'), low: getSev('low') },
       periodLabel: fromTs
         ? `${new Date(fromTs).toLocaleDateString()} – ${toTs ? new Date(toTs).toLocaleDateString() : 'now'}`
         : `Last ${hours >= 720 ? Math.round(hours/720)+'mo' : hours >= 168 ? Math.round(hours/168)+'w' : hours >= 24 ? Math.round(hours/24)+'d' : hours+'h'}`,
-    });
+      ...(osFailed ? { pending: true } : {}),
+    };
+    // Only cache when OS actually responded (don't cache zero-filled fallback from 429)
+    if (!osFailed) { _dashCache[cacheKey] = result; _dashCacheTime[cacheKey] = now; }
+    res.json(result);
   } catch (e) {
     console.error('[dashboard]', e.message);
+    const firstKey = Object.keys(_dashCache)[0];
+    if (firstKey) return res.json({ ..._dashCache[firstKey], stale: true });
     res.status(502).json({ error: e.message });
   }
 });
@@ -2569,6 +2601,7 @@ Triaged by **pattern analysis** (no AI). Rule level ${alert.level} falls in the 
 // ── FEEDER: OpenSearch → triage_queue ────────────────────────────────
 async function triageFeeder() {
   if (_feederRunning) return;
+  if (_osBackpressure('triageFeeder')) return;
   const enabled = await db.getSetting('auto_triage_enabled');
   if (enabled !== 'true') return;
   _feederRunning = true;
@@ -2642,6 +2675,7 @@ async function triageFeeder() {
 // ── PROCESSOR: triage_queue → investigations ──────────────────────────
 async function triageProcessor() {
   if (_processorRunning) return;
+  if (_osBackpressure('triageProcessor')) return;
   const enabled = await db.getSetting('auto_triage_enabled');
   if (enabled !== 'true') return;
   _processorRunning = true;
@@ -2827,9 +2861,9 @@ ${prose.slice(0, 2000)}`;
 setInterval(() => { triageFeeder(); }, 60000);
 // Processor: every 15s
 setInterval(() => { triageProcessor(); }, 15000);
-// Boot delay: feeder after 30s, processor after 45s
-setTimeout(() => { triageFeeder(); }, 30000);
-setTimeout(() => { triageProcessor(); }, 45000);
+// Boot delay: feeder after 90s, processor after 120s (give OS time to settle before first run)
+setTimeout(() => { triageFeeder(); }, 90000);
+setTimeout(() => { triageProcessor(); }, 120000);
 
 // ── UEBA AUTO-INGEST from Wazuh/OpenSearch ─────────────────────────
 // Polls OpenSearch every 2 min, maps alert fields → UEBA events
@@ -2839,6 +2873,7 @@ let _uebaRunning = false;
 async function uebaIngestWorker() {
   if (_uebaRunning) return;
   if (Date.now() - _uebaLastRun < 110_000) return;
+  if (_osBackpressure('uebaIngest')) return;
   _uebaRunning = true;
   _uebaLastRun = Date.now();
   try {
@@ -3027,6 +3062,7 @@ let _lateralRunning = false;
 
 async function lateralMovementMonitor() {
   if (_lateralRunning) return;
+  if (_osBackpressure('lateralMovement')) return;
   const enabled = await db.getSetting('darksoc_lateral_monitor_enabled').catch(() => 'false');
   if (enabled !== 'true') return;
 
@@ -5119,29 +5155,11 @@ const CLOUD_GROUP_VENDORS = {
   darktrace:            { vendor: 'Darktrace',                type: 'cloud_api' },
 };
 
-async function _fetchLogSources() {
+async function _fetchLogSources(maxRetries = 2) {
 
-    const [r24h, r7d, rCloud24h, rCloud7d] = await Promise.all([
-      osSearch({
-        size: 0,
-        query: { range: { '@timestamp': { gte: 'now-24h' } } },
-        aggs: {
-          by_source: {
-            terms: { field: 'agent.id', size: 100 },
-            aggs: {
-              agent_name:  { terms: { field: 'agent.name',              size: 1 } },
-              agent_ip:    { terms: { field: 'agent.ip',                size: 1 } },
-              top_decoder: { terms: { field: 'decoder.name',            size: 5 } },
-              top_groups:  { terms: { field: 'rule.groups',             size: 10 } },
-              integration: { terms: { field: 'data.integration',        size: 3 } },
-              program_name:{ terms: { field: 'predecoder.program_name', size: 3 } },
-              severity_dist:{ terms: { field: 'rule.level',             size: 15 } },
-              last_seen:   { max:   { field: '@timestamp' } },
-              first_seen_24h: { min: { field: '@timestamp' } },
-            },
-          },
-        },
-      }),
+    // Two queries instead of four: use filter aggs to get both 24h and 7d counts in one round-trip
+    const [rAgents, rCloud] = await Promise.all([
+      // Agent sources: single 7d query with a filter sub-agg for 24h counts
       osSearch({
         size: 0,
         query: { range: { '@timestamp': { gte: 'now-7d' } } },
@@ -5149,41 +5167,50 @@ async function _fetchLogSources() {
           by_source: {
             terms: { field: 'agent.id', size: 100 },
             aggs: {
-              count_7d:     { value_count: { field: 'agent.id' } },
-              first_seen_7d:{ min: { field: '@timestamp' } },
+              agent_name:    { terms: { field: 'agent.name',              size: 1 } },
+              agent_ip:      { terms: { field: 'agent.ip',                size: 1 } },
+              top_decoder:   { terms: { field: 'decoder.name',            size: 5 } },
+              top_groups:    { terms: { field: 'rule.groups',             size: 10 } },
+              integration:   { terms: { field: 'data.integration',        size: 3 } },
+              program_name:  { terms: { field: 'predecoder.program_name', size: 3 } },
+              severity_dist: { terms: { field: 'rule.level',              size: 15 } },
+              last_seen:     { max:   { field: '@timestamp' } },
+              first_seen_7d: { min:   { field: '@timestamp' } },
+              count_7d:      { value_count: { field: 'agent.id' } },
+              last_24h: {
+                filter: { range: { '@timestamp': { gte: 'now-24h' } } },
+                aggs: { count: { value_count: { field: 'agent.id' } } },
+              },
             },
           },
         },
-      }),
-      // Cloud group aggregation (24h) — detects vendors sharing a manager agent
+      }, IDX, 200, 0, maxRetries),
+      // Cloud group sources: single 7d query with 24h filter sub-agg
       osSearch({
         size: 0,
-        query: { range: { '@timestamp': { gte: 'now-24h' } } },
+        query: { range: { '@timestamp': { gte: 'now-7d' } } },
         aggs: {
           by_cloud_group: {
             terms: { field: 'rule.groups', size: 100 },
             aggs: {
               last_seen:     { max:   { field: '@timestamp' } },
+              count_7d:      { value_count: { field: '@timestamp' } },
               severity_dist: { terms: { field: 'rule.level', size: 15 } },
+              last_24h: {
+                filter: { range: { '@timestamp': { gte: 'now-24h' } } },
+                aggs: { count: { value_count: { field: '@timestamp' } } },
+              },
             },
           },
         },
-      }),
-      // Cloud group 7d counts + last_seen (fallback for sources silent in last 24h)
-      osSearch({
-        size: 0,
-        query: { range: { '@timestamp': { gte: 'now-7d' } } },
-        aggs: {
-          by_cloud_group: {
-            terms: { field: 'rule.groups', size: 100 },
-            aggs: {
-              count_7d:  { value_count: { field: '@timestamp' } },
-              last_seen: { max: { field: '@timestamp' } },
-            },
-          },
-        },
-      }),
+      }, IDX, 200, 0, maxRetries),
     ]);
+
+    // Remap to match the shape the rest of the function expects
+    const r24h    = { aggregations: { by_source:      { buckets: (rAgents.aggregations?.by_source?.buckets || []).map(b => ({ ...b, doc_count: b.last_24h?.count?.value || 0 })) } } };
+    const r7d     = { aggregations: { by_source:      { buckets: rAgents.aggregations?.by_source?.buckets || [] } } };
+    const rCloud24h = { aggregations: { by_cloud_group: { buckets: (rCloud.aggregations?.by_cloud_group?.buckets || []).map(b => ({ ...b, doc_count: b.last_24h?.count?.value || 0 })) } } };
+    const rCloud7d  = { aggregations: { by_cloud_group: { buckets: rCloud.aggregations?.by_cloud_group?.buckets || [] } } };
 
     const map7d = {};
     for (const b of (r7d.aggregations?.by_source?.buckets || [])) {
@@ -5401,12 +5428,14 @@ async function _fetchLogSources() {
 
 app.get('/api/log-sources', authMW, async (req, res) => {
   try {
-    if (_logSourcesCache && Date.now() - _logSourcesCacheTime < 60000) return res.json(_logSourcesCache);
-    res.json(await _fetchLogSources());
+    if (_logSourcesCache && Date.now() - _logSourcesCacheTime < 300000) return res.json(_logSourcesCache);
+    // maxRetries=2: fail fast (~6s) so UI sees pending quickly; frontend auto-retries on pending:true
+    res.json(await _fetchLogSources(2));
   } catch (e) {
     console.error('[log-sources]', e.message);
     if (_logSourcesCache) return res.json({ ..._logSourcesCache, stale: true });
-    res.status(502).json({ error: e.message });
+    // No cache yet (startup) — return empty but valid so UI shows 0 sources, not an error
+    res.json({ sources: [], summary: { total_sources: 0, total_eps: 0, anomaly_count: 0, unknown_sources: 0, total_events_24h: 0 }, insights: [], pending: true });
   }
 });
 
@@ -5922,6 +5951,7 @@ let _iocIngestLastCount = 0;
 
 async function autoIngestAlerts(windowMinutes = 15) {
   if (_iocIngestRunning) return;
+  if (_osBackpressure('autoIngestAlerts')) return;
   _iocIngestRunning = true;
   let newCount = 0, updCount = 0;
   try {
