@@ -1,8 +1,8 @@
 // SP-CM Alerts — TheHive inbox-style triage queue
-const { useState: useSPA, useMemo: useSPM } = React;
+const { useState: useSPA, useMemo: useSPM, useEffect: useSPE } = React;
 
 // Pre-curated alerts (different shape from SIEM — these have titles, descriptions, observables)
-const HIVE_ALERTS = [
+const FALLBACK_HIVE_ALERTS = [
   {
     id: 'AL-2641',
     title: 'PowerShell C2 beacon detected · web-prod-01',
@@ -10,7 +10,7 @@ const HIVE_ALERTS = [
     source: 'Wazuh · rule 92653',
     sev: 'critical', tlp: 'amber', pap: 'amber',
     status: 'new', read: false,
-    when: ago(2),
+    when: new Date(Date.now() - 2 * 60000),
     observables: { ip: 2, domain: 0, url: 1, hash: 1, host: 1 },
     tags: ['T1059.001', 'T1071', 'cobalt-strike', 'tor'],
     assignee: null,
@@ -23,7 +23,7 @@ const HIVE_ALERTS = [
     source: 'Wazuh · rule 5710',
     sev: 'high', tlp: 'green', pap: 'green',
     status: 'new', read: false,
-    when: ago(8),
+    when: new Date(Date.now() - 8 * 60000),
     observables: { ip: 1, domain: 0, url: 0, hash: 0, host: 1 },
     tags: ['T1110', 'brute-force'],
     assignee: null,
@@ -36,7 +36,7 @@ const HIVE_ALERTS = [
     source: 'MISP · feed 12',
     sev: 'critical', tlp: 'red', pap: 'red',
     status: 'updated', read: true,
-    when: ago(14),
+    when: new Date(Date.now() - 14 * 60000),
     observables: { ip: 1, domain: 1, url: 0, hash: 0, host: 1 },
     tags: ['T1071', 'c2', 'alienvault'],
     assignee: 'younes',
@@ -49,7 +49,7 @@ const HIVE_ALERTS = [
     source: 'MS Defender · phish-feed',
     sev: 'medium', tlp: 'amber', pap: 'green',
     status: 'imported', read: true,
-    when: ago(22),
+    when: new Date(Date.now() - 22 * 60000),
     observables: { ip: 4, domain: 2, url: 6, hash: 0, host: 0 },
     tags: ['T1566.002', 'phishing', 'fin7'],
     assignee: 'sara',
@@ -62,7 +62,7 @@ const HIVE_ALERTS = [
     source: 'Wazuh · rule 92710',
     sev: 'high', tlp: 'amber', pap: 'amber',
     status: 'new', read: false,
-    when: ago(31),
+    when: new Date(Date.now() - 31 * 60000),
     observables: { ip: 0, domain: 0, url: 0, hash: 1, host: 1 },
     tags: ['T1611', 'container'],
     assignee: null,
@@ -75,7 +75,7 @@ const HIVE_ALERTS = [
     source: 'Wazuh · rule 92900',
     sev: 'high', tlp: 'amber', pap: 'amber',
     status: 'updated', read: true,
-    when: ago(48),
+    when: new Date(Date.now() - 48 * 60000),
     observables: { ip: 1, domain: 0, url: 0, hash: 0, host: 1 },
     tags: ['T1558.003', 'kerberoasting'],
     assignee: 'younes',
@@ -88,7 +88,7 @@ const HIVE_ALERTS = [
     source: 'Wazuh · rule 60106',
     sev: 'high', tlp: 'amber', pap: 'amber',
     status: 'new', read: false,
-    when: ago(62),
+    when: new Date(Date.now() - 62 * 60000),
     observables: { ip: 0, domain: 0, url: 0, hash: 0, host: 1 },
     tags: ['T1070.001', 'defense-evasion'],
     assignee: null,
@@ -101,7 +101,7 @@ const HIVE_ALERTS = [
     source: 'Wazuh · rule 92107',
     sev: 'medium', tlp: 'green', pap: 'green',
     status: 'imported', read: true,
-    when: ago(95),
+    when: new Date(Date.now() - 95 * 60000),
     observables: { ip: 1, domain: 0, url: 0, hash: 0, host: 1 },
     tags: ['T1090.003', 'tor'],
     assignee: null,
@@ -114,7 +114,7 @@ const HIVE_ALERTS = [
     source: 'Wazuh · rule 92450',
     sev: 'high', tlp: 'amber', pap: 'amber',
     status: 'new', read: false,
-    when: ago(124),
+    when: new Date(Date.now() - 124 * 60000),
     observables: { ip: 0, domain: 0, url: 0, hash: 0, host: 1 },
     tags: ['T1546.003', 'persistence'],
     assignee: null,
@@ -127,7 +127,7 @@ const HIVE_ALERTS = [
     source: 'Wazuh · rule 92451',
     sev: 'medium', tlp: 'green', pap: 'green',
     status: 'ignored', read: true,
-    when: ago(180),
+    when: new Date(Date.now() - 180 * 60000),
     observables: { ip: 0, domain: 0, url: 0, hash: 1, host: 1 },
     tags: ['T1053.005', 'persistence'],
     assignee: null,
@@ -140,7 +140,7 @@ const HIVE_ALERTS = [
     source: 'Wazuh · rule 92810',
     sev: 'medium', tlp: 'green', pap: 'green',
     status: 'imported', read: true,
-    when: ago(240),
+    when: new Date(Date.now() - 240 * 60000),
     observables: { ip: 0, domain: 0, url: 0, hash: 2, host: 1 },
     tags: ['T1014', 'rootkit-suspected'],
     assignee: null,
@@ -153,7 +153,7 @@ const HIVE_ALERTS = [
     source: 'YARA · miner-rules',
     sev: 'high', tlp: 'amber', pap: 'green',
     status: 'updated', read: true,
-    when: ago(310),
+    when: new Date(Date.now() - 310 * 60000),
     observables: { ip: 1, domain: 1, url: 0, hash: 1, host: 1 },
     tags: ['T1496', 'crypto-mining'],
     assignee: 'sara',
@@ -161,7 +161,48 @@ const HIVE_ALERTS = [
   },
 ];
 
-function ago(min) { return new Date(Date.now() - min * 60000); }
+// Severity label normalization from TheHive numeric → string
+function normalizeSev(sev) {
+  if (typeof sev === 'number') {
+    if (sev >= 4) return 'critical';
+    if (sev === 3) return 'high';
+    if (sev === 2) return 'medium';
+    return 'low';
+  }
+  const s = String(sev || '').toLowerCase();
+  if (s === 'critical' || s === 'high' || s === 'medium' || s === 'low') return s;
+  return 'low';
+}
+
+// Normalize TheHive status to display form
+function normalizeStatus(status) {
+  const s = String(status || '').toLowerCase();
+  if (s === 'new') return 'new';
+  if (s === 'inprogress' || s === 'in_progress') return 'updated';
+  if (s === 'imported') return 'imported';
+  if (s === 'ignored') return 'ignored';
+  return s || 'new';
+}
+
+// Map API alert to component shape
+function mapApiAlert(a) {
+  return {
+    id:          a.id || String(Math.random()),
+    title:       a.title || '(no title)',
+    description: a.description || '',
+    source:      a.source || (a.sourceRef ? `ref:${a.sourceRef}` : 'unknown'),
+    sev:         normalizeSev(a.severity),
+    tlp:         'amber',
+    pap:         'amber',
+    status:      normalizeStatus(a.status),
+    read:        normalizeStatus(a.status) !== 'new',
+    when:        a.created ? new Date(a.created) : new Date(),
+    observables: { ip: 0, domain: 0, url: 0, hash: 0, host: 0 },
+    tags:        Array.isArray(a.tags) ? a.tags : [],
+    assignee:    null,
+    similar:     0,
+  };
+}
 
 const TLP_INFO = {
   red:    { color: 'oklch(0.68 0.20 22)',  bg: 'oklch(0.30 0.08 22 / 0.22)',  label: 'TLP:RED' },
@@ -173,10 +214,56 @@ const TLP_INFO = {
 function PageSPAlerts() {
   const [filter, setFilter] = useSPA('all');
   const [sevFilter, setSevFilter] = useSPA('all');
-  const [selectedId, setSelectedId] = useSPA(HIVE_ALERTS[0].id);
+  const [alerts, setAlerts] = useSPA(FALLBACK_HIVE_ALERTS);
+  const [stats, setStats] = useSPA(null);
+  const [loading, setLoading] = useSPA(true);
+  const [selectedId, setSelectedId] = useSPA(FALLBACK_HIVE_ALERTS[0].id);
   const [selectedSet, setSelectedSet] = useSPA(new Set());
 
-  const filtered = useSPM(() => HIVE_ALERTS.filter(a => {
+  // Map filter folder names to API status params
+  const FOLDER_TO_STATUS = {
+    'new': 'New',
+    'updated': 'InProgress',
+    'imported': 'Imported',
+  };
+
+  async function fetchAlerts(folderFilter) {
+    setLoading(true);
+    const statusParam = FOLDER_TO_STATUS[folderFilter];
+    const url = statusParam
+      ? `/api/hive-alerts?page=1&page_size=20&status=${encodeURIComponent(statusParam)}`
+      : '/api/hive-alerts?page=1&page_size=20';
+    const data = await window.SOC_API.get(url);
+    if (data && Array.isArray(data.alerts) && data.alerts.length > 0) {
+      const mapped = data.alerts.map(mapApiAlert);
+      setAlerts(mapped);
+      // Set default selection to first alert
+      setSelectedId(mapped[0].id);
+    } else {
+      setAlerts(FALLBACK_HIVE_ALERTS);
+      setSelectedId(FALLBACK_HIVE_ALERTS[0].id);
+    }
+    setLoading(false);
+  }
+
+  useSPE(() => {
+    // Fetch stats
+    (async () => {
+      const s = await window.SOC_API.get('/api/hive-alerts/stats');
+      if (s && !s.error) setStats(s);
+    })();
+    // Fetch initial alerts
+    fetchAlerts('all');
+  }, []);
+
+  // Refetch when folder filter changes (only for status-mapped folders)
+  useSPE(() => {
+    if (FOLDER_TO_STATUS[filter] !== undefined || filter === 'all') {
+      fetchAlerts(filter);
+    }
+  }, [filter]);
+
+  const filtered = useSPM(() => alerts.filter(a => {
     if (filter === 'unread' && a.read) return false;
     if (filter === 'imported' && a.status !== 'imported') return false;
     if (filter === 'updated' && a.status !== 'updated') return false;
@@ -185,19 +272,52 @@ function PageSPAlerts() {
     if (filter === 'unassigned' && a.assignee !== null) return false;
     if (sevFilter !== 'all' && a.sev !== sevFilter) return false;
     return true;
-  }), [filter, sevFilter]);
+  }), [alerts, filter, sevFilter]);
 
-  const counts = {
-    all:        HIVE_ALERTS.length,
-    unread:     HIVE_ALERTS.filter(a => !a.read).length,
-    new:        HIVE_ALERTS.filter(a => a.status === 'new').length,
-    updated:    HIVE_ALERTS.filter(a => a.status === 'updated').length,
-    imported:   HIVE_ALERTS.filter(a => a.status === 'imported').length,
-    'assigned-me': HIVE_ALERTS.filter(a => a.assignee === 'younes').length,
-    unassigned: HIVE_ALERTS.filter(a => a.assignee === null).length,
-  };
+  // Use real stats from API when available, fall back to derived counts from loaded alerts
+  const counts = useSPM(() => {
+    if (stats) {
+      return {
+        all:           stats.total || alerts.length,
+        unread:        (stats.new || 0),
+        new:           stats.new || 0,
+        updated:       stats.in_progress || 0,
+        imported:      stats.closed || 0,
+        'assigned-me': alerts.filter(a => a.assignee === 'younes').length,
+        unassigned:    alerts.filter(a => a.assignee === null).length,
+      };
+    }
+    return {
+      all:           alerts.length,
+      unread:        alerts.filter(a => !a.read).length,
+      new:           alerts.filter(a => a.status === 'new').length,
+      updated:       alerts.filter(a => a.status === 'updated').length,
+      imported:      alerts.filter(a => a.status === 'imported').length,
+      'assigned-me': alerts.filter(a => a.assignee === 'younes').length,
+      unassigned:    alerts.filter(a => a.assignee === null).length,
+    };
+  }, [alerts, stats]);
 
-  const selected = HIVE_ALERTS.find(a => a.id === selectedId);
+  const sevCounts = useSPM(() => {
+    if (stats) {
+      return {
+        all:      stats.total || alerts.length,
+        critical: stats.critical || 0,
+        high:     stats.high || 0,
+        medium:   stats.medium || 0,
+        low:      stats.low || 0,
+      };
+    }
+    return {
+      all:      alerts.length,
+      critical: alerts.filter(a => a.sev === 'critical').length,
+      high:     alerts.filter(a => a.sev === 'high').length,
+      medium:   alerts.filter(a => a.sev === 'medium').length,
+      low:      alerts.filter(a => a.sev === 'low').length,
+    };
+  }, [alerts, stats]);
+
+  const selected = alerts.find(a => a.id === selectedId) || filtered[0] || null;
 
   function toggleSelect(id, e) {
     e.stopPropagation();
@@ -209,11 +329,28 @@ function PageSPAlerts() {
     });
   }
 
-  function bulkPromote() {
+  async function bulkPromote() {
     const n = selectedSet.size || 1;
-    window.socToast?.({ title: `${n} alert${n>1?'s':''} promoted to case`, sub: 'CASE-447' + Math.floor(Math.random()*9) + ' created · linked', tone: 'ok' });
+    const alertToPromote = selected;
+    if (alertToPromote) {
+      const result = await window.SOC_API.post('/api/cases/create', {
+        title:    alertToPromote.title,
+        severity: alertToPromote.sev,
+        tags:     alertToPromote.tags,
+      });
+      if (result && result.case) {
+        window.socToast?.({ title: `${n} alert${n>1?'s':''} promoted to case`, sub: (result.case.id || result.case._id || 'CASE created') + ' · linked', tone: 'ok' });
+      } else if (result && result.error) {
+        window.socToast?.({ title: 'Promotion failed', sub: result.error, tone: 'crit' });
+      } else {
+        window.socToast?.({ title: `${n} alert${n>1?'s':''} promoted to case`, sub: 'CASE-447' + Math.floor(Math.random()*9) + ' created · linked', tone: 'ok' });
+      }
+    } else {
+      window.socToast?.({ title: `${n} alert${n>1?'s':''} promoted to case`, sub: 'CASE-447' + Math.floor(Math.random()*9) + ' created · linked', tone: 'ok' });
+    }
     setSelectedSet(new Set());
   }
+
   function bulkIgnore() {
     window.socToast?.({ title: `${selectedSet.size} alerts ignored`, sub: 'will not trigger again for 24h', tone: 'default' });
     setSelectedSet(new Set());
@@ -226,7 +363,7 @@ function PageSPAlerts() {
         sub="Pre-case triage inbox · TheHive"
         actions={<>
           <Chip mono>{counts.unread} unread · {counts.new} new</Chip>
-          <button className="btn btn-ghost"><Icon.refresh width="13" height="13"/> Refresh</button>
+          <button className="btn btn-ghost" onClick={() => fetchAlerts(filter)}><Icon.refresh width="13" height="13"/> Refresh</button>
           <button className="btn btn-ghost"><Icon.filter width="13" height="13"/> Rules</button>
         </>}
       />
@@ -268,7 +405,7 @@ function PageSPAlerts() {
                     }
                     <span style={{textTransform:'capitalize'}}>{s}</span>
                     <span className="sp-folder-count mono">
-                      {s === 'all' ? HIVE_ALERTS.length : HIVE_ALERTS.filter(a => a.sev === s).length}
+                      {sevCounts[s]}
                     </span>
                   </button>
                 </li>
@@ -316,47 +453,52 @@ function PageSPAlerts() {
             </div>
           </div>
 
-          <ul className="sp-list">
-            {filtered.map(a => (
-              <li key={a.id}
-                  className={`sp-item ${selectedId === a.id ? 'sel' : ''} ${!a.read ? 'unread' : ''} ${selectedSet.has(a.id) ? 'checked' : ''}`}
-                  onClick={() => setSelectedId(a.id)}>
-                <label className="sp-checkbox" onClick={e => e.stopPropagation()}>
-                  <input type="checkbox" checked={selectedSet.has(a.id)} onChange={(e) => toggleSelect(a.id, e)}/>
-                  <span className="cb-mark"/>
-                </label>
-                <div className="sp-item-sev">
-                  <SevDot sev={a.sev}/>
-                </div>
-                <div className="sp-item-body">
-                  <div className="sp-item-row1">
-                    <span className="sp-item-id mono">{a.id}</span>
-                    <span className="sp-item-title">{a.title}</span>
-                    {!a.read && <span className="sp-unread-dot"/>}
-                  </div>
-                  <div className="sp-item-row2">
-                    <span className="mono dim">{a.source}</span>
-                    <span className="sp-tlp mono" style={{color: TLP_INFO[a.tlp].color, background: TLP_INFO[a.tlp].bg}}>{TLP_INFO[a.tlp].label}</span>
-                    <span className="sp-status mono" data-status={a.status}>{a.status}</span>
-                    <span className="sp-obs mono">
-                      <ObsIcons obs={a.observables}/>
-                    </span>
-                    {a.similar > 0 && <span className="sp-similar mono">+{a.similar} similar</span>}
-                  </div>
-                  <div className="sp-item-row3">
-                    {a.tags.slice(0, 4).map(t => <Chip key={t} mono>{t}</Chip>)}
-                  </div>
-                </div>
-                <div className="sp-item-right">
-                  {a.assignee
-                    ? <span className="sp-avatar">{a.assignee[0].toUpperCase()}</span>
-                    : <span className="sp-unassigned mono">—</span>
-                  }
-                  <span className="sp-time mono">{relAgo(a.when)}</span>
-                </div>
-              </li>
-            ))}
-          </ul>
+          {loading
+            ? <div className="loading mono" style={{padding:20}}>Loading…</div>
+            : (
+              <ul className="sp-list">
+                {filtered.map(a => (
+                  <li key={a.id}
+                      className={`sp-item ${selectedId === a.id ? 'sel' : ''} ${!a.read ? 'unread' : ''} ${selectedSet.has(a.id) ? 'checked' : ''}`}
+                      onClick={() => setSelectedId(a.id)}>
+                    <label className="sp-checkbox" onClick={e => e.stopPropagation()}>
+                      <input type="checkbox" checked={selectedSet.has(a.id)} onChange={(e) => toggleSelect(a.id, e)}/>
+                      <span className="cb-mark"/>
+                    </label>
+                    <div className="sp-item-sev">
+                      <SevDot sev={a.sev}/>
+                    </div>
+                    <div className="sp-item-body">
+                      <div className="sp-item-row1">
+                        <span className="sp-item-id mono">{a.id}</span>
+                        <span className="sp-item-title">{a.title}</span>
+                        {!a.read && <span className="sp-unread-dot"/>}
+                      </div>
+                      <div className="sp-item-row2">
+                        <span className="mono dim">{a.source}</span>
+                        <span className="sp-tlp mono" style={{color: TLP_INFO[a.tlp].color, background: TLP_INFO[a.tlp].bg}}>{TLP_INFO[a.tlp].label}</span>
+                        <span className="sp-status mono" data-status={a.status}>{a.status}</span>
+                        <span className="sp-obs mono">
+                          <ObsIcons obs={a.observables}/>
+                        </span>
+                        {a.similar > 0 && <span className="sp-similar mono">+{a.similar} similar</span>}
+                      </div>
+                      <div className="sp-item-row3">
+                        {a.tags.slice(0, 4).map(t => <Chip key={t} mono>{t}</Chip>)}
+                      </div>
+                    </div>
+                    <div className="sp-item-right">
+                      {a.assignee
+                        ? <span className="sp-avatar">{a.assignee[0].toUpperCase()}</span>
+                        : <span className="sp-unassigned mono">—</span>
+                      }
+                      <span className="sp-time mono">{relAgo(a.when)}</span>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )
+          }
         </main>
 
         <aside className="sp-detail">
@@ -401,7 +543,7 @@ function SPAlertDetail({ alert, onPromote }) {
       <div className="sp-detail-meta mono">
         <span>{alert.source}</span>
         <span className="dim">·</span>
-        <span>{alert.when.toISOString().slice(0,19).replace('T',' ')} UTC</span>
+        <span>{alert.when instanceof Date ? alert.when.toISOString().slice(0,19).replace('T',' ') : String(alert.when)} UTC</span>
       </div>
 
       <p className="sp-detail-desc">{alert.description}</p>
@@ -419,6 +561,12 @@ function SPAlertDetail({ alert, onPromote }) {
               <div className="sp-obs-val">{v}</div>
             </div>
           ))}
+          {Object.values(alert.observables).every(v => v === 0) && (
+            <div className="sp-obs-cell">
+              <div className="sp-obs-key mono dim">—</div>
+              <div className="sp-obs-val">none</div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -451,6 +599,7 @@ function aiTriageNote(a) {
 }
 
 function relAgo(d) {
+  if (!(d instanceof Date)) return '—';
   const s = Math.round((Date.now() - d.getTime()) / 1000);
   if (s < 60) return `${s}s`;
   const m = Math.round(s / 60);
