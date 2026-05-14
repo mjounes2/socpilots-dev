@@ -1,260 +1,398 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="theme-default accent-cyan">
 <head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>SOC Pilots — Login</title>
-<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow+Condensed:wght@500;700&family=Barlow:wght@400;600&display=swap" rel="stylesheet">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SOC Pilots — Sign in</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
 <style>
-*{margin:0;padding:0;box-sizing:border-box}
-:root{--bg:#04070f;--card:#0d1424;--b1:#162030;--b2:#1e2e45;--c:#00e5ff;--g:#00ff88;--r:#ff2255;--txt:#d8eaf8;--txt2:#6a8aaa;--txt3:#2a4060;--mono:'Share Tech Mono',monospace;--head:'Barlow Condensed',sans-serif;--sans:'Barlow',sans-serif}
-body{background:var(--bg);min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:var(--sans);overflow:hidden;position:relative}
-.grid{position:fixed;inset:0;background-image:linear-gradient(rgba(0,229,255,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(0,229,255,.025) 1px,transparent 1px);background-size:40px 40px;animation:gm 25s linear infinite;pointer-events:none}
-@keyframes gm{from{background-position:0 0}to{background-position:40px 40px}}
-.strip{position:fixed;left:0;top:0;bottom:0;width:2px;background:linear-gradient(to bottom,transparent,var(--c),transparent);animation:sp 3s ease-in-out infinite}
-.strip.r{left:auto;right:0;animation-delay:1.5s}
-@keyframes sp{0%,100%{opacity:.2}50%{opacity:1;box-shadow:0 0 8px var(--c)}}
-.card{position:relative;width:420px;background:var(--card);border:1px solid var(--b2);border-radius:4px;padding:44px 36px 36px;box-shadow:0 0 40px rgba(0,229,255,.06),0 40px 80px rgba(0,0,0,.5)}
-.corner{position:absolute;width:14px;height:14px;border-color:var(--c);border-style:solid}
-.corner.tl{top:-1px;left:-1px;border-width:2px 0 0 2px}
-.corner.tr{top:-1px;right:-1px;border-width:2px 2px 0 0}
-.corner.bl{bottom:-1px;left:-1px;border-width:0 0 2px 2px}
-.corner.br{bottom:-1px;right:-1px;border-width:0 2px 2px 0}
-.logo{text-align:center;margin-bottom:32px}
-.logo-icon{display:inline-flex;align-items:center;justify-content:center;width:56px;height:56px;background:rgba(0,229,255,.08);border:1px solid rgba(0,229,255,.3);border-radius:4px;margin-bottom:12px;position:relative}
-.logo-pulse{position:absolute;inset:-4px;border:1px solid rgba(0,229,255,.15);border-radius:6px;animation:lp 2s ease-in-out infinite}
-@keyframes lp{0%,100%{opacity:.4;transform:scale(1)}50%{opacity:1;transform:scale(1.04)}}
-.logo-title{font-family:var(--head);font-size:22px;font-weight:700;letter-spacing:5px;color:var(--txt)}
-.logo-title span{color:var(--c)}
-.logo-sub{font-size:10px;color:var(--txt3);letter-spacing:2px;font-family:var(--mono);margin-top:3px}
-.divider{display:flex;align-items:center;gap:10px;margin-bottom:24px}
-.divider-line{flex:1;height:1px;background:var(--b1)}
-.divider-txt{font-size:9px;color:var(--txt3);letter-spacing:2px;font-family:var(--mono)}
-.err{display:none;align-items:center;gap:7px;background:rgba(255,34,85,.1);border:1px solid rgba(255,34,85,.25);border-radius:3px;padding:9px 12px;font-size:11px;color:var(--r);margin-bottom:14px;font-family:var(--mono);animation:shake .35s ease}
-.err.show{display:flex}
-@keyframes shake{0%,100%{transform:translateX(0)}20%{transform:translateX(-5px)}60%{transform:translateX(5px)}}
-.fg{margin-bottom:16px}
-.fl{display:block;font-size:9px;color:var(--txt2);letter-spacing:1.5px;text-transform:uppercase;margin-bottom:6px;font-family:var(--mono)}
-.iw{position:relative;display:flex;align-items:center}
-.ii{position:absolute;left:12px;color:var(--txt3);pointer-events:none;transition:color .2s;display:flex}
-.fi{width:100%;background:rgba(0,0,0,.4);border:1px solid var(--b2);border-radius:3px;padding:11px 12px 11px 38px;color:var(--txt);font-family:var(--mono);font-size:12px;outline:none;transition:all .2s}
-.fi:focus{border-color:var(--c);background:rgba(0,229,255,.03)}
-.iw:focus-within .ii{color:var(--c)}
-.eye{position:absolute;right:10px;background:none;border:none;color:var(--txt3);cursor:pointer;padding:3px;transition:color .2s}
-.eye:hover{color:var(--c)}
-.btn{width:100%;padding:13px;background:rgba(0,229,255,.1);border:1px solid var(--c);border-radius:3px;color:var(--c);font-family:var(--head);font-size:15px;font-weight:700;letter-spacing:3px;text-transform:uppercase;cursor:pointer;transition:all .2s;position:relative;overflow:hidden;margin-top:6px}
-.btn:hover{background:rgba(0,229,255,.18);box-shadow:0 0 16px rgba(0,229,255,.2)}
-.btn.loading{pointer-events:none;opacity:.7}
-.btn .bt{transition:opacity .2s}.btn.loading .bt{opacity:0}
-.btn .bs{display:none;position:absolute;inset:0;align-items:center;justify-content:center}
-.btn.loading .bs{display:flex}
-.sp{width:16px;height:16px;border:2px solid rgba(0,229,255,.3);border-top-color:var(--c);border-radius:50%;animation:spin .5s linear infinite}
-@keyframes spin{to{transform:rotate(360deg)}}
-.foot{margin-top:20px;text-align:center;font-size:9px;color:var(--txt3);font-family:var(--mono);letter-spacing:1px}
-.sec{display:flex;align-items:center;justify-content:center;gap:5px;margin-top:8px;padding:5px;border:1px solid var(--b1);border-radius:3px;font-size:8px}
-.forgot-link{display:block;text-align:right;font-size:9px;color:var(--c);font-family:var(--mono);cursor:pointer;margin-top:4px;text-decoration:none;background:none;border:none;padding:0}
-.forgot-link:hover{text-decoration:underline}
-.ok{display:none;align-items:center;gap:7px;background:rgba(0,255,136,.08);border:1px solid rgba(0,255,136,.25);border-radius:3px;padding:9px 12px;font-size:11px;color:var(--g);margin-bottom:14px;font-family:var(--mono)}
-.ok.show{display:flex}
-.panel{display:none}.panel.active{display:block}
+/* ===== Login-only layout ===== */
+body { display: grid; grid-template-columns: 1.1fr 1fr; min-height: 100vh; overflow: hidden; }
+@media (max-width: 880px) { body { grid-template-columns: 1fr; } .login-stage { display: none; } }
+
+/* ----- Left: status stage ----- */
+.login-stage {
+  position: relative; overflow: hidden;
+  background: var(--bg-1);
+  border-right: 1px solid var(--ln);
+  padding: 40px 56px;
+  display: flex; flex-direction: column; gap: 32px;
+}
+.stage-grid {
+  position: absolute; inset: 0;
+  background-image:
+    linear-gradient(oklch(0.30 0.014 250 / 0.25) 1px, transparent 1px),
+    linear-gradient(90deg, oklch(0.30 0.014 250 / 0.25) 1px, transparent 1px);
+  background-size: 56px 56px;
+  -webkit-mask-image: radial-gradient(circle at 30% 40%, black, transparent 75%);
+          mask-image: radial-gradient(circle at 30% 40%, black, transparent 75%);
+  pointer-events: none;
+}
+.stage-content { position: relative; z-index: 1; display: flex; flex-direction: column; gap: 32px; flex: 1; }
+
+.stage-brand { display: flex; align-items: center; gap: 12px; }
+.stage-mark {
+  width: 36px; height: 36px; display: flex; align-items: center; justify-content: center;
+  background: var(--acc-bg); color: var(--acc);
+  border-radius: 6px; border: 1px solid oklch(0.40 0.10 200 / 0.4);
+}
+.stage-brand-name { font-size: 14px; font-weight: 600; letter-spacing: 3px; }
+.stage-brand-name span { color: var(--acc); }
+.stage-brand-sub { font-family: var(--mono); font-size: 10px; color: var(--fg-3); margin-top: 2px; letter-spacing: 1px; }
+
+.stage-headline {
+  margin-top: 12px;
+  font-size: 30px; font-weight: 400; line-height: 1.2; letter-spacing: -0.5px;
+  max-width: 460px;
+  color: var(--fg-0);
+}
+.stage-headline strong { color: var(--acc); font-weight: 500; }
+.stage-tagline {
+  font-family: var(--mono); font-size: 11px; color: var(--fg-3); letter-spacing: 0.5px;
+  max-width: 460px; line-height: 1.6; margin-top: 6px;
+}
+
+/* Live status pane */
+.stage-status {
+  margin-top: auto;
+  border: 1px solid var(--ln); border-radius: 8px;
+  background: var(--bg-0);
+  overflow: hidden;
+}
+.ss-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px; border-bottom: 1px solid var(--ln);
+  font-family: var(--mono); font-size: 10px; color: var(--fg-3); letter-spacing: 1.2px;
+}
+.ss-head .live-pip { font-size: 9.5px; }
+.ss-grid {
+  display: grid; grid-template-columns: repeat(4, 1fr);
+  border-bottom: 1px solid var(--ln);
+}
+.ss-cell { padding: 14px; border-right: 1px solid var(--ln); }
+.ss-cell:last-child { border-right: none; }
+.ss-label { font-family: var(--mono); font-size: 9.5px; color: var(--fg-3); letter-spacing: 1px; text-transform: uppercase; }
+.ss-value { font-size: 22px; font-weight: 500; margin-top: 4px; letter-spacing: -0.3px; }
+.ss-value.mono { font-size: 16px; }
+.ss-meta { font-family: var(--mono); font-size: 10px; color: var(--fg-3); margin-top: 2px; }
+.ss-crit { color: var(--crit); }
+
+.ss-services {
+  display: grid; grid-template-columns: repeat(3, 1fr);
+}
+.ss-svc { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-right: 1px solid var(--ln); }
+.ss-svc:last-child { border-right: none; }
+.ss-svc-name { font-size: 11px; color: var(--fg-1); }
+.ss-svc-sub  { font-family: var(--mono); font-size: 9.5px; color: var(--fg-3); margin-top: 1px; }
+
+/* Activity stream */
+.stage-stream {
+  border: 1px solid var(--ln); border-radius: 8px;
+  background: var(--bg-0);
+  font-family: var(--mono); font-size: 10.5px; line-height: 1.7;
+  padding: 12px 14px;
+  max-height: 120px; overflow: hidden; position: relative;
+  -webkit-mask-image: linear-gradient(180deg, black 60%, transparent);
+          mask-image: linear-gradient(180deg, black 60%, transparent);
+}
+.stream-line { display: grid; grid-template-columns: 70px 1fr; gap: 10px; color: var(--fg-2); }
+.stream-time { color: var(--fg-4); }
+.stream-line .crit { color: var(--crit); }
+.stream-line .high { color: var(--high); }
+.stream-line .low  { color: var(--low); }
+
+/* ----- Right: form ----- */
+.login-form-wrap {
+  display: flex; align-items: center; justify-content: center;
+  padding: 40px 56px;
+  background: var(--bg-0);
+  position: relative;
+}
+.login-form { width: 100%; max-width: 380px; display: flex; flex-direction: column; gap: 26px; }
+.login-eyebrow { display: flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 10px; color: var(--fg-3); letter-spacing: 1.5px; }
+.login-eyebrow .pip { background: var(--low); }
+.login-title { font-size: 24px; font-weight: 500; letter-spacing: -0.4px; margin-top: -4px; }
+.login-sub { font-family: var(--mono); font-size: 11px; color: var(--fg-3); line-height: 1.6; }
+
+.login-field { display: flex; flex-direction: column; gap: 6px; }
+.lf-label { font-family: var(--mono); font-size: 10px; color: var(--fg-3); letter-spacing: 1px; text-transform: uppercase; }
+.lf-wrap {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--bg-1); border: 1px solid var(--ln);
+  border-radius: var(--radius-sm); padding: 10px 12px;
+  transition: border-color .12s, background .12s;
+}
+.lf-wrap:focus-within { border-color: var(--ln-3); background: var(--bg-2); }
+.lf-wrap svg { color: var(--fg-3); flex-shrink: 0; }
+.lf-wrap:focus-within svg { color: var(--acc); }
+.lf-wrap input {
+  flex: 1; font-size: 13px; font-family: var(--mono);
+  color: var(--fg-0);
+}
+.lf-wrap input::placeholder { color: var(--fg-4); }
+.lf-toggle { background: none; border: none; padding: 2px; color: var(--fg-3); cursor: pointer; display: flex; }
+.lf-toggle:hover { color: var(--fg-0); }
+
+.login-row { display: flex; align-items: center; justify-content: space-between; font-size: 11.5px; color: var(--fg-2); }
+.checkbox { display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
+.checkbox input { display: none; }
+.cb-mark { width: 14px; height: 14px; border: 1px solid var(--ln-2); border-radius: 3px; display: inline-flex; align-items: center; justify-content: center; color: var(--bg-0); flex-shrink: 0; }
+.checkbox input:checked + .cb-mark { background: var(--acc); border-color: var(--acc); }
+.checkbox input:checked + .cb-mark::after { content: '✓'; font-size: 10px; line-height: 1; }
+.login-link { color: var(--acc); text-decoration: none; }
+.login-link:hover { text-decoration: underline; }
+
+.login-btn {
+  width: 100%; padding: 12px; border-radius: var(--radius-sm);
+  background: var(--acc); color: oklch(0.16 0.020 200);
+  font-size: 13px; font-weight: 600; letter-spacing: 0.3px;
+  border: none; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  transition: background .12s, transform .06s;
+}
+.login-btn:hover { background: oklch(0.86 0.14 200); }
+.login-btn:active { transform: translateY(1px); }
+
+.login-divider { display: flex; align-items: center; gap: 10px; color: var(--fg-4); font-family: var(--mono); font-size: 9.5px; letter-spacing: 1px; }
+.login-divider::before, .login-divider::after { content: ''; flex: 1; height: 1px; background: var(--ln); }
+
+.sso-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.sso-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 9px; border: 1px solid var(--ln); background: var(--bg-1);
+  color: var(--fg-1); border-radius: var(--radius-sm); cursor: pointer;
+  font-size: 11.5px;
+}
+.sso-btn:hover { background: var(--bg-2); border-color: var(--ln-2); }
+
+.login-foot {
+  margin-top: 8px; padding-top: 16px; border-top: 1px solid var(--ln);
+  display: flex; align-items: center; justify-content: space-between;
+  font-family: var(--mono); font-size: 10px; color: var(--fg-3); letter-spacing: 0.5px;
+}
+.login-foot .sec { display: flex; align-items: center; gap: 6px; color: var(--low); }
+
+.err {
+  display: none; align-items: center; gap: 8px;
+  background: var(--crit-bg); border: 1px solid oklch(0.45 0.15 22 / 0.5);
+  border-radius: var(--radius-sm); padding: 9px 12px;
+  color: var(--crit); font-family: var(--mono); font-size: 11px;
+}
+.err.show { display: flex; animation: shake .35s ease; }
+@keyframes shake { 0%,100% { transform: translateX(0); } 20% { transform: translateX(-5px); } 60% { transform: translateX(5px); } }
+
+/* corner decorations on form panel */
+.form-corner { position: absolute; width: 14px; height: 14px; border: 1px solid var(--ln-2); pointer-events: none; }
+.form-corner.tl { top: 24px; left: 24px;  border-right: none; border-bottom: none; }
+.form-corner.tr { top: 24px; right: 24px; border-left: none;  border-bottom: none; }
+.form-corner.bl { bottom: 24px; left: 24px;  border-right: none; border-top: none; }
+.form-corner.br { bottom: 24px; right: 24px; border-left: none;  border-top: none; }
 </style>
 </head>
 <body>
-<div class="grid"></div>
-<div class="strip"></div><div class="strip r"></div>
-<div class="card">
-  <div class="corner tl"></div><div class="corner tr"></div>
-  <div class="corner bl"></div><div class="corner br"></div>
-  <div class="logo">
-    <div class="logo-icon">
-      <div class="logo-pulse"></div>
-      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#00e5ff" stroke-width="1.5">
-        <path d="M12 2L20 7V17L12 22L4 17V7Z"/><circle cx="12" cy="12" r="3.5" fill="#00e5ff" opacity=".9"/>
-      </svg>
-    </div>
-    <div class="logo-title">SOC<span>PILOTS</span></div>
-    <div class="logo-sub">AI Security Operations Center</div>
-  </div>
-  <div class="divider" id="panel-divider"><div class="divider-line"></div><div class="divider-txt" id="panel-label">AUTHENTICATE</div><div class="divider-line"></div></div>
 
-  <!-- LOGIN PANEL -->
-  <div class="panel active" id="panel-login">
+<!-- LEFT: brand + live status -->
+<section class="login-stage">
+  <div class="stage-grid"></div>
+  <div class="stage-content">
+    <div class="stage-brand">
+      <div class="stage-mark">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+          <path d="M12 2L20 7V17L12 22L4 17V7Z"/>
+          <circle cx="12" cy="12" r="3" fill="currentColor"/>
+        </svg>
+      </div>
+      <div>
+        <div class="stage-brand-name">SOC<span>PILOTS</span></div>
+        <div class="stage-brand-sub">v3.0 · AI security operations center</div>
+      </div>
+    </div>
+
+    <div>
+      <div class="stage-headline">
+        Unified visibility across <strong>SIEM</strong>, <strong>case management</strong>, and <strong>AI investigation</strong>.
+      </div>
+      <div class="stage-tagline">
+        One pane of glass for analysts, IR teams, and CISOs. Real-time alerts, AI co-analyst, automated containment.
+      </div>
+    </div>
+
+    <div class="stage-status">
+      <div class="ss-head">
+        <span>OPERATIONS · LIVE</span>
+        <span class="live-pip"><span class="pip"></span>SHIFT ACTIVE</span>
+      </div>
+      <div class="ss-grid">
+        <div class="ss-cell">
+          <div class="ss-label">Alerts (24h)</div>
+          <div class="ss-value">1,847</div>
+          <div class="ss-meta">↑ 12.4%</div>
+        </div>
+        <div class="ss-cell">
+          <div class="ss-label">Critical</div>
+          <div class="ss-value ss-crit">7</div>
+          <div class="ss-meta">awaiting triage</div>
+        </div>
+        <div class="ss-cell">
+          <div class="ss-label">Agents</div>
+          <div class="ss-value">142<span style="color:var(--fg-3);font-size:14px;">/156</span></div>
+          <div class="ss-meta">14 offline</div>
+        </div>
+        <div class="ss-cell">
+          <div class="ss-label">MTTR</div>
+          <div class="ss-value mono">38m</div>
+          <div class="ss-meta">7-day avg</div>
+        </div>
+      </div>
+      <div class="ss-services">
+        <div class="ss-svc">
+          <span class="sev-dot" data-sev="low" style="width:7px;height:7px;"></span>
+          <div>
+            <div class="ss-svc-name">SIEM</div>
+            <div class="ss-svc-sub">healthy · 41ms</div>
+          </div>
+        </div>
+        <div class="ss-svc">
+          <span class="sev-dot" data-sev="low" style="width:7px;height:7px;"></span>
+          <div>
+            <div class="ss-svc-name">SP-CM</div>
+            <div class="ss-svc-sub">healthy · 22ms</div>
+          </div>
+        </div>
+        <div class="ss-svc">
+          <span class="sev-dot" data-sev="low" style="width:7px;height:7px;"></span>
+          <div>
+            <div class="ss-svc-name">SOCPilots AI</div>
+            <div class="ss-svc-sub">gpt-4o · ready</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="stage-stream" id="stream"></div>
+  </div>
+</section>
+
+<!-- RIGHT: form -->
+<section class="login-form-wrap">
+  <span class="form-corner tl"></span>
+  <span class="form-corner tr"></span>
+  <span class="form-corner bl"></span>
+  <span class="form-corner br"></span>
+
+  <form class="login-form" onsubmit="event.preventDefault(); login();">
+    <div class="login-eyebrow"><span class="pip" style="display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--low);box-shadow:0 0 8px var(--low);"></span> SECURE TERMINAL · TLS 1.3</div>
+    <div>
+      <h1 class="login-title">Welcome back, analyst.</h1>
+      <p class="login-sub">Sign in to your SOC Pilots workspace. All actions are audited and tied to your identity.</p>
+    </div>
+
     <div class="err" id="err">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
       <span id="err-txt">Invalid credentials</span>
     </div>
-    <div class="fg">
-      <label class="fl">Username</label>
-      <div class="iw">
-        <div class="ii"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
-        <input type="text" class="fi" id="un" placeholder="Enter username" autocomplete="username">
+
+    <div class="login-field">
+      <label class="lf-label">Username</label>
+      <div class="lf-wrap">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0116 0"/></svg>
+        <input id="un" type="text" placeholder="analyst.name" autocomplete="username" required>
       </div>
     </div>
-    <div class="fg">
-      <label class="fl">Password</label>
-      <div class="iw">
-        <div class="ii"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg></div>
-        <input type="password" class="fi" id="pw" placeholder="Enter password" autocomplete="current-password">
-        <button class="eye" type="button" onclick="togglePw()">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+
+    <div class="login-field">
+      <label class="lf-label">Password</label>
+      <div class="lf-wrap">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+        <input id="pw" type="password" placeholder="••••••••••••" autocomplete="current-password" required>
+        <button type="button" class="lf-toggle" onclick="togglePw()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
         </button>
       </div>
-      <button class="forgot-link" onclick="showPanel('forgot')">Forgot password?</button>
     </div>
-    <button class="btn" id="btn" onclick="login()">
-      <span class="bt">ACCESS SYSTEM</span>
-      <span class="bs"><div class="sp"></div></span>
-    </button>
-  </div>
 
-  <!-- FORGOT PASSWORD PANEL -->
-  <div class="panel" id="panel-forgot">
-    <div class="err" id="fp-err">
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-      <span id="fp-err-txt">Error</span>
+    <div class="login-row">
+      <label class="checkbox">
+        <input type="checkbox" id="rm" checked>
+        <span class="cb-mark"></span>
+        Trust this device · 30d
+      </label>
+      <a href="#" class="login-link">Forgot password?</a>
     </div>
-    <div class="ok" id="fp-ok">
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
-      <span id="fp-ok-txt">Reset link sent</span>
-    </div>
-    <div class="fg">
-      <label class="fl">Username</label>
-      <div class="iw">
-        <div class="ii"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
-        <input type="text" class="fi" id="fp-un" placeholder="Enter your username" autocomplete="username">
-      </div>
-    </div>
-    <button class="btn" id="fp-btn" onclick="forgotPassword()">
-      <span class="bt">SEND RESET LINK</span>
-      <span class="bs"><div class="sp"></div></span>
-    </button>
-    <button class="forgot-link" style="text-align:center;margin-top:8px" onclick="showPanel('login')">← Back to login</button>
-  </div>
 
-  <!-- RESET PASSWORD PANEL -->
-  <div class="panel" id="panel-reset">
-    <div class="err" id="rp-err">
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-      <span id="rp-err-txt">Error</span>
-    </div>
-    <div class="ok" id="rp-ok">
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
-      <span id="rp-ok-txt">Password updated successfully</span>
-    </div>
-    <p style="font-size:10px;color:var(--txt2);font-family:var(--mono);margin-bottom:14px">Enter your new password below.</p>
-    <div class="fg">
-      <label class="fl">New Password</label>
-      <div class="iw">
-        <div class="ii"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg></div>
-        <input type="password" class="fi" id="rp-pw" placeholder="Min. 8 characters" autocomplete="new-password">
-      </div>
-    </div>
-    <button class="btn" id="rp-btn" onclick="resetPassword()">
-      <span class="bt">SET NEW PASSWORD</span>
-      <span class="bs"><div class="sp"></div></span>
+    <button type="submit" class="login-btn">
+      Sign in to workspace
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
     </button>
-  </div>
 
-  <div class="foot">AUTHORIZED PERSONNEL ONLY
-    <div class="sec">
-      <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#00ff88" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-      TLS ENCRYPTED SESSION
+    <div class="login-divider">OR CONTINUE WITH</div>
+
+    <div class="sso-row">
+      <button type="button" class="sso-btn">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M21 12c0-5-4-9-9-9s-9 4-9 9 4 9 9 9c2.4 0 4.6-.9 6.2-2.5"/><path d="M21 12h-9"/></svg>
+        SSO / SAML
+      </button>
+      <button type="button" class="sso-btn">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="5" y="5" width="14" height="14" rx="2"/><circle cx="12" cy="12" r="3"/></svg>
+        Hardware key
+      </button>
     </div>
-  </div>
-</div>
+
+    <div class="login-foot">
+      <span>BUILD 3.0.42 · APR 2026</span>
+      <span class="sec">
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        TLS · AES-256
+      </span>
+    </div>
+  </form>
+</section>
+
 <script>
-let _activePanel = 'login';
-const _resetToken = new URLSearchParams(location.search).get('reset');
-
-function showPanel(name) {
-  _activePanel = name;
-  ['login','forgot','reset'].forEach(p => {
-    document.getElementById('panel-'+p).classList.toggle('active', p === name);
-  });
-  const labels = {login:'AUTHENTICATE', forgot:'RESET PASSWORD', reset:'SET NEW PASSWORD'};
-  document.getElementById('panel-label').textContent = labels[name] || 'AUTHENTICATE';
+function togglePw() {
+  const i = document.getElementById('pw');
+  i.type = i.type === 'password' ? 'text' : 'password';
 }
-
-function togglePw(){const i=document.getElementById('pw');i.type=i.type==='password'?'text':'password';}
-
-async function login(){
-  const un=document.getElementById('un').value.trim();
-  const pw=document.getElementById('pw').value;
-  const err=document.getElementById('err');
-  const btn=document.getElementById('btn');
-  err.classList.remove('show');
-  if(!un||!pw){document.getElementById('err-txt').textContent='Username and password required';err.classList.add('show');return;}
-  btn.classList.add('loading');
-  try{
-    const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:un,password:pw})});
-    const d=await r.json();
-    if(r.ok&&d.token){
-      sessionStorage.setItem('soc_token',d.token);
-      sessionStorage.setItem('soc_user',JSON.stringify({username:d.username,role:d.role}));
-      location.replace('/');
-    } else {
-      document.getElementById('err-txt').textContent=d.error||'Authentication failed';
-      err.classList.add('show');btn.classList.remove('loading');
-    }
-  }catch(e){
-    document.getElementById('err-txt').textContent='Server unreachable';
-    err.classList.add('show');btn.classList.remove('loading');
+function login() {
+  const un = document.getElementById('un').value.trim();
+  const pw = document.getElementById('pw').value;
+  const err = document.getElementById('err');
+  if (!un || !pw) {
+    document.getElementById('err-txt').textContent = 'Username and password required';
+    err.classList.add('show');
+    return;
   }
+  err.classList.remove('show');
+  // Navigate to main app
+  location.href = '/';
 }
+// Live stream simulation
+const events = [
+  { t: '14:22:47', sev: 'crit', msg: 'WZ-9281047 · PowerShell C2 on web-prod-01 · 185.220.101.42' },
+  { t: '14:22:31', sev: 'high', msg: 'WZ-9281044 · 47 auth failures on db-primary · 45.155.205.18' },
+  { t: '14:22:08', sev: 'low',  msg: 'agent reconnect · k8s-worker-3' },
+  { t: '14:21:42', sev: 'high', msg: 'WZ-9281041 · audit log cleared on win-dc-01' },
+  { t: '14:21:18', sev: 'crit', msg: 'WZ-9281039 · SQL injection attempt · mail-gw-01' },
+  { t: '14:20:55', sev: 'low',  msg: 'AI verdict · CASE-4459 → false positive (96%)' },
+  { t: '14:20:33', sev: 'high', msg: 'CASE-4471 promoted to P1 · assigned to younes' },
+];
+const stream = document.getElementById('stream');
+events.forEach(e => {
+  const line = document.createElement('div');
+  line.className = 'stream-line';
+  line.innerHTML = `<span class="stream-time">${e.t}</span><span><span class="${e.sev}">[${e.sev.toUpperCase()}]</span> ${e.msg}</span>`;
+  stream.appendChild(line);
+});
 
-async function forgotPassword(){
-  const un = document.getElementById('fp-un').value.trim();
-  const errEl = document.getElementById('fp-err');
-  const okEl = document.getElementById('fp-ok');
-  const btn = document.getElementById('fp-btn');
-  errEl.classList.remove('show'); okEl.classList.remove('show');
-  if (!un) { document.getElementById('fp-err-txt').textContent='Username required'; errEl.classList.add('show'); return; }
-  btn.classList.add('loading');
-  try {
-    const r = await fetch('/api/auth/forgot-password', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:un})});
-    const d = await r.json();
-    if (r.ok) {
-      document.getElementById('fp-ok-txt').textContent = d.message || 'Reset link sent to your email';
-      okEl.classList.add('show');
-    } else {
-      document.getElementById('fp-err-txt').textContent = d.error || 'Failed to send reset link';
-      errEl.classList.add('show');
-    }
-  } catch(e) {
-    document.getElementById('fp-err-txt').textContent = 'Server unreachable';
-    errEl.classList.add('show');
-  } finally { btn.classList.remove('loading'); }
-}
-
-async function resetPassword(){
-  const pw = document.getElementById('rp-pw').value;
-  const errEl = document.getElementById('rp-err');
-  const okEl = document.getElementById('rp-ok');
-  const btn = document.getElementById('rp-btn');
-  errEl.classList.remove('show'); okEl.classList.remove('show');
-  if (!pw || pw.length < 8) { document.getElementById('rp-err-txt').textContent='Password must be at least 8 characters'; errEl.classList.add('show'); return; }
-  btn.classList.add('loading');
-  try {
-    const r = await fetch('/api/auth/reset-password', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:_resetToken, new_password:pw})});
-    const d = await r.json();
-    if (r.ok) {
-      document.getElementById('rp-ok-txt').textContent = d.message || 'Password updated — you can now log in';
-      okEl.classList.add('show');
-      btn.disabled = true;
-      setTimeout(() => { history.replaceState(null,'','/login'); showPanel('login'); }, 2500);
-    } else {
-      document.getElementById('rp-err-txt').textContent = d.error || 'Reset failed';
-      errEl.classList.add('show');
-    }
-  } catch(e) {
-    document.getElementById('rp-err-txt').textContent = 'Server unreachable';
-    errEl.classList.add('show');
-  } finally { btn.classList.remove('loading'); }
-}
-
-document.addEventListener('keydown', e => { if (e.key === 'Enter') { if (_activePanel==='login') login(); else if (_activePanel==='forgot') forgotPassword(); else if (_activePanel==='reset') resetPassword(); } });
-
-// Auto-show reset panel if ?reset= token in URL
-if (_resetToken) showPanel('reset');
+document.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && (e.target.id === 'un' || e.target.id === 'pw')) {
+    e.preventDefault();
+    login();
+  }
+});
 </script>
+
 </body>
 </html>
