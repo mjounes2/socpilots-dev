@@ -3,11 +3,13 @@ const { useState: useStateI, useEffect: useEffectI, useRef: useRefI, useMemo: us
 
 // ============= AI COPILOT =============
 function PageCopilot() {
-  const D = window.SOC_DATA;
-  const [msgs, setMsgs] = useStateI(D.COPILOT_CONVO);
+  const [msgs, setMsgs] = useStateI([]);
   const [draft, setDraft] = useStateI('');
   const [thinking, setThinking] = useStateI(false);
+  const [streaming, setStreaming] = useStateI(false);
   const endRef = useRefI(null);
+
+  const currentUser = sessionStorage.getItem('soc_user') || 'analyst';
 
   useEffectI(() => {
     endRef.current?.parentElement?.scrollTo({ top: 999999, behavior: 'smooth' });
@@ -15,21 +17,74 @@ function PageCopilot() {
 
   function send(text) {
     if (!text.trim()) return;
+    if (thinking || streaming) return;
+
+    // Snapshot history BEFORE pushing user message (slice sees pre-mutation array)
+    const history = msgs.slice(-6).map(m => ({
+      role: m.role === 'ai' ? 'assistant' : 'user',
+      content: m.text,
+    }));
+
     setMsgs(m => [...m, { role: 'user', text }]);
     setDraft('');
     setThinking(true);
-    setTimeout(() => {
+    setStreaming(false);
+
+    const session_id = `soc_${sessionStorage.getItem('soc_user') || 'analyst'}`;
+
+    window.SOC_API.stream(
+      '/api/ai/chat/stream',
+      { message: text, history, session_id },
+      // onChunk — fullText accumulated by api.jsx
+      (fullText) => {
+        setThinking(false);
+        setStreaming(true);
+        setMsgs(m => {
+          const last = m[m.length - 1];
+          if (last && last.role === 'ai' && last.streaming) {
+            // Update the in-flight placeholder in place
+            return [...m.slice(0, -1), { ...last, text: fullText }];
+          } else {
+            // First chunk — push a streaming placeholder
+            return [...m, { role: 'ai', text: fullText, streaming: true }];
+          }
+        });
+      },
+      // onDone — fullText is the final accumulated response
+      (fullText) => {
+        setThinking(false);
+        setStreaming(false);
+        setMsgs(m => {
+          const last = m[m.length - 1];
+          if (last && last.role === 'ai' && last.streaming) {
+            // Finalize: clear streaming flag, set final text
+            const finalText = fullText || last.text || '(no response)';
+            return [...m.slice(0, -1), { role: 'ai', text: finalText }];
+          }
+          // If no placeholder was ever pushed (e.g. zero chunks before done)
+          if (fullText && fullText.trim()) {
+            return [...m, { role: 'ai', text: fullText }];
+          }
+          return m;
+        });
+        // Check if the last call returned a rate-limit error via status
+        if (fullText && fullText.includes('429')) {
+          window.socToast?.({ title: 'Rate limit', sub: 'AI endpoint throttled — try again in a moment', tone: 'warn' });
+        }
+      }
+    ).catch(() => {
       setThinking(false);
-      setMsgs(m => [...m, {
-        role: 'ai',
-        text: 'Containment plan generated. (1) Isolate `web-prod-01` via Wazuh active response. (2) Block `185.220.101.42` at perimeter firewall. (3) Quarantine the suspicious process and capture full memory image. (4) Open case CASE-4471 → P1 and assign to incident-response. Shall I execute steps 1–2 now?',
-        evidence: [
-          { type: 'action', label: 'Auto-actions ready', value: '4 steps · est. 2m 14s' },
-          { type: 'query', label: 'Wazuh API call', value: 'POST /active-response/isolate { agent_id: "003" }' },
-        ],
-      }]);
-    }, 1400);
+      setStreaming(false);
+      window.socToast?.({ title: 'AI unavailable', sub: 'Could not reach the AI endpoint', tone: 'error' });
+    });
   }
+
+  // Derive avatar initials from username
+  const avatarInitials = (() => {
+    const u = currentUser.trim();
+    if (u.length >= 2) return (u[0] + u[1]).toUpperCase();
+    return u[0]?.toUpperCase() || 'U';
+  })();
 
   return (
     <div className="page page-copilot" data-screen-label="03 SOCPilots AI">
@@ -95,7 +150,13 @@ function PageCopilot() {
 
         <main className="copilot-main">
           <div className="chat">
-            {msgs.map((m, i) => <ChatMessage key={i} msg={m} />)}
+            {msgs.length === 0 && !thinking && (
+              <div className="chat-empty">
+                <Icon.brain width="32" height="32"/>
+                <p>Ask SOCPilots AI anything about your environment.<br/>Try a quick prompt or type your question below.</p>
+              </div>
+            )}
+            {msgs.map((m, i) => <ChatMessage key={i} msg={m} currentUser={currentUser} avatarInitials={avatarInitials} />)}
             {thinking && <ChatThinking />}
             <div ref={endRef} />
           </div>
@@ -114,8 +175,9 @@ function PageCopilot() {
                 onKeyDown={e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); send(draft); }}}
                 placeholder="Ask SOCPilots AI…   try: 'pivot on src.ip', 'show all related events', 'draft IR runbook'"
                 rows="2"
+                disabled={thinking || streaming}
               />
-              <button className="btn btn-primary" onClick={()=>send(draft)}>
+              <button className="btn btn-primary" onClick={()=>send(draft)} disabled={thinking || streaming}>
                 <Icon.send width="14" height="14"/> Send <Kbd>↵</Kbd>
               </button>
             </div>
@@ -129,16 +191,18 @@ function PageCopilot() {
   );
 }
 
-function ChatMessage({ msg }) {
+function ChatMessage({ msg, currentUser, avatarInitials }) {
+  const name = currentUser || 'analyst';
+  const initials = avatarInitials || (name[0] || 'U').toUpperCase();
   return (
     <div className={`msg msg-${msg.role}`}>
       <div className="msg-avatar">
-        {msg.role === 'ai' ? <Icon.brain width="14" height="14"/> : 'YJ'}
+        {msg.role === 'ai' ? <Icon.brain width="14" height="14"/> : initials}
       </div>
       <div className="msg-body">
         <div className="msg-name">
-          {msg.role === 'ai' ? 'SOCPilots AI' : 'younes'}
-          {msg.role === 'ai' && <span className="msg-tag">gpt-4o</span>}
+          {msg.role === 'ai' ? 'SOCPilots AI' : name}
+          {msg.role === 'ai' && <span className="msg-tag">{msg.streaming ? 'streaming…' : 'gpt-4o'}</span>}
         </div>
         <div className="msg-text" dangerouslySetInnerHTML={{ __html: highlight(msg.text) }} />
         {msg.evidence && (
@@ -175,21 +239,88 @@ function ChatThinking() {
 }
 
 function highlight(t) {
+  if (!t) return '';
   return t
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
     .replace(/`([^`]+)`/g, '<code>$1</code>');
 }
 
 // ============= CASES KANBAN =============
+function hiveSev(n) {
+  if (typeof n === 'string') {
+    const s = n.toLowerCase();
+    return s === 'critical' ? 'critical' : s === 'high' ? 'high' : s === 'medium' ? 'medium' : 'low';
+  }
+  return n >= 4 ? 'critical' : n >= 3 ? 'high' : n >= 2 ? 'medium' : 'low';
+}
+
 function PageCases({ onOpenCase }) {
-  const D = window.SOC_DATA;
+  const [casesByLane, setCasesByLane] = useStateI({
+    new: [], inProgress: [], resolved: [], closed: [],
+  });
+  const [loading, setLoading] = useStateI(false);
+  const [error, setError] = useStateI(null);
+  const [selected, setSelected] = useStateI(null);
+
+  useEffectI(() => {
+    setLoading(true);
+    setError(null);
+    window.SOC_API.get('/api/cases?page=1&page_size=100').then(data => {
+      setLoading(false);
+      if (!data || data.error) {
+        setError(data?.error || 'Failed to load cases');
+        return;
+      }
+      const cases = data.cases || data.items || [];
+      const lanes = { new: [], inProgress: [], resolved: [], closed: [] };
+      for (const c of cases) {
+        const sev = c.severityLabel || hiveSev(c.severity);
+        const mapped = {
+          id: c._id || c.id || String(c.id),
+          title: c.title || '(no title)',
+          sev,
+          tags: Array.isArray(c.tags) ? c.tags : [],
+          alerts: c.alertCount || 0,
+          assignee: c.assignee || '',
+          age: c.created ? window.SOC_API.relTs(new Date(c.created).toISOString()) : '—',
+          _raw: c,
+        };
+        const status = c.status || 'New';
+        if (status === 'New') {
+          lanes.new.push(mapped);
+        } else if (status === 'InProgress') {
+          lanes.inProgress.push(mapped);
+        } else if (status === 'Resolved' || status === 'TruePositive' || status === 'FalsePositive') {
+          lanes.resolved.push(mapped);
+        } else {
+          // Closed, Duplicate, Other, or unknown
+          lanes.closed.push(mapped);
+        }
+      }
+      setCasesByLane(lanes);
+    }).catch(() => {
+      setLoading(false);
+      setError('Failed to load cases');
+    });
+  }, []);
+
   const lanes = [
-    { key: 'new',        label: 'NEW',         sev: 'critical', items: D.CASES.new },
-    { key: 'inProgress', label: 'IN PROGRESS', sev: 'high',     items: D.CASES.inProgress },
-    { key: 'resolved',   label: 'RESOLVED',    sev: 'medium',   items: D.CASES.resolved },
-    { key: 'closed',     label: 'CLOSED',      sev: 'low',      items: D.CASES.closed },
+    { key: 'new',        label: 'NEW',         sev: 'critical', items: casesByLane.new },
+    { key: 'inProgress', label: 'IN PROGRESS', sev: 'high',     items: casesByLane.inProgress },
+    { key: 'resolved',   label: 'RESOLVED',    sev: 'medium',   items: casesByLane.resolved },
+    { key: 'closed',     label: 'CLOSED',      sev: 'low',      items: casesByLane.closed },
   ];
-  const [selected, setSelected] = useStateI(D.CASES.new[0]);
+
+  function handleNewCase() {
+    window.SOC_API.post('/api/cases/create', { title: 'New Case', severity: 'medium' }).then(res => {
+      if (!res || res.error) {
+        window.socToast?.({ title: 'Error', sub: res?.error || 'Could not create case', tone: 'error' });
+        return;
+      }
+      const caseId = res._id || res.id || res.caseId || 'new';
+      window.socToast?.({ title: 'New case', sub: `${caseId} created`, tone: 'ok' });
+    });
+  }
 
   return (
     <div className="page" data-screen-label="04 SP-CM Cases">
@@ -199,50 +330,62 @@ function PageCases({ onOpenCase }) {
         actions={<>
           <button className="btn btn-ghost"><Icon.filter width="13" height="13"/> Filter</button>
           <button className="btn btn-ghost">All assignees <Icon.chevron width="12" height="12"/></button>
-          <button className="btn btn-primary" onClick={() => window.socToast?.({title:'New case', sub:'CASE-4472 created', tone:'ok'})}><Icon.plus width="13" height="13"/> New case</button>
+          <button className="btn btn-primary" onClick={handleNewCase}><Icon.plus width="13" height="13"/> New case</button>
         </>}
       />
 
       <div className="page-body">
-        <div className="kanban">
-          {lanes.map(lane => (
-            <div key={lane.key} className="lane">
-              <header className="lane-head" data-sev={lane.sev}>
-                <span className="lane-bar" />
-                <span className="lane-label">{lane.label}</span>
-                <span className="lane-count mono">{lane.items.length}</span>
-                <button className="btn-icon lane-add"><Icon.plus width="12" height="12"/></button>
-              </header>
-              <div className="lane-body">
-                {lane.items.map(c => (
-                  <button
-                    key={c.id}
-                    className={`case-card ${selected?.id === c.id ? 'sel' : ''}`}
-                    onClick={() => { setSelected(c); onOpenCase?.(c); }}
-                  >
-                    <div className="cc-top">
-                      <SevDot sev={c.sev}/>
-                      <span className="cc-id mono">{c.id}</span>
-                      <span className="cc-age mono">{c.age}</span>
-                    </div>
-                    <div className="cc-title">{c.title}</div>
-                    <div className="cc-tags">
-                      {c.tags.map(t => <Chip key={t} mono>{t}</Chip>)}
-                    </div>
-                    <div className="cc-foot">
-                      <span className="cc-alerts mono"><Icon.bell width="10" height="10"/> {c.alerts}</span>
-                      {c.assignee ? (
-                        <span className="cc-assignee"><span className="cc-avatar">{c.assignee[0].toUpperCase()}</span>{c.assignee}</span>
-                      ) : (
-                        <span className="cc-unassigned">unassigned</span>
-                      )}
-                    </div>
-                  </button>
-                ))}
+        {loading && (
+          <div className="kanban-loading">
+            <ChatThinking />
+          </div>
+        )}
+        {error && !loading && (
+          <div className="kanban-error">
+            <p className="mono" style={{color:'var(--r)'}}>{error}</p>
+          </div>
+        )}
+        {!loading && (
+          <div className="kanban">
+            {lanes.map(lane => (
+              <div key={lane.key} className="lane">
+                <header className="lane-head" data-sev={lane.sev}>
+                  <span className="lane-bar" />
+                  <span className="lane-label">{lane.label}</span>
+                  <span className="lane-count mono">{lane.items.length}</span>
+                  <button className="btn-icon lane-add"><Icon.plus width="12" height="12"/></button>
+                </header>
+                <div className="lane-body">
+                  {lane.items.map((c, idx) => (
+                    <button
+                      key={c.id || idx}
+                      className={`case-card ${selected?.id === c.id ? 'sel' : ''}`}
+                      onClick={() => { setSelected(c); onOpenCase?.(c); }}
+                    >
+                      <div className="cc-top">
+                        <SevDot sev={c.sev}/>
+                        <span className="cc-id mono">{c.id}</span>
+                        <span className="cc-age mono">{c.age}</span>
+                      </div>
+                      <div className="cc-title">{c.title}</div>
+                      <div className="cc-tags">
+                        {c.tags.map(t => <Chip key={t} mono>{t}</Chip>)}
+                      </div>
+                      <div className="cc-foot">
+                        <span className="cc-alerts mono"><Icon.bell width="10" height="10"/> {c.alerts}</span>
+                        {c.assignee ? (
+                          <span className="cc-assignee"><span className="cc-avatar">{c.assignee[0].toUpperCase()}</span>{c.assignee}</span>
+                        ) : (
+                          <span className="cc-unassigned">unassigned</span>
+                        )}
+                      </div>
+                    </button>
+                  ))}
+                </div>
               </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
         <div className="cases-hint mono">
           <Icon.brain width="12" height="12"/>
           tip · click any case to open its AI-drafted incident-response runbook
@@ -256,11 +399,19 @@ function PageCases({ onOpenCase }) {
 function PageCorrelation() {
   const D = window.SOC_DATA;
   const [selected, setSelected] = useStateI('a1');
+  const [aiReport, setAiReport] = useStateI(null); // null = show default hardcoded
+  const [correlating, setCorrelating] = useStateI(false);
+  const [graphNodes, setGraphNodes] = useStateI(null); // null = use mock
+  const [graphEdges, setGraphEdges] = useStateI(null); // null = use mock
   const W = 760, H = 480;
 
-  const nodes = D.CORRELATION_NODES.map(n => ({ ...n, px: n.x * W, py: n.y * H }));
+  // Use real nodes/edges if available, otherwise fall back to mock
+  const rawNodes = graphNodes || D.CORRELATION_NODES;
+  const rawEdges = graphEdges || D.CORRELATION_EDGES;
+
+  const nodes = rawNodes.map(n => ({ ...n, px: n.x * W, py: n.y * H }));
   const nodeById = Object.fromEntries(nodes.map(n => [n.id, n]));
-  const edges = D.CORRELATION_EDGES;
+  const edges = rawEdges;
 
   const typeStyle = {
     ip:    { icon: <Icon.globe width="14" height="14"/>, lbl: 'IP' },
@@ -272,6 +423,79 @@ function PageCorrelation() {
   };
   const sel = nodeById[selected];
 
+  function handleAIReport() {
+    if (correlating) return;
+    const indicator = sel?.label || '185.220.101.42';
+    setCorrelating(true);
+    window.SOC_API.post('/api/correlate', { indicator }).then(res => {
+      setCorrelating(false);
+      if (!res || res.error) {
+        window.socToast?.({ title: 'Correlate error', sub: res?.error || 'Failed', tone: 'error' });
+        return;
+      }
+
+      // Build simple graph from API hits
+      const wazuhHits = res.wazuhHits || [];
+      const hiveHits = res.hiveHits || [];
+
+      if (wazuhHits.length > 0 || hiveHits.length > 0) {
+        const newNodes = [];
+        const newEdges = [];
+        const seen = {};
+        let nodeIdx = 0;
+
+        function addNode(id, label, type, sev) {
+          if (!seen[id]) {
+            seen[id] = true;
+            newNodes.push({
+              id,
+              label,
+              type,
+              sev: sev || 'medium',
+              x: 0.15 + (nodeIdx * 0.12) % 0.7,
+              y: 0.2 + Math.floor(nodeIdx / 6) * 0.35,
+            });
+            nodeIdx++;
+          }
+        }
+
+        // Add IPs and agents from wazuh hits
+        for (const hit of wazuhHits.slice(0, 10)) {
+          const src = hit._source || hit;
+          const ip = src.data?.srcip || src.srcip || src.agent?.ip;
+          const agent = src.agent?.name || src.agent?.id;
+          if (ip) addNode(`ip_${ip}`, ip, 'ip', 'high');
+          if (agent) addNode(`agent_${agent}`, agent, 'agent', 'medium');
+          if (ip && agent) newEdges.push([`ip_${ip}`, `agent_${agent}`]);
+        }
+
+        // Add case nodes from hive hits
+        for (const c of hiveHits.slice(0, 5)) {
+          const cid = `case_${c._id || c.id}`;
+          const label = c.title ? c.title.slice(0, 20) : (c._id || 'case');
+          addNode(cid, label, 'case', 'critical');
+          // Connect to first IP if any
+          const firstIp = Object.keys(seen).find(k => k.startsWith('ip_'));
+          if (firstIp) newEdges.push([firstIp, cid]);
+        }
+
+        if (newNodes.length > 0) {
+          setGraphNodes(newNodes);
+          setGraphEdges(newEdges);
+          // Select the first new node
+          setSelected(newNodes[0].id);
+        }
+      }
+
+      if (res.aiAnalysis) {
+        setAiReport(res.aiAnalysis);
+      }
+    }).catch(() => {
+      setCorrelating(false);
+      window.socToast?.({ title: 'Correlate failed', sub: 'Connection error', tone: 'error' });
+    });
+  }
+
   return (
     <div className="page" data-screen-label="05 Correlation">
       <Topbar
@@ -280,7 +504,14 @@ function PageCorrelation() {
         actions={<>
           <button className="btn btn-ghost">Layout: force <Icon.chevron width="12" height="12"/></button>
           <button className="btn btn-ghost">Depth: 2</button>
-          <button className="btn btn-primary"><Icon.brain width="13" height="13"/> AI report</button>
+          <button
+            className="btn btn-primary"
+            onClick={handleAIReport}
+            disabled={correlating}
+          >
+            <Icon.brain width="13" height="13"/>
+            {correlating ? 'Correlating…' : 'AI report'}
+          </button>
         </>}
       />
       <div className="page-body">
@@ -321,11 +552,11 @@ function PageCorrelation() {
                       <circle r="26" fill="var(--bg-2)" stroke={sevColor} strokeWidth={isSel ? 2 : 1.2}/>
                       <foreignObject x="-10" y="-10" width="20" height="20">
                         <div style={{color: sevColor, display:'flex', alignItems:'center', justifyContent:'center', height:'100%'}}>
-                          {typeStyle[n.type].icon}
+                          {typeStyle[n.type]?.icon}
                         </div>
                       </foreignObject>
                       <text y="42" textAnchor="middle" className="graph-label">{n.label}</text>
-                      <text y="55" textAnchor="middle" className="graph-type">{typeStyle[n.type].lbl}</text>
+                      <text y="55" textAnchor="middle" className="graph-type">{typeStyle[n.type]?.lbl}</text>
                     </g>
                   );
                 })}
@@ -334,11 +565,11 @@ function PageCorrelation() {
           </Card>
 
           <aside className="corr-side">
-            <Card title="Entity" sub={sel ? typeStyle[sel.type].lbl : ''}>
+            <Card title="Entity" sub={sel ? typeStyle[sel.type]?.lbl : ''}>
               {sel && (
                 <div className="entity">
                   <div className="entity-icon" style={{color: `var(--${sel.sev === 'critical' ? 'crit' : sel.sev === 'high' ? 'high' : 'med'})`}}>
-                    {typeStyle[sel.type].icon}
+                    {typeStyle[sel.type]?.icon}
                   </div>
                   <div className="entity-name mono">{sel.label}</div>
                   <div className="entity-sev"><SevChip sev={sel.sev}/></div>
@@ -356,10 +587,16 @@ function PageCorrelation() {
               )}
             </Card>
 
-            <Card title="AI report" sub="auto-generated" icon={<Icon.brain width="14" height="14"/>}>
+            <Card title="AI report" sub={correlating ? 'correlating…' : 'auto-generated'} icon={<Icon.brain width="14" height="14"/>}>
               <div className="ai-report">
-                <p>This cluster represents an <strong>active intrusion</strong> originating from <span className="mono">185.220.101.42</span> (Tor exit) that has touched <strong>2 agents</strong> via <strong>2 detection rules</strong>.</p>
-                <p>The path <span className="mono">ip1 → a1 → r1 → c1</span> is the highest-confidence attack chain (T1059.001 → T1071 C2). Hash <span className="mono">a4f8b2c…</span> matches a known Cobalt Strike loader.</p>
+                {aiReport ? (
+                  <p>{aiReport}</p>
+                ) : (
+                  <>
+                    <p>This cluster represents an <strong>active intrusion</strong> originating from <span className="mono">185.220.101.42</span> (Tor exit) that has touched <strong>2 agents</strong> via <strong>2 detection rules</strong>.</p>
+                    <p>The path <span className="mono">ip1 → a1 → r1 → c1</span> is the highest-confidence attack chain (T1059.001 → T1071 C2). Hash <span className="mono">a4f8b2c…</span> matches a known Cobalt Strike loader.</p>
+                  </>
+                )}
                 <div className="ai-report-actions">
                   <button className="btn btn-primary btn-sm">Open IR runbook</button>
                   <button className="btn btn-ghost btn-sm">Export PDF</button>

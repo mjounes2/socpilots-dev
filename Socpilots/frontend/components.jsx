@@ -59,7 +59,9 @@ function Chip({ children, tone = 'default', mono = false, icon }) {
 function Kbd({ children }) { return <kbd className="kbd">{children}</kbd>; }
 
 // ============= SIDEBAR =============
-function Sidebar({ current, onNav }) {
+function Sidebar({ current, onNav, onLogout }) {
+  const { username, role } = window.SOC_API.user();
+  const initials = (username || 'U').slice(0, 2).toUpperCase();
   const items = [
     { group: 'OVERVIEW', items: [
       { id: 'dashboard',  label: 'Dashboard',  icon: Icon.grid, badge: null },
@@ -130,14 +132,14 @@ function Sidebar({ current, onNav }) {
           <SevDot sev="low" />
           <div className="sb-status-text">
             <div className="sb-status-label">SIEM · SP-CM · AI</div>
-            <div className="sb-status-sub">all systems nominal · 41ms</div>
+            <div className="sb-status-sub">all systems nominal</div>
           </div>
         </div>
-        <div className="sb-user">
-          <div className="sb-avatar">YJ</div>
+        <div className="sb-user" style={{cursor:'pointer'}} onClick={onLogout} title="Logout">
+          <div className="sb-avatar">{initials}</div>
           <div className="sb-user-text">
-            <div className="sb-user-name">younes</div>
-            <div className="sb-user-role">analyst · L3</div>
+            <div className="sb-user-name">{username || 'user'}</div>
+            <div className="sb-user-role">{role || 'analyst'} · logout</div>
           </div>
         </div>
       </div>
