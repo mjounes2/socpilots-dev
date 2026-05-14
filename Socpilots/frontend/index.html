@@ -4041,7 +4041,7 @@ const LOAD_MAP={dashboard:loadDashboard,agents:loadAgents,alerts:loadAlerts,rule
   langchain:()=>{lcCheckHealth();},
   settings:loadSmtpSettings,
   notifications:()=>{_notifPgPage=1;loadNotificationsPage();},
-  sla:loadSla};
+  sla:()=>loadSla()};
 
 function go(p){
   document.querySelectorAll('.page').forEach(x=>x.classList.remove('active'));
@@ -10611,6 +10611,11 @@ function initSocketIO(){
       `Agent <b>${esc(d.agent_name||'?')}</b> (ID: ${esc(d.agent_id||'?')}) has not sent logs for ${esc(hrsStr)}`,
       d.severity==='critical'?'#ff1744':'#ff9800');
   });
+
+  _socket.on('sla:breached', () => {
+    if (CUR === 'sla') loadSla();
+    else loadSlaStats && loadSlaStats();
+  });
 }
 
 function appendDsLiveFeed(type, html, color){
@@ -11917,13 +11922,6 @@ async function slaDeletePolicy(id) {
   loadSlaPolicies();
 }
 
-// Handle live breach events from server
-if (typeof _socket !== 'undefined' && _socket) {
-  _socket.on('sla:breached', data => {
-    if (CUR === 'sla') loadSla();
-    loadSlaStats();
-  });
-}
 </script>
 
 <!-- Live toast notification container (Socket.IO events) -->
