@@ -1464,15 +1464,25 @@ app.post('/api/hunt', authMW, async (req, res) => {
   if (!value) return res.status(400).json({ error: 'value required' });
 
   // First search OpenSearch directly
-  const fieldMap = { ip: 'data.srcip', domain: 'data.srcip', hash: 'data.hash', user: 'data.dstuser', process: 'data.process_name', rule: 'rule.id' };
-  const field = fieldMap[type] || 'data.srcip';
+  // user type: search both srcuser and dstuser so both auth directions are covered
+  const fieldMap = { ip: 'data.srcip', domain: 'data.srcip', hash: 'data.hash', process: 'data.process_name', rule: 'rule.id' };
+  const field = fieldMap[type];
 
   let osResults = [];
   try {
+    const shouldClauses = field
+      ? [{ term: { [field]: value } }, { match: { full_log: value } }]
+      : [
+          { term: { 'data.srcuser': value } },
+          { term: { 'data.dstuser': value } },
+          { term: { 'data.win.eventdata.targetUserName': value } },
+          { term: { 'data.win.eventdata.subjectUserName': value } },
+          { match: { full_log: value } },
+        ];
     const r = await osSearch({
       size: 50,
       sort: [{ '@timestamp': 'desc' }],
-      query: { bool: { should: [{ term: { [field]: value } }, { match: { full_log: value } }], minimum_should_match: 1 } },
+      query: { bool: { should: shouldClauses, minimum_should_match: 1 } },
     });
     osResults = r.hits.hits.map(h => ({
       id: h._id, timestamp: h._source['@timestamp'],
@@ -1482,24 +1492,28 @@ app.post('/api/hunt', authMW, async (req, res) => {
     }));
   } catch (e) { console.error('[hunt-os]', e.message); }
 
-  // AI analysis + hunt query generation (run in parallel)
-  let aiAnalysis = '';
+  // Only call AI if there are real SIEM hits — avoids hallucinated analysis on empty results
+  let aiAnalysis = osResults.length === 0
+    ? `No SIEM alerts found for ${type} "${value}". The indicator is not present in the current OpenSearch index.`
+    : '';
   let huntQueries = null;
-  await Promise.allSettled([
-    n8nAsk(
-      `Threat hunt analysis for ${type}: "${value}". ` +
-      `OpenSearch found ${osResults.length} matching alerts. ` +
-      `Provide: risk assessment, MITRE mapping, recommended response actions, and IOC context.`,
-      'soc-hunt', req.user
-    ).then(r => { aiAnalysis = r.text || 'AI analysis unavailable'; })
-     .catch(() => { aiAnalysis = 'AI analysis unavailable'; }),
+  if (osResults.length > 0) {
+    await Promise.allSettled([
+      n8nAsk(
+        `Threat hunt analysis for ${type}: "${value}". ` +
+        `OpenSearch found ${osResults.length} matching alerts. ` +
+        `Provide: risk assessment, MITRE mapping, recommended response actions, and IOC context.`,
+        'soc-hunt', req.user
+      ).then(r => { aiAnalysis = r.text || 'AI analysis unavailable'; })
+       .catch(() => { aiAnalysis = 'AI analysis unavailable'; }),
 
-    axios.post(`${LANGCHAIN_URL}/hunt-queries`,
-      { type, value, context: `SIEM found ${osResults.length} matching alerts` },
-      { timeout: 60_000, headers: { Authorization: `Bearer ${LANGCHAIN_TOKEN}` } }
-    ).then(r => { huntQueries = r.data; })
-     .catch(() => {}),
-  ]);
+      axios.post(`${LANGCHAIN_URL}/hunt-queries`,
+        { type, value, context: `SIEM found ${osResults.length} matching alerts` },
+        { timeout: 60_000, headers: { Authorization: `Bearer ${LANGCHAIN_TOKEN}` } }
+      ).then(r => { huntQueries = r.data; })
+       .catch(() => {}),
+    ]);
+  }
 
   res.json({ osResults, osTotal: osResults.length, aiAnalysis, huntQueries });
 });
