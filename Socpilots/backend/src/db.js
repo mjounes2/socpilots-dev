@@ -678,6 +678,82 @@ async function initSchema() {
       created_at       TIMESTAMPTZ DEFAULT NOW()
     )`,
     `CREATE INDEX IF NOT EXISTS idx_inv_comments_inv ON investigation_comments(investigation_id)`,
+
+    // ── SLA Policies ──────────────────────────────────────────────
+    `CREATE TABLE IF NOT EXISTS sla_policies (
+      id                  SERIAL PRIMARY KEY,
+      name                VARCHAR(100) NOT NULL UNIQUE,
+      description         TEXT,
+      entity_type         VARCHAR(30)  NOT NULL DEFAULT 'all',
+      severity            VARCHAR(20)  NOT NULL DEFAULT 'all',
+      response_minutes    INT          NOT NULL DEFAULT 60,
+      resolution_minutes  INT          NOT NULL DEFAULT 480,
+      escalation_chain    JSONB        NOT NULL DEFAULT '[]',
+      active              BOOLEAN      DEFAULT true,
+      created_by          VARCHAR(50),
+      created_at          TIMESTAMPTZ  DEFAULT NOW(),
+      updated_at          TIMESTAMPTZ  DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_sla_pol_active ON sla_policies(active)`,
+    `CREATE INDEX IF NOT EXISTS idx_sla_pol_sev    ON sla_policies(severity)`,
+
+    // ── SLA Instances (live timers) ───────────────────────────────
+    `CREATE TABLE IF NOT EXISTS sla_instances (
+      id                  SERIAL PRIMARY KEY,
+      policy_id           INT          REFERENCES sla_policies(id) ON DELETE SET NULL,
+      policy_name         VARCHAR(100),
+      entity_type         VARCHAR(30)  NOT NULL,
+      entity_id           TEXT         NOT NULL,
+      entity_label        TEXT,
+      severity            VARCHAR(20),
+      sla_type            VARCHAR(30)  NOT NULL DEFAULT 'response',
+      response_minutes    INT          NOT NULL DEFAULT 60,
+      resolution_minutes  INT          NOT NULL DEFAULT 480,
+      status              VARCHAR(20)  NOT NULL DEFAULT 'running',
+      owner               VARCHAR(100),
+      started_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+      paused_at           TIMESTAMPTZ,
+      completed_at        TIMESTAMPTZ,
+      total_paused_ms     BIGINT       NOT NULL DEFAULT 0,
+      notified_70         BOOLEAN      NOT NULL DEFAULT false,
+      notified_90         BOOLEAN      NOT NULL DEFAULT false,
+      notified_breach     BOOLEAN      NOT NULL DEFAULT false,
+      escalation_level    INT          NOT NULL DEFAULT 0,
+      last_escalated_at   TIMESTAMPTZ,
+      created_at          TIMESTAMPTZ  DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_sla_inst_entity  ON sla_instances(entity_type, entity_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_sla_inst_status  ON sla_instances(status)`,
+    `CREATE INDEX IF NOT EXISTS idx_sla_inst_created ON sla_instances(created_at DESC)`,
+
+    // ── SLA Events (full audit log) ───────────────────────────────
+    `CREATE TABLE IF NOT EXISTS sla_events (
+      id                  SERIAL PRIMARY KEY,
+      sla_instance_id     INT          NOT NULL REFERENCES sla_instances(id) ON DELETE CASCADE,
+      event_type          VARCHAR(30)  NOT NULL,
+      actor               VARCHAR(100),
+      reason              TEXT,
+      prev_status         VARCHAR(20),
+      new_status          VARCHAR(20),
+      metadata            JSONB        DEFAULT '{}',
+      created_at          TIMESTAMPTZ  DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_sla_events_inst ON sla_events(sla_instance_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_sla_events_type ON sla_events(event_type)`,
+    `CREATE INDEX IF NOT EXISTS idx_sla_events_created ON sla_events(created_at DESC)`,
+
+    // ── Default SLA policies (idempotent) ─────────────────────────
+    `INSERT INTO sla_policies(name,description,entity_type,severity,response_minutes,resolution_minutes,escalation_chain,created_by)
+     VALUES
+       ('Critical Incident SLA','Critical severity — 15 min response / 2 hr resolution','all','critical',15,120,
+        '[{"at_pct":70,"action":"notify","target":"soc-lead"},{"at_pct":90,"action":"escalate","target":"incident-commander"}]'::jsonb,'system'),
+       ('High Severity SLA','High severity — 30 min response / 4 hr resolution','all','high',30,240,
+        '[{"at_pct":70,"action":"notify","target":"soc-lead"},{"at_pct":90,"action":"escalate","target":"soc-lead"}]'::jsonb,'system'),
+       ('Medium Severity SLA','Medium severity — 2 hr response / 24 hr resolution','all','medium',120,1440,
+        '[{"at_pct":80,"action":"notify","target":"analyst"},{"at_pct":100,"action":"escalate","target":"soc-lead"}]'::jsonb,'system'),
+       ('Low Severity SLA','Low severity — 8 hr response / 72 hr resolution','all','low',480,4320,
+        '[{"at_pct":80,"action":"notify","target":"analyst"},{"at_pct":100,"action":"escalate","target":"soc-lead"}]'::jsonb,'system')
+     ON CONFLICT (name) DO NOTHING`,
   ];
 
   for (const q of queries) {
@@ -2568,6 +2644,26 @@ module.exports = {
   // Correlation Persistence
   saveCorrelation,
   getCorrelations,
+  // SLA Management
+  listSlaPolicies,
+  getSlaPolicy,
+  getSlaPolicyForEntity,
+  createSlaPolicy,
+  updateSlaPolicy,
+  deleteSlaPolicy,
+  createSlaInstance,
+  getSlaInstance,
+  getSlaForEntity,
+  listSlaInstances,
+  pauseSlaInstance,
+  resumeSlaInstance,
+  completeSlaInstance,
+  cancelSlaInstance,
+  applySlaTickerUpdates,
+  getActiveSlaInstances,
+  createSlaEvent,
+  listSlaEvents,
+  getSlaDashboardStats,
 };
 
 // ── Evidence Files CRUD ──────────────────────────────────
@@ -2703,4 +2799,215 @@ async function recordLateralCase(userKey, hostKey, hiveCaseId) {
     `INSERT INTO lateral_movement_cases(user_key, host_key, hive_case) VALUES($1,$2,$3)`,
     [userKey, hostKey, hiveCaseId || null]
   );
+}
+
+// ── SLA Policies CRUD ────────────────────────────────────────────
+async function listSlaPolicies() {
+  const r = await pool.query(`SELECT * FROM sla_policies ORDER BY severity, name`);
+  return r.rows;
+}
+
+async function getSlaPolicy(id) {
+  const r = await pool.query(`SELECT * FROM sla_policies WHERE id=$1`, [id]);
+  return r.rows[0] || null;
+}
+
+async function getSlaPolicyForEntity(entityType, severity) {
+  const r = await pool.query(
+    `SELECT * FROM sla_policies
+     WHERE active=true
+       AND (entity_type=$1 OR entity_type='all')
+       AND (severity=$2   OR severity='all')
+     ORDER BY
+       (CASE WHEN entity_type=$1 THEN 0 ELSE 1 END),
+       (CASE WHEN severity=$2   THEN 0 ELSE 1 END)
+     LIMIT 1`,
+    [entityType, severity || 'low']
+  );
+  return r.rows[0] || null;
+}
+
+async function createSlaPolicy({ name, description, entityType, severity, responseMinutes, resolutionMinutes, escalationChain, createdBy }) {
+  const r = await pool.query(
+    `INSERT INTO sla_policies(name,description,entity_type,severity,response_minutes,resolution_minutes,escalation_chain,created_by)
+     VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+    [name, description || null, entityType || 'all', severity || 'all',
+     responseMinutes, resolutionMinutes, JSON.stringify(escalationChain || []), createdBy || null]
+  );
+  return r.rows[0];
+}
+
+async function updateSlaPolicy(id, { name, description, entityType, severity, responseMinutes, resolutionMinutes, escalationChain, active }) {
+  const r = await pool.query(
+    `UPDATE sla_policies SET name=$2,description=$3,entity_type=$4,severity=$5,
+       response_minutes=$6,resolution_minutes=$7,escalation_chain=$8,active=$9,updated_at=NOW()
+     WHERE id=$1 RETURNING *`,
+    [id, name, description || null, entityType || 'all', severity || 'all',
+     responseMinutes, resolutionMinutes, JSON.stringify(escalationChain || []),
+     active !== false]
+  );
+  return r.rows[0] || null;
+}
+
+async function deleteSlaPolicy(id) {
+  const r = await pool.query(`DELETE FROM sla_policies WHERE id=$1 RETURNING id`, [id]);
+  return r.rowCount > 0;
+}
+
+// ── SLA Instances lifecycle ───────────────────────────────────────
+async function createSlaInstance({ policyId, policyName, entityType, entityId, entityLabel, severity, slaType, responseMinutes, resolutionMinutes, owner }) {
+  const r = await pool.query(
+    `INSERT INTO sla_instances(policy_id,policy_name,entity_type,entity_id,entity_label,severity,sla_type,response_minutes,resolution_minutes,owner,status,started_at)
+     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'running',NOW()) RETURNING *`,
+    [policyId || null, policyName || null, entityType, String(entityId),
+     entityLabel || null, severity || null, slaType || 'response',
+     responseMinutes, resolutionMinutes, owner || null]
+  );
+  return r.rows[0];
+}
+
+async function getSlaInstance(id) {
+  const r = await pool.query(`SELECT * FROM sla_instances WHERE id=$1`, [id]);
+  return r.rows[0] || null;
+}
+
+async function getSlaForEntity(entityType, entityId) {
+  const r = await pool.query(
+    `SELECT * FROM sla_instances WHERE entity_type=$1 AND entity_id=$2 ORDER BY created_at DESC LIMIT 1`,
+    [entityType, String(entityId)]
+  );
+  return r.rows[0] || null;
+}
+
+async function listSlaInstances({ page = 1, pageSize = 50, status, entityType } = {}) {
+  const vals = [];
+  const where = [];
+  if (status)     { vals.push(status);     where.push(`status=$${vals.length}`); }
+  if (entityType) { vals.push(entityType); where.push(`entity_type=$${vals.length}`); }
+  const offset = (page - 1) * pageSize;
+  vals.push(pageSize, offset);
+  const r = await pool.query(
+    `SELECT *, COUNT(*) OVER() AS total_count FROM sla_instances
+     ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+     ORDER BY created_at DESC LIMIT $${vals.length - 1} OFFSET $${vals.length}`,
+    vals
+  );
+  return { rows: r.rows, total: parseInt(r.rows[0]?.total_count || 0) };
+}
+
+async function pauseSlaInstance(id, actor, reason) {
+  const inst = await getSlaInstance(id);
+  if (!inst || inst.status !== 'running') return null;
+  const r = await pool.query(
+    `UPDATE sla_instances SET status='paused', paused_at=NOW() WHERE id=$1 RETURNING *`, [id]
+  );
+  if (r.rowCount) await createSlaEvent({ slaInstanceId: id, eventType: 'paused', actor, reason, prevStatus: 'running', newStatus: 'paused' });
+  return r.rows[0] || null;
+}
+
+async function resumeSlaInstance(id, actor, reason) {
+  const inst = await getSlaInstance(id);
+  if (!inst || inst.status !== 'paused') return null;
+  const pausedMs = inst.paused_at ? Date.now() - new Date(inst.paused_at).getTime() : 0;
+  const r = await pool.query(
+    `UPDATE sla_instances SET status='running', paused_at=NULL, total_paused_ms=total_paused_ms+$2 WHERE id=$1 RETURNING *`,
+    [id, pausedMs]
+  );
+  if (r.rowCount) await createSlaEvent({ slaInstanceId: id, eventType: 'resumed', actor, reason, prevStatus: 'paused', newStatus: 'running' });
+  return r.rows[0] || null;
+}
+
+async function completeSlaInstance(id, actor, reason) {
+  const inst = await getSlaInstance(id);
+  if (!inst || !['running', 'paused', 'breached'].includes(inst.status)) return null;
+  const r = await pool.query(
+    `UPDATE sla_instances SET status='completed', completed_at=NOW() WHERE id=$1 RETURNING *`, [id]
+  );
+  if (r.rowCount) await createSlaEvent({ slaInstanceId: id, eventType: 'completed', actor, reason, prevStatus: inst.status, newStatus: 'completed' });
+  return r.rows[0] || null;
+}
+
+async function cancelSlaInstance(id, actor, reason) {
+  const inst = await getSlaInstance(id);
+  if (!inst) return null;
+  const r = await pool.query(
+    `UPDATE sla_instances SET status='cancelled', completed_at=NOW() WHERE id=$1 AND status NOT IN ('completed','cancelled') RETURNING *`, [id]
+  );
+  if (r.rowCount) await createSlaEvent({ slaInstanceId: id, eventType: 'cancelled', actor, reason, prevStatus: inst.status, newStatus: 'cancelled' });
+  return r.rows[0] || null;
+}
+
+async function applySlaTickerUpdates(id, updates) {
+  const sets = [];
+  const vals = [id];
+  const add = (col, val) => { if (val !== undefined) { vals.push(val); sets.push(`${col}=$${vals.length}`); } };
+  add('notified_70',     updates.notified_70);
+  add('notified_90',     updates.notified_90);
+  add('notified_breach', updates.notified_breach);
+  add('status',          updates.status);
+  add('escalation_level', updates.escalation_level);
+  add('last_escalated_at', updates.last_escalated_at);
+  if (!sets.length) return null;
+  const r = await pool.query(`UPDATE sla_instances SET ${sets.join(',')} WHERE id=$1 RETURNING *`, vals);
+  return r.rows[0] || null;
+}
+
+async function getActiveSlaInstances() {
+  const r = await pool.query(`SELECT * FROM sla_instances WHERE status='running' ORDER BY started_at`);
+  return r.rows;
+}
+
+// ── SLA Events (audit log) ────────────────────────────────────────
+async function createSlaEvent({ slaInstanceId, eventType, actor, reason, prevStatus, newStatus, metadata = {} }) {
+  const r = await pool.query(
+    `INSERT INTO sla_events(sla_instance_id,event_type,actor,reason,prev_status,new_status,metadata)
+     VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+    [slaInstanceId, eventType, actor || null, reason || null, prevStatus || null, newStatus || null, JSON.stringify(metadata)]
+  );
+  return r.rows[0];
+}
+
+async function listSlaEvents(slaInstanceId) {
+  const r = await pool.query(
+    `SELECT * FROM sla_events WHERE sla_instance_id=$1 ORDER BY created_at DESC`, [slaInstanceId]
+  );
+  return r.rows;
+}
+
+// ── SLA Analytics ─────────────────────────────────────────────────
+async function getSlaDashboardStats() {
+  const counts = await pool.query(`
+    SELECT
+      COUNT(*) FILTER (WHERE status='running')   AS active_count,
+      COUNT(*) FILTER (WHERE status='breached')  AS breached_count,
+      COUNT(*) FILTER (WHERE status='completed') AS completed_count,
+      COUNT(*) FILTER (WHERE status='paused')    AS paused_count
+    FROM sla_instances WHERE created_at > NOW() - INTERVAL '7 days'
+  `);
+  const mttr = await pool.query(`
+    SELECT ROUND(AVG(
+      EXTRACT(EPOCH FROM (completed_at - started_at)) / 60.0 - total_paused_ms / 60000.0
+    ))::INT AS mttr_minutes
+    FROM sla_instances
+    WHERE status='completed' AND completed_at IS NOT NULL
+      AND created_at > NOW() - INTERVAL '30 days'
+  `);
+  const compliance = await pool.query(`
+    SELECT
+      COUNT(*) FILTER (WHERE status IN ('completed','breached')) AS total_done,
+      COUNT(*) FILTER (WHERE status='completed' AND notified_breach=false) AS on_time
+    FROM sla_instances WHERE created_at > NOW() - INTERVAL '30 days'
+  `);
+  const c  = counts.rows[0];
+  const cp = compliance.rows[0];
+  const complRate = parseInt(cp.total_done) > 0
+    ? Math.round((parseInt(cp.on_time) / parseInt(cp.total_done)) * 100) : null;
+  return {
+    active:          parseInt(c.active_count),
+    breached:        parseInt(c.breached_count),
+    completed:       parseInt(c.completed_count),
+    paused:          parseInt(c.paused_count),
+    mttr_minutes:    mttr.rows[0].mttr_minutes || null,
+    compliance_rate: complRate,
+  };
 }

@@ -6706,6 +6706,20 @@ const PAGE_CONTEXTS = {
       { name: 'Filters', desc: 'Filter by read/unread status or notification type. Sorted newest-first.' },
       { name: 'Bell badge', desc: 'The bell icon in the top-right header shows unread count. Updates live via WebSocket when new events arrive — no page refresh needed.' },
     ]
+  },
+  sla: {
+    title: 'SLA Management',
+    desc: 'Track response and resolution SLAs for investigations, cases, and SIEM alerts. Monitor breach risk, pause/resume timers, and manage SLA policies.',
+    sections: [
+      { name: 'KPI Cards', desc: 'Five tiles: Active SLAs (running timers), Breached (past deadline), Paused (suspended timers), Compliance Rate (% resolved on time in last 30 days), Average MTTR (mean time to resolve in last 30 days).' },
+      { name: 'Active tab', desc: 'All currently running SLA timers. Each row shows entity, type (investigation/case/alert), severity, policy name, elapsed time, remaining time, risk bar (green < 70%, yellow 70-89%, red 90%+), owner, and Pause/Done buttons.' },
+      { name: 'Breached tab', desc: 'SLAs that exceeded their deadline. Shows elapsed time and how far over the SLA window the entity went. Use Resolve button to mark the entity as handled.' },
+      { name: 'All SLAs tab', desc: 'Full paginated list of every SLA instance. Filter by status (running/paused/completed/breached/cancelled) and entity type. Click any row to open the audit log detail modal.' },
+      { name: 'Policies tab', desc: 'CRUD for SLA policies (admin only). Each policy defines response minutes, resolution minutes, target entity type, severity tier, and an escalation chain (notify/escalate actions at 70%/90%/100% thresholds). Four default policies are pre-seeded.' },
+      { name: 'Start SLA button', desc: 'Manually start an SLA timer for any entity. Select entity type, enter the ID, optional label, and severity. The system auto-selects the best matching policy.' },
+      { name: 'SLA detail modal', desc: 'Opens on row click. Shows full timing breakdown (elapsed, remaining, pause duration), breach percentage, owner, and full chronological audit log of every timer event (started, paused, resumed, threshold hits, breached, completed).' },
+      { name: 'Background ticker', desc: 'A 60-second server-side ticker monitors all running SLAs. At 70%: sends a warning notification. At 90%: sends critical escalation notification. At 100%: marks SLA as breached, sends breach alert, and emits a WebSocket event for live updates.' },
+    ]
   }
 };
 
@@ -6774,6 +6788,247 @@ Your rules:
   }
 });
 
+// ═══════════════════════════════════════════════════════════════
+// ─── SLA MANAGEMENT ─────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════
+
+// Compute derived fields (elapsed, remaining, breach%) from stored timestamps
+function computeSlaStatus(inst) {
+  const now = Date.now();
+  const startMs = new Date(inst.started_at).getTime();
+  const totalPaused = parseInt(inst.total_paused_ms || 0);
+  let elapsedMs;
+  if (inst.status === 'paused' && inst.paused_at) {
+    elapsedMs = new Date(inst.paused_at).getTime() - startMs - totalPaused;
+  } else if (['completed', 'breached', 'cancelled'].includes(inst.status) && inst.completed_at) {
+    elapsedMs = new Date(inst.completed_at).getTime() - startMs - totalPaused;
+  } else {
+    elapsedMs = now - startMs - totalPaused;
+  }
+  const durationMs  = inst.response_minutes * 60_000;
+  const remainingMs = Math.max(0, durationMs - elapsedMs);
+  const pct         = Math.min(Math.round((elapsedMs / durationMs) * 100), 9999);
+  const fmt = ms => {
+    const s = Math.floor(Math.abs(ms) / 1000);
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+    return h > 0 ? `${h}h ${m}m` : m > 0 ? `${m}m ${sec}s` : `${sec}s`;
+  };
+  let riskLevel = 'ok';
+  if      (inst.status === 'completed' || inst.status === 'cancelled') riskLevel = inst.status;
+  else if (pct >= 100) riskLevel = 'breached';
+  else if (pct >= 90)  riskLevel = 'critical';
+  else if (pct >= 70)  riskLevel = 'at_risk';
+  return { ...inst, elapsed_ms: elapsedMs, remaining_ms: remainingMs,
+    elapsed_human: fmt(elapsedMs), remaining_human: fmt(remainingMs),
+    breach_pct: pct, risk_level: riskLevel };
+}
+
+// ── SLA Policy CRUD ──────────────────────────────────────────────
+app.get('/api/sla/policies', authMW, async (req, res) => {
+  try {
+    const policies = await db.listSlaPolicies();
+    res.json({ policies, total: policies.length });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/sla/policies', authMW, requireRole('admin'), async (req, res) => {
+  try {
+    const { name, description, entity_type, severity, response_minutes, resolution_minutes, escalation_chain } = req.body;
+    if (!name || !response_minutes || !resolution_minutes)
+      return res.status(400).json({ error: 'name, response_minutes, resolution_minutes required' });
+    const p = await db.createSlaPolicy({
+      name, description, entityType: entity_type, severity,
+      responseMinutes: parseInt(response_minutes), resolutionMinutes: parseInt(resolution_minutes),
+      escalationChain: escalation_chain || [], createdBy: req.user.username,
+    });
+    res.status(201).json(p);
+  } catch(e) {
+    if (e.code === '23505') return res.status(409).json({ error: 'Policy name already exists' });
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.put('/api/sla/policies/:id', authMW, requireRole('admin'), async (req, res) => {
+  try {
+    const { name, description, entity_type, severity, response_minutes, resolution_minutes, escalation_chain, active } = req.body;
+    if (!name || !response_minutes || !resolution_minutes)
+      return res.status(400).json({ error: 'name, response_minutes, resolution_minutes required' });
+    const p = await db.updateSlaPolicy(parseInt(req.params.id), {
+      name, description, entityType: entity_type, severity,
+      responseMinutes: parseInt(response_minutes), resolutionMinutes: parseInt(resolution_minutes),
+      escalationChain: escalation_chain || [], active,
+    });
+    if (!p) return res.status(404).json({ error: 'policy not found' });
+    res.json(p);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/sla/policies/:id', authMW, requireRole('admin'), async (req, res) => {
+  try {
+    const ok = await db.deleteSlaPolicy(parseInt(req.params.id));
+    if (!ok) return res.status(404).json({ error: 'policy not found' });
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── SLA Instance lifecycle ───────────────────────────────────────
+app.post('/api/sla/start', authMW, requireRole('l2'), async (req, res) => {
+  try {
+    const { entity_type, entity_id, entity_label, severity, sla_type } = req.body;
+    if (!entity_type || !entity_id)
+      return res.status(400).json({ error: 'entity_type and entity_id required' });
+    const policy = await db.getSlaPolicyForEntity(entity_type, severity);
+    if (!policy) return res.status(404).json({ error: 'No SLA policy found for entity type and severity' });
+    const inst = await db.createSlaInstance({
+      policyId: policy.id, policyName: policy.name,
+      entityType: entity_type, entityId: String(entity_id),
+      entityLabel: entity_label || null, severity: severity || null,
+      slaType: sla_type || 'response',
+      responseMinutes: policy.response_minutes,
+      resolutionMinutes: policy.resolution_minutes,
+      owner: req.user.username,
+    });
+    await db.createSlaEvent({ slaInstanceId: inst.id, eventType: 'started', actor: req.user.username, newStatus: 'running' });
+    res.status(201).json(computeSlaStatus(inst));
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/sla/instances/:id/pause', authMW, requireRole('l2'), async (req, res) => {
+  try {
+    const inst = await db.pauseSlaInstance(parseInt(req.params.id), req.user.username, req.body.reason);
+    if (!inst) return res.status(404).json({ error: 'SLA not found or not running' });
+    res.json(computeSlaStatus(inst));
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/sla/instances/:id/resume', authMW, requireRole('l2'), async (req, res) => {
+  try {
+    const inst = await db.resumeSlaInstance(parseInt(req.params.id), req.user.username, req.body.reason);
+    if (!inst) return res.status(404).json({ error: 'SLA not found or not paused' });
+    res.json(computeSlaStatus(inst));
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/sla/instances/:id/stop', authMW, requireRole('l2'), async (req, res) => {
+  try {
+    const inst = await db.completeSlaInstance(parseInt(req.params.id), req.user.username, req.body.reason);
+    if (!inst) return res.status(404).json({ error: 'SLA not found or already finished' });
+    res.json(computeSlaStatus(inst));
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/sla/instances/:id/cancel', authMW, requireRole('l2'), async (req, res) => {
+  try {
+    const inst = await db.cancelSlaInstance(parseInt(req.params.id), req.user.username, req.body.reason);
+    if (!inst) return res.status(404).json({ error: 'SLA not found' });
+    res.json(computeSlaStatus(inst));
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/sla/instances/:id', authMW, async (req, res) => {
+  try {
+    const inst = await db.getSlaInstance(parseInt(req.params.id));
+    if (!inst) return res.status(404).json({ error: 'not found' });
+    res.json(computeSlaStatus(inst));
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/sla/instances/:id/events', authMW, async (req, res) => {
+  try {
+    const events = await db.listSlaEvents(parseInt(req.params.id));
+    res.json({ events, total: events.length });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/sla/instances', authMW, async (req, res) => {
+  try {
+    const page      = Math.max(parseInt(req.query.page) || 1, 1);
+    const page_size = Math.min(parseInt(req.query.page_size) || 50, 200);
+    const { rows, total } = await db.listSlaInstances({
+      page, pageSize: page_size,
+      status: req.query.status || undefined,
+      entityType: req.query.entity_type || undefined,
+    });
+    res.json({ items: rows.map(computeSlaStatus), total, page, page_size, has_more: page * page_size < total });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/sla/entity', authMW, async (req, res) => {
+  try {
+    const { type, id } = req.query;
+    if (!type || !id) return res.status(400).json({ error: 'type and id required' });
+    const inst = await db.getSlaForEntity(type, id);
+    if (!inst) return res.status(404).json({ error: 'no SLA found' });
+    res.json(computeSlaStatus(inst));
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── SLA Dashboard & list views ───────────────────────────────────
+app.get('/api/sla/dashboard', authMW, async (req, res) => {
+  try {
+    const stats = await db.getSlaDashboardStats();
+    res.json(stats);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/sla/active', authMW, async (req, res) => {
+  try {
+    const page      = Math.max(parseInt(req.query.page) || 1, 1);
+    const page_size = Math.min(parseInt(req.query.page_size) || 50, 200);
+    const { rows, total } = await db.listSlaInstances({ page, pageSize: page_size, status: 'running', entityType: req.query.entity_type || undefined });
+    res.json({ items: rows.map(computeSlaStatus), total, page, page_size, has_more: page * page_size < total });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/sla/breached', authMW, async (req, res) => {
+  try {
+    const page      = Math.max(parseInt(req.query.page) || 1, 1);
+    const page_size = Math.min(parseInt(req.query.page_size) || 50, 200);
+    const { rows, total } = await db.listSlaInstances({ page, pageSize: page_size, status: 'breached', entityType: req.query.entity_type || undefined });
+    res.json({ items: rows.map(computeSlaStatus), total, page, page_size, has_more: page * page_size < total });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── SLA breach detection ticker (runs every 60s) ─────────────────
+async function slaTickerRun() {
+  try {
+    const instances = await db.getActiveSlaInstances();
+    for (const inst of instances) {
+      const elapsedMs  = Date.now() - new Date(inst.started_at).getTime() - parseInt(inst.total_paused_ms || 0);
+      const durationMs = inst.response_minutes * 60_000;
+      const pct        = (elapsedMs / durationMs) * 100;
+      const updates    = {};
+      const label      = inst.entity_label || `${inst.entity_type} ${inst.entity_id}`;
+
+      if (!inst.notified_70 && pct >= 70) {
+        updates.notified_70 = true;
+        await db.createNotification('sla', `SLA At Risk: ${label}`,
+          `${inst.policy_name || 'SLA'} has used ${Math.round(pct)}% of its ${inst.response_minutes}m window.`,
+          'medium', null, { sla_instance_id: inst.id, breach_pct: Math.round(pct) });
+        await db.createSlaEvent({ slaInstanceId: inst.id, eventType: 'threshold_70', reason: `${Math.round(pct)}% elapsed` });
+      }
+      if (!inst.notified_90 && pct >= 90) {
+        updates.notified_90 = true;
+        await db.createNotification('sla', `SLA Critical (90%): ${label}`,
+          `${inst.policy_name || 'SLA'} for ${label} has consumed 90% of its ${inst.response_minutes}m window. Escalate immediately.`,
+          'high', null, { sla_instance_id: inst.id, breach_pct: Math.round(pct) });
+        await db.createSlaEvent({ slaInstanceId: inst.id, eventType: 'threshold_90', reason: `${Math.round(pct)}% elapsed` });
+      }
+      if (!inst.notified_breach && pct >= 100) {
+        updates.notified_breach = true;
+        updates.status = 'breached';
+        await db.createNotification('sla', `SLA BREACHED: ${label}`,
+          `${inst.policy_name || 'SLA'} for ${label} exceeded its ${inst.response_minutes}m SLA window by ${Math.round((elapsedMs - durationMs) / 60_000)}m.`,
+          'critical', null, { sla_instance_id: inst.id, breach_pct: Math.round(pct) });
+        await db.createSlaEvent({ slaInstanceId: inst.id, eventType: 'breached', reason: 'SLA window exceeded', prevStatus: 'running', newStatus: 'breached' });
+        io.emit('sla:breached', { id: inst.id, entity_type: inst.entity_type, entity_id: inst.entity_id, label });
+      }
+
+      if (Object.keys(updates).length) await db.applySlaTickerUpdates(inst.id, updates);
+    }
+  } catch(e) { console.error('[SLA-TICKER]', e.message); }
+}
+
 // ─── STATIC (must be last — after all /api routes) ──────────────
 app.use(express.static(path.join(__dirname, '../../frontend')));
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, '../../frontend/index.html')));
@@ -6789,6 +7044,9 @@ db.initSchema()
     // IOC auto-enrich: every 30 min; first run 5 min after boot (staggered from ingest)
     setInterval(() => autoEnrichJob(10),    30 * 60_000);
     setTimeout(()  => autoEnrichJob(10),     5 * 60_000);
+    // SLA breach detection: every 60s
+    setInterval(slaTickerRun, 60_000);
+    setTimeout(slaTickerRun, 10_000);
   })
   .catch(e => console.error('[DB] init failed:', e.message));
 ueba.initSchema()

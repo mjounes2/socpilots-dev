@@ -693,6 +693,7 @@ if(localStorage.getItem("soc_dim")==="1")document.body.classList.add("dim");
     <div class="sbi" onclick="go('ueba')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="12" r="2"/><circle cx="19" cy="5" r="2"/><circle cx="19" cy="19" r="2"/><path d="M7 12h10M17 7l-2 3M17 17l-2-3"/></svg><span class="sbi-lbl">UEBA</span><span class="sbi-n" id="n-ueba">—</span></div>
     <div class="sbi" onclick="go('reports')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg><span class="sbi-lbl">Reports</span></div>
     <div class="sbi" onclick="go('evidence')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg><span class="sbi-lbl">Evidence Upload</span></div>
+    <div class="sbi" onclick="go('sla')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/><line x1="2" y1="12" x2="4" y2="12"/><line x1="20" y1="12" x2="22" y2="12"/></svg><span class="sbi-lbl">SLA Management</span><span class="sbi-n" id="n-sla-breach" style="display:none;background:rgba(255,23,68,.15);color:var(--r);border-color:rgba(255,23,68,.3)"></span></div>
   </div>
   <div class="sb-bot">
     <div class="sbi" onclick="go('darksoc')" id="nav-darksoc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/><path d="M8.5 8.5l7 7M15.5 8.5l-7 7"/></svg><span class="sbi-lbl">Dark SOC</span><span class="sbi-n" id="n-darksoc" style="display:none">ON</span><span class="sbi-n" id="n-approvals" style="display:none;background:rgba(255,152,0,.15);color:var(--o);border-color:rgba(255,152,0,.3)"></span></div>
@@ -3293,7 +3294,158 @@ sshd: Failed" style="min-height:80px"></textarea></div>
   </div>
 </div>
 
+<!-- ══ SLA MANAGEMENT ══════════════════════════════════════════ -->
+<div class="page" id="page-sla">
+  <div class="ph">
+    <h1>SLA Management</h1>
+    <p>Track response &amp; resolution SLAs across investigations, cases, and SIEM alerts</p>
+  </div>
+
+  <div id="sla-kpis" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:20px">
+    <div class="loading"><div class="spin"></div></div>
+  </div>
+
+  <div class="card">
+    <div class="card-hd" style="flex-wrap:wrap;gap:8px">
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <button class="btn btn-h btn-sm sla-tab on" onclick="slaSwitchTab('active')">Active</button>
+        <button class="btn btn-h btn-sm sla-tab" onclick="slaSwitchTab('breached')">Breached</button>
+        <button class="btn btn-h btn-sm sla-tab" onclick="slaSwitchTab('all')">All SLAs</button>
+        <button class="btn btn-h btn-sm sla-tab" onclick="slaSwitchTab('policies')">Policies</button>
+      </div>
+      <button class="btn btn-p btn-sm" onclick="openModal('modal-sla-start')">+ Start SLA</button>
+    </div>
+
+    <div id="sla-tab-active">
+      <div id="sla-active-body"><div class="loading"><div class="spin"></div></div></div>
+    </div>
+    <div id="sla-tab-breached" style="display:none">
+      <div id="sla-breached-body"><div class="loading"><div class="spin"></div></div></div>
+    </div>
+    <div id="sla-tab-all" style="display:none">
+      <div style="display:flex;gap:8px;padding:12px 0;flex-wrap:wrap">
+        <select id="sla-all-status" onchange="loadSlaAll(1)" style="background:var(--bg2);color:var(--txt);border:1px solid var(--b2);border-radius:var(--r3);padding:4px 10px;font-size:12px">
+          <option value="">All Statuses</option>
+          <option value="running">Running</option>
+          <option value="paused">Paused</option>
+          <option value="completed">Completed</option>
+          <option value="breached">Breached</option>
+          <option value="cancelled">Cancelled</option>
+        </select>
+        <select id="sla-all-type" onchange="loadSlaAll(1)" style="background:var(--bg2);color:var(--txt);border:1px solid var(--b2);border-radius:var(--r3);padding:4px 10px;font-size:12px">
+          <option value="">All Entity Types</option>
+          <option value="investigation">Investigation</option>
+          <option value="case">Case</option>
+          <option value="alert">Alert</option>
+        </select>
+      </div>
+      <div id="sla-all-body"></div>
+    </div>
+    <div id="sla-tab-policies" style="display:none">
+      <div id="sla-policies-body"><div class="loading"><div class="spin"></div></div></div>
+    </div>
+  </div>
+</div>
+
 </main>
+
+<!-- ══ SLA MODALS ══════════════════════════════════════════════ -->
+<!-- Start SLA -->
+<div class="modal-ov" id="modal-sla-start">
+  <div class="modal" style="max-width:460px">
+    <div class="modal-hd"><div class="modal-ttl">Start SLA Timer</div><button class="modal-x" onclick="closeModal('modal-sla-start')">✕</button></div>
+    <div class="modal-body" style="display:flex;flex-direction:column;gap:14px">
+      <div>
+        <label style="font-size:11px;color:var(--txt3);text-transform:uppercase;letter-spacing:.06em">Entity Type</label>
+        <select id="sla-start-type" style="width:100%;margin-top:4px;background:var(--bg2);color:var(--txt);border:1px solid var(--b2);border-radius:var(--r3);padding:6px 10px;font-size:13px">
+          <option value="investigation">Investigation</option>
+          <option value="case">Case</option>
+          <option value="alert">Alert</option>
+        </select>
+      </div>
+      <div>
+        <label style="font-size:11px;color:var(--txt3);text-transform:uppercase;letter-spacing:.06em">Entity ID</label>
+        <input id="sla-start-id" type="text" placeholder="e.g. 42, case-1234, or OpenSearch alert ID" style="width:100%;margin-top:4px;background:var(--bg2);color:var(--txt);border:1px solid var(--b2);border-radius:var(--r3);padding:6px 10px;font-size:13px;box-sizing:border-box">
+      </div>
+      <div>
+        <label style="font-size:11px;color:var(--txt3);text-transform:uppercase;letter-spacing:.06em">Label (optional)</label>
+        <input id="sla-start-label" type="text" placeholder="e.g. Brute force attack on DC01" style="width:100%;margin-top:4px;background:var(--bg2);color:var(--txt);border:1px solid var(--b2);border-radius:var(--r3);padding:6px 10px;font-size:13px;box-sizing:border-box">
+      </div>
+      <div>
+        <label style="font-size:11px;color:var(--txt3);text-transform:uppercase;letter-spacing:.06em">Severity</label>
+        <select id="sla-start-sev" style="width:100%;margin-top:4px;background:var(--bg2);color:var(--txt);border:1px solid var(--b2);border-radius:var(--r3);padding:6px 10px;font-size:13px">
+          <option value="critical">Critical</option>
+          <option value="high">High</option>
+          <option value="medium" selected>Medium</option>
+          <option value="low">Low</option>
+        </select>
+      </div>
+    </div>
+    <div class="modal-ft">
+      <button class="btn btn-h" onclick="closeModal('modal-sla-start')">Cancel</button>
+      <button class="btn btn-p" onclick="slaStartManual()">Start SLA</button>
+    </div>
+  </div>
+</div>
+
+<!-- SLA Policy CRUD -->
+<div class="modal-ov" id="modal-sla-policy">
+  <div class="modal" style="max-width:520px">
+    <div class="modal-hd"><div class="modal-ttl" id="sla-policy-modal-title">New SLA Policy</div><button class="modal-x" onclick="closeModal('modal-sla-policy')">✕</button></div>
+    <div class="modal-body" style="display:flex;flex-direction:column;gap:14px">
+      <div>
+        <label style="font-size:11px;color:var(--txt3);text-transform:uppercase;letter-spacing:.06em">Policy Name *</label>
+        <input id="sla-pol-name" type="text" placeholder="e.g. Critical Incident SLA" style="width:100%;margin-top:4px;background:var(--bg2);color:var(--txt);border:1px solid var(--b2);border-radius:var(--r3);padding:6px 10px;font-size:13px;box-sizing:border-box">
+      </div>
+      <div>
+        <label style="font-size:11px;color:var(--txt3);text-transform:uppercase;letter-spacing:.06em">Description</label>
+        <input id="sla-pol-desc" type="text" placeholder="Optional description" style="width:100%;margin-top:4px;background:var(--bg2);color:var(--txt);border:1px solid var(--b2);border-radius:var(--r3);padding:6px 10px;font-size:13px;box-sizing:border-box">
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div>
+          <label style="font-size:11px;color:var(--txt3);text-transform:uppercase;letter-spacing:.06em">Entity Type</label>
+          <select id="sla-pol-entity" style="width:100%;margin-top:4px;background:var(--bg2);color:var(--txt);border:1px solid var(--b2);border-radius:var(--r3);padding:6px 10px;font-size:13px">
+            <option value="all">All Types</option>
+            <option value="investigation">Investigation</option>
+            <option value="case">Case</option>
+            <option value="alert">Alert</option>
+          </select>
+        </div>
+        <div>
+          <label style="font-size:11px;color:var(--txt3);text-transform:uppercase;letter-spacing:.06em">Severity Tier</label>
+          <select id="sla-pol-sev" style="width:100%;margin-top:4px;background:var(--bg2);color:var(--txt);border:1px solid var(--b2);border-radius:var(--r3);padding:6px 10px;font-size:13px">
+            <option value="all">All Severities</option>
+            <option value="critical">Critical</option>
+            <option value="high">High</option>
+            <option value="medium">Medium</option>
+            <option value="low">Low</option>
+          </select>
+        </div>
+        <div>
+          <label style="font-size:11px;color:var(--txt3);text-transform:uppercase;letter-spacing:.06em">Response (minutes) *</label>
+          <input id="sla-pol-resp" type="number" min="1" value="60" style="width:100%;margin-top:4px;background:var(--bg2);color:var(--txt);border:1px solid var(--b2);border-radius:var(--r3);padding:6px 10px;font-size:13px;box-sizing:border-box">
+        </div>
+        <div>
+          <label style="font-size:11px;color:var(--txt3);text-transform:uppercase;letter-spacing:.06em">Resolution (minutes) *</label>
+          <input id="sla-pol-resol" type="number" min="1" value="480" style="width:100%;margin-top:4px;background:var(--bg2);color:var(--txt);border:1px solid var(--b2);border-radius:var(--r3);padding:6px 10px;font-size:13px;box-sizing:border-box">
+        </div>
+      </div>
+    </div>
+    <div class="modal-ft">
+      <button class="btn btn-h" onclick="closeModal('modal-sla-policy')">Cancel</button>
+      <button class="btn btn-p" onclick="slaSavePolicy()">Save Policy</button>
+    </div>
+  </div>
+</div>
+
+<!-- SLA Instance Detail -->
+<div class="modal-ov" id="modal-sla-detail">
+  <div class="modal" style="max-width:620px">
+    <div class="modal-hd"><div class="modal-ttl">SLA Detail &amp; Audit Log</div><button class="modal-x" onclick="closeModal('modal-sla-detail')">✕</button></div>
+    <div class="modal-body" id="sla-detail-body" style="overflow-y:auto;max-height:70vh"></div>
+    <div class="modal-ft"><button class="btn btn-h" onclick="closeModal('modal-sla-detail')">Close</button></div>
+  </div>
+</div>
 
 <!-- CREATE CASE MODAL -->
 <div class="modal-ov" id="modal-case">
@@ -3888,7 +4040,8 @@ const LOAD_MAP={dashboard:loadDashboard,agents:loadAgents,alerts:loadAlerts,rule
   darksoc:()=>loadDarkSocPage(),
   langchain:()=>{lcCheckHealth();},
   settings:loadSmtpSettings,
-  notifications:()=>{_notifPgPage=1;loadNotificationsPage();}};
+  notifications:()=>{_notifPgPage=1;loadNotificationsPage();},
+  sla:loadSla};
 
 function go(p){
   document.querySelectorAll('.page').forEach(x=>x.classList.remove('active'));
@@ -11378,6 +11531,399 @@ async function loadArtSettings() {
     document.getElementById(id)?.remove();
   }
 })();
+</script>
+
+<!-- ══ SLA MANAGEMENT JS ══════════════════════════════════════ -->
+<script>
+// ─── SLA MANAGEMENT ──────────────────────────────────────────────
+let _slaCurTab = 'active';
+let _slaActivePage = 1, _slaBreachedPage = 1, _slaAllPage = 1;
+let _slaPolicyEdit = null;
+
+async function loadSla() {
+  loadSlaStats();
+  slaSwitchTab(_slaCurTab === 'active' ? 'active' : _slaCurTab);
+}
+
+async function loadSlaStats() {
+  const el = document.getElementById('sla-kpis');
+  if (!el) return;
+  const d = await G('/api/sla/dashboard');
+  if (!d) { el.innerHTML = errBnr('Failed to load SLA stats'); return; }
+  const mttrStr  = d.mttr_minutes  != null ? d.mttr_minutes + 'm'  : '—';
+  const complStr = d.compliance_rate != null ? d.compliance_rate + '%' : '—';
+  const breachColor = d.breached > 0 ? 'var(--r)' : 'var(--g)';
+  el.innerHTML = `
+    <div class="kpi cl" style="cursor:pointer" onclick="slaSwitchTab('active')">
+      <div class="kpi-val">${d.active}</div><div class="kpi-lbl">Active SLAs</div>
+    </div>
+    <div class="kpi" style="--kc:${breachColor};cursor:pointer" onclick="slaSwitchTab('breached')">
+      <div class="kpi-val">${d.breached}</div><div class="kpi-lbl">Breached</div>
+    </div>
+    <div class="kpi co">
+      <div class="kpi-val">${d.paused}</div><div class="kpi-lbl">Paused</div>
+    </div>
+    <div class="kpi" style="--kc:var(--g)">
+      <div class="kpi-val">${complStr}</div><div class="kpi-lbl">Compliance (30d)</div>
+    </div>
+    <div class="kpi cp">
+      <div class="kpi-val">${mttrStr}</div><div class="kpi-lbl">Avg MTTR (30d)</div>
+    </div>`;
+
+  // Update sidebar breach badge
+  const badge = document.getElementById('n-sla-breach');
+  if (badge) {
+    if (d.breached > 0) { badge.style.display = ''; badge.textContent = d.breached; }
+    else { badge.style.display = 'none'; }
+  }
+}
+
+function slaSwitchTab(tab) {
+  _slaCurTab = tab;
+  document.querySelectorAll('.sla-tab').forEach(b => b.classList.remove('on'));
+  document.querySelectorAll('[id^="sla-tab-"]').forEach(p => p.style.display = 'none');
+  const btn = [...document.querySelectorAll('.sla-tab')].find(b => b.textContent.trim().toLowerCase().startsWith(tab === 'all' ? 'all' : tab === 'policies' ? 'pol' : tab));
+  if (btn) btn.classList.add('on');
+  const panel = document.getElementById('sla-tab-' + tab);
+  if (panel) panel.style.display = '';
+  if (tab === 'active')    loadSlaActive(1);
+  else if (tab === 'breached') loadSlaBreached(1);
+  else if (tab === 'all')      loadSlaAll(1);
+  else if (tab === 'policies') loadSlaPolicies();
+}
+
+function _slaRiskBar(pct, status) {
+  let color = 'var(--g)';
+  if (status === 'breached' || pct >= 100) color = 'var(--r)';
+  else if (pct >= 90) color = 'var(--o)';
+  else if (pct >= 70) color = 'var(--y)';
+  const w = Math.min(pct, 100);
+  return `<div style="display:inline-flex;align-items:center;gap:6px">
+    <div style="background:var(--b1);border-radius:3px;height:7px;width:80px;overflow:hidden;flex-shrink:0">
+      <div style="background:${color};height:100%;width:${w}%"></div>
+    </div>
+    <span style="font-size:11px;color:${color};font-family:var(--fm)">${pct}%</span>
+  </div>`;
+}
+
+function _slaStatusBadge(status) {
+  const map = { running:'var(--c)', paused:'var(--y)', breached:'var(--r)', completed:'var(--g)', cancelled:'var(--txt3)' };
+  return `<span style="color:${map[status]||'var(--txt3)'};font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em">${esc(status)}</span>`;
+}
+
+function _slaEntityCell(inst) {
+  const icons = { investigation:'🔍', case:'📁', alert:'⚡' };
+  const icon  = icons[inst.entity_type] || '•';
+  const label = inst.entity_label || inst.entity_id;
+  return `<span title="${esc(inst.entity_type)}: ${esc(inst.entity_id)}">${icon} ${esc(label)}</span>`;
+}
+
+function _slaSevBadge(sev) {
+  if (!sev) return '<span style="color:var(--txt3)">—</span>';
+  return `<span class="badge ${esc(sev)}">${esc(sev)}</span>`;
+}
+
+async function loadSlaActive(page = 1) {
+  _slaActivePage = page;
+  const el = document.getElementById('sla-active-body');
+  if (!el) return;
+  el.innerHTML = `<div class="loading"><div class="spin"></div></div>`;
+  const d = await G(`/api/sla/active?page=${page}&page_size=50`);
+  if (!d) { el.innerHTML = errBnr('Failed to load active SLAs'); return; }
+  if (!d.items?.length) { el.innerHTML = empty('No active SLAs running'); return; }
+  el.innerHTML = `<div class="tbl"><table>
+    <thead><tr>
+      <th>Entity</th><th>Type</th><th>Severity</th><th>Policy</th>
+      <th>Elapsed</th><th>Remaining</th><th>Risk</th><th>Owner</th><th>Actions</th>
+    </tr></thead>
+    <tbody>${d.items.map(i => `<tr style="cursor:pointer" onclick="slaOpenDetail(${i.id})">
+      <td>${_slaEntityCell(i)}</td>
+      <td style="color:var(--txt2);font-size:12px">${esc(i.entity_type)}</td>
+      <td>${_slaSevBadge(i.severity)}</td>
+      <td style="color:var(--c);font-size:12px">${esc(i.policy_name||'—')}</td>
+      <td style="font-family:var(--fm);font-size:12px">${esc(i.elapsed_human)}</td>
+      <td style="font-family:var(--fm);font-size:12px;color:${i.breach_pct>=90?'var(--r)':i.breach_pct>=70?'var(--y)':'var(--txt)'}">${esc(i.remaining_human)}</td>
+      <td onclick="event.stopPropagation()">${_slaRiskBar(i.breach_pct, i.status)}</td>
+      <td style="color:var(--txt2);font-size:12px">${esc(i.owner||'—')}</td>
+      <td onclick="event.stopPropagation()" style="white-space:nowrap">
+        ${i.status==='running'
+          ? `<button class="btn btn-h btn-sm" style="margin-right:4px" onclick="slaPauseAction(${i.id})">Pause</button>`
+          : `<button class="btn btn-h btn-sm" style="margin-right:4px" onclick="slaResumeAction(${i.id})">Resume</button>`}
+        <button class="btn btn-g btn-sm" onclick="slaStopAction(${i.id})">Done</button>
+      </td>
+    </tr>`).join('')}</tbody>
+  </table></div>`;
+}
+
+async function loadSlaBreached(page = 1) {
+  _slaBreachedPage = page;
+  const el = document.getElementById('sla-breached-body');
+  if (!el) return;
+  el.innerHTML = `<div class="loading"><div class="spin"></div></div>`;
+  const d = await G(`/api/sla/breached?page=${page}&page_size=50`);
+  if (!d) { el.innerHTML = errBnr('Failed to load breached SLAs'); return; }
+  if (!d.items?.length) { el.innerHTML = `<div class="empty" style="color:var(--g)">No breached SLAs — compliance is on track!</div>`; return; }
+  el.innerHTML = `<div class="tbl"><table>
+    <thead><tr>
+      <th>Entity</th><th>Type</th><th>Severity</th><th>Policy</th>
+      <th>Elapsed</th><th>Over SLA By</th><th>Owner</th><th>Actions</th>
+    </tr></thead>
+    <tbody>${d.items.map(i => {
+      const overMs   = Math.max(0, i.elapsed_ms - i.response_minutes * 60000);
+      const overMins = Math.round(overMs / 60000);
+      return `<tr style="cursor:pointer" onclick="slaOpenDetail(${i.id})">
+        <td>${_slaEntityCell(i)}</td>
+        <td style="color:var(--txt2);font-size:12px">${esc(i.entity_type)}</td>
+        <td>${_slaSevBadge(i.severity)}</td>
+        <td style="color:var(--c);font-size:12px">${esc(i.policy_name||'—')}</td>
+        <td style="font-family:var(--fm);font-size:12px">${esc(i.elapsed_human)}</td>
+        <td style="font-family:var(--fm);font-size:12px;color:var(--r);font-weight:600">+${overMins}m</td>
+        <td style="color:var(--txt2);font-size:12px">${esc(i.owner||'—')}</td>
+        <td onclick="event.stopPropagation()">
+          <button class="btn btn-g btn-sm" onclick="slaStopAction(${i.id})">Resolve</button>
+        </td>
+      </tr>`;
+    }).join('')}</tbody>
+  </table></div>`;
+}
+
+async function loadSlaAll(page = 1) {
+  _slaAllPage = page;
+  const el = document.getElementById('sla-all-body');
+  if (!el) return;
+  el.innerHTML = `<div class="loading"><div class="spin"></div></div>`;
+  const status = document.getElementById('sla-all-status')?.value || '';
+  const etype  = document.getElementById('sla-all-type')?.value  || '';
+  const params = new URLSearchParams({ page, page_size: 50 });
+  if (status) params.set('status', status);
+  if (etype)  params.set('entity_type', etype);
+  const d = await G(`/api/sla/instances?${params}`);
+  if (!d) { el.innerHTML = errBnr('Failed to load SLAs'); return; }
+  if (!d.items?.length) { el.innerHTML = empty('No SLAs found'); return; }
+  el.innerHTML = `<div class="tbl"><table>
+    <thead><tr>
+      <th>Entity</th><th>Type</th><th>Severity</th><th>Policy</th>
+      <th>Status</th><th>Elapsed</th><th>Risk</th><th>Owner</th><th>Started</th>
+    </tr></thead>
+    <tbody>${d.items.map(i => `<tr style="cursor:pointer" onclick="slaOpenDetail(${i.id})">
+      <td>${_slaEntityCell(i)}</td>
+      <td style="color:var(--txt2);font-size:12px">${esc(i.entity_type)}</td>
+      <td>${_slaSevBadge(i.severity)}</td>
+      <td style="color:var(--c);font-size:12px">${esc(i.policy_name||'—')}</td>
+      <td>${_slaStatusBadge(i.status)}</td>
+      <td style="font-family:var(--fm);font-size:12px">${esc(i.elapsed_human)}</td>
+      <td>${['running','paused','breached'].includes(i.status) ? _slaRiskBar(i.breach_pct,i.status) : '<span style="color:var(--txt3)">—</span>'}</td>
+      <td style="color:var(--txt2);font-size:12px">${esc(i.owner||'—')}</td>
+      <td style="color:var(--txt3);font-size:11px">${fmtDate(i.started_at)}</td>
+    </tr>`).join('')}</tbody>
+  </table></div>`;
+}
+
+async function loadSlaPolicies() {
+  const el = document.getElementById('sla-policies-body');
+  if (!el) return;
+  el.innerHTML = `<div class="loading"><div class="spin"></div></div>`;
+  const d = await G('/api/sla/policies');
+  if (!d) { el.innerHTML = errBnr('Failed to load policies'); return; }
+  const isAdmin = CU.role === 'admin';
+  el.innerHTML = `
+    ${isAdmin ? `<div style="margin:12px 0 16px"><button class="btn btn-p btn-sm" onclick="slaNewPolicy()">+ New Policy</button></div>` : ''}
+    <div class="tbl"><table>
+      <thead><tr>
+        <th>Name</th><th>Entity Type</th><th>Severity</th>
+        <th>Response</th><th>Resolution</th><th>Escalation Chain</th><th>Status</th>
+        ${isAdmin ? '<th>Actions</th>' : ''}
+      </tr></thead>
+      <tbody>${(d.policies||[]).map(p => {
+        const chain = Array.isArray(p.escalation_chain) ? p.escalation_chain : [];
+        const chainStr = chain.map(e => `${e.at_pct}% → ${esc(e.action)}`).join(', ') || '—';
+        return `<tr>
+          <td style="color:var(--c);font-weight:600">${esc(p.name)}</td>
+          <td style="color:var(--txt2);font-size:12px">${esc(p.entity_type)}</td>
+          <td>${p.severity !== 'all' ? `<span class="badge ${esc(p.severity)}">${esc(p.severity)}</span>` : '<span style="color:var(--txt3)">all</span>'}</td>
+          <td style="font-family:var(--fm);font-size:12px">${p.response_minutes}m</td>
+          <td style="font-family:var(--fm);font-size:12px">${p.resolution_minutes >= 60 ? Math.round(p.resolution_minutes/60)+'h' : p.resolution_minutes+'m'}</td>
+          <td style="color:var(--txt2);font-size:11px">${chainStr}</td>
+          <td>${p.active ? '<span style="color:var(--g);font-size:11px;font-weight:700">ACTIVE</span>' : '<span style="color:var(--txt3);font-size:11px">OFF</span>'}</td>
+          ${isAdmin ? `<td style="white-space:nowrap">
+            <button class="btn btn-h btn-sm" style="margin-right:4px" onclick="slaEditPolicy(${p.id})">Edit</button>
+            <button class="btn btn-r btn-sm" onclick="slaDeletePolicy(${p.id})">Del</button>
+          </td>` : ''}
+        </tr>`;
+      }).join('')}</tbody>
+    </table></div>`;
+}
+
+async function slaOpenDetail(id) {
+  const el = document.getElementById('sla-detail-body');
+  if (!el) return;
+  el.innerHTML = `<div class="loading"><div class="spin"></div></div>`;
+  openModal('modal-sla-detail');
+  const [inst, evtData] = await Promise.all([
+    G(`/api/sla/instances/${id}`),
+    G(`/api/sla/instances/${id}/events`)
+  ]);
+  if (!inst || inst.error) { el.innerHTML = errBnr(inst?.error || 'Failed to load SLA'); return; }
+  const isActive = ['running','paused','breached'].includes(inst.status);
+  el.innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px;padding-bottom:16px;border-bottom:1px solid var(--b1)">
+      <div>
+        <div style="color:var(--txt3);font-size:10px;text-transform:uppercase;letter-spacing:.08em;margin-bottom:3px">Entity</div>
+        <div style="color:var(--c)">${esc(inst.entity_type)}: ${esc(inst.entity_id)}</div>
+        ${inst.entity_label ? `<div style="color:var(--txt2);font-size:12px;margin-top:2px">${esc(inst.entity_label)}</div>` : ''}
+      </div>
+      <div>
+        <div style="color:var(--txt3);font-size:10px;text-transform:uppercase;letter-spacing:.08em;margin-bottom:3px">Policy</div>
+        <div>${esc(inst.policy_name||'Custom')}</div>
+      </div>
+      <div>
+        <div style="color:var(--txt3);font-size:10px;text-transform:uppercase;letter-spacing:.08em;margin-bottom:3px">Status</div>
+        <div>${_slaStatusBadge(inst.status)}</div>
+      </div>
+      <div>
+        <div style="color:var(--txt3);font-size:10px;text-transform:uppercase;letter-spacing:.08em;margin-bottom:3px">Severity</div>
+        <div>${_slaSevBadge(inst.severity)}</div>
+      </div>
+      <div>
+        <div style="color:var(--txt3);font-size:10px;text-transform:uppercase;letter-spacing:.08em;margin-bottom:3px">Elapsed / SLA Window</div>
+        <div style="font-family:var(--fm)">${esc(inst.elapsed_human)} / ${inst.response_minutes}m</div>
+      </div>
+      <div>
+        <div style="color:var(--txt3);font-size:10px;text-transform:uppercase;letter-spacing:.08em;margin-bottom:3px">Remaining</div>
+        <div style="font-family:var(--fm)">${isActive ? esc(inst.remaining_human) : '—'}</div>
+      </div>
+      <div>
+        <div style="color:var(--txt3);font-size:10px;text-transform:uppercase;letter-spacing:.08em;margin-bottom:3px">Breach Risk</div>
+        <div>${isActive || inst.status==='breached' ? _slaRiskBar(inst.breach_pct, inst.status) : '<span style="color:var(--txt3)">—</span>'}</div>
+      </div>
+      <div>
+        <div style="color:var(--txt3);font-size:10px;text-transform:uppercase;letter-spacing:.08em;margin-bottom:3px">Owner</div>
+        <div style="color:var(--txt2)">${esc(inst.owner||'—')}</div>
+      </div>
+    </div>
+    ${isActive ? `<div style="display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap">
+      ${inst.status==='running' ? `<button class="btn btn-h btn-sm" onclick="slaPauseAction(${inst.id},true)">Pause Timer</button>` : ''}
+      ${inst.status==='paused'  ? `<button class="btn btn-h btn-sm" onclick="slaResumeAction(${inst.id},true)">Resume Timer</button>` : ''}
+      <button class="btn btn-g btn-sm" onclick="slaStopAction(${inst.id},true)">Mark Resolved</button>
+      <button class="btn btn-r btn-sm" onclick="slaCancelAction(${inst.id},true)">Cancel SLA</button>
+    </div>` : ''}
+    <div style="color:var(--txt3);font-size:10px;text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px">Audit Log</div>
+    <div style="display:flex;flex-direction:column;gap:5px">
+      ${(evtData?.events||[]).map(e => `
+        <div style="display:flex;gap:10px;align-items:baseline;font-size:12px;padding:6px 10px;background:var(--bg2);border-radius:4px;border-left:2px solid ${e.event_type.includes('breach')?'var(--r)':e.event_type.includes('thresh')?'var(--y)':'var(--b2)'}">
+          <span style="color:var(--txt3);font-family:var(--fm);white-space:nowrap;flex-shrink:0">${fmtDate(e.created_at)}</span>
+          <span style="color:var(--c);font-weight:700;text-transform:uppercase;font-size:10px;white-space:nowrap">${esc(e.event_type)}</span>
+          ${e.actor  ? `<span style="color:var(--txt2)">${esc(e.actor)}</span>` : ''}
+          ${e.reason ? `<span style="color:var(--txt3)">${esc(e.reason)}</span>` : ''}
+        </div>`).join('') || '<div style="color:var(--txt3);font-size:12px">No events recorded yet</div>'}
+    </div>`;
+}
+
+async function slaStartManual() {
+  const entityType  = document.getElementById('sla-start-type')?.value;
+  const entityId    = document.getElementById('sla-start-id')?.value?.trim();
+  const entityLabel = document.getElementById('sla-start-label')?.value?.trim();
+  const severity    = document.getElementById('sla-start-sev')?.value;
+  if (!entityId) { alert('Entity ID is required'); return; }
+  const r = await P('/api/sla/start', { entity_type: entityType, entity_id: entityId, entity_label: entityLabel || null, severity });
+  if (!r || r.error) { alert(r?.error || 'Failed to start SLA'); return; }
+  closeModal('modal-sla-start');
+  loadSla();
+}
+
+async function slaPauseAction(id, fromDetail = false) {
+  const r = await P(`/api/sla/instances/${id}/pause`, { reason: 'Manual pause' });
+  if (!r || r.error) { alert(r?.error || 'Failed to pause'); return; }
+  if (fromDetail) closeModal('modal-sla-detail');
+  loadSla();
+}
+
+async function slaResumeAction(id, fromDetail = false) {
+  const r = await P(`/api/sla/instances/${id}/resume`, { reason: 'Manual resume' });
+  if (!r || r.error) { alert(r?.error || 'Failed to resume'); return; }
+  if (fromDetail) closeModal('modal-sla-detail');
+  loadSla();
+}
+
+async function slaStopAction(id, fromDetail = false) {
+  const r = await P(`/api/sla/instances/${id}/stop`, { reason: 'Resolved by analyst' });
+  if (!r || r.error) { alert(r?.error || 'Failed to complete SLA'); return; }
+  if (fromDetail) closeModal('modal-sla-detail');
+  loadSla();
+}
+
+async function slaCancelAction(id, fromDetail = false) {
+  if (!confirm('Cancel this SLA timer?')) return;
+  const r = await P(`/api/sla/instances/${id}/cancel`, { reason: 'Cancelled by analyst' });
+  if (!r || r.error) { alert(r?.error || 'Failed to cancel SLA'); return; }
+  if (fromDetail) closeModal('modal-sla-detail');
+  loadSla();
+}
+
+// Policy CRUD
+function slaNewPolicy() {
+  _slaPolicyEdit = null;
+  document.getElementById('sla-policy-modal-title').textContent = 'New SLA Policy';
+  document.getElementById('sla-pol-name').value  = '';
+  document.getElementById('sla-pol-desc').value  = '';
+  document.getElementById('sla-pol-entity').value = 'all';
+  document.getElementById('sla-pol-sev').value   = 'all';
+  document.getElementById('sla-pol-resp').value  = '60';
+  document.getElementById('sla-pol-resol').value = '480';
+  openModal('modal-sla-policy');
+}
+
+async function slaEditPolicy(id) {
+  const d = await G('/api/sla/policies');
+  const p = (d?.policies || []).find(x => x.id === id);
+  if (!p) return;
+  _slaPolicyEdit = id;
+  document.getElementById('sla-policy-modal-title').textContent = 'Edit SLA Policy';
+  document.getElementById('sla-pol-name').value  = p.name;
+  document.getElementById('sla-pol-desc').value  = p.description || '';
+  document.getElementById('sla-pol-entity').value = p.entity_type;
+  document.getElementById('sla-pol-sev').value   = p.severity;
+  document.getElementById('sla-pol-resp').value  = p.response_minutes;
+  document.getElementById('sla-pol-resol').value = p.resolution_minutes;
+  openModal('modal-sla-policy');
+}
+
+async function slaSavePolicy() {
+  const body = {
+    name:               document.getElementById('sla-pol-name')?.value?.trim(),
+    description:        document.getElementById('sla-pol-desc')?.value?.trim(),
+    entity_type:        document.getElementById('sla-pol-entity')?.value,
+    severity:           document.getElementById('sla-pol-sev')?.value,
+    response_minutes:   parseInt(document.getElementById('sla-pol-resp')?.value),
+    resolution_minutes: parseInt(document.getElementById('sla-pol-resol')?.value),
+    escalation_chain:   [],
+    active:             true,
+  };
+  if (!body.name || !body.response_minutes || !body.resolution_minutes) {
+    alert('Name, Response Minutes, and Resolution Minutes are required'); return;
+  }
+  const r = _slaPolicyEdit
+    ? await P(`/api/sla/policies/${_slaPolicyEdit}`, body, 'PUT')
+    : await P('/api/sla/policies', body);
+  if (!r || r.error) { alert(r?.error || 'Failed to save policy'); return; }
+  closeModal('modal-sla-policy');
+  loadSlaPolicies();
+}
+
+async function slaDeletePolicy(id) {
+  if (!confirm('Delete this SLA policy? Active SLA instances will keep their current timers.')) return;
+  const r = await D(`/api/sla/policies/${id}`);
+  if (!r || r.error) { alert(r?.error || 'Failed to delete policy'); return; }
+  loadSlaPolicies();
+}
+
+// Handle live breach events from server
+if (typeof _socket !== 'undefined' && _socket) {
+  _socket.on('sla:breached', data => {
+    if (CUR === 'sla') loadSla();
+    loadSlaStats();
+  });
+}
 </script>
 
 <!-- Live toast notification container (Socket.IO events) -->
