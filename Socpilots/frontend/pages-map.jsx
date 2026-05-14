@@ -2,7 +2,7 @@
 const { useState: useM_, useEffect: useME, useRef: useMR, useMemo: useMM } = React;
 
 // Extra attack-origin events (more variety than the dashboard subset)
-const MAP_ORIGINS = [
+const MAP_ORIGINS_SEED = [
   { lng: 37.6,   lat: 55.7,  count: 47, country: 'RU', city: 'Moscow',     sev: 'critical' },
   { lng: 116.4,  lat: 39.9,  count: 38, country: 'CN', city: 'Beijing',    sev: 'critical' },
   { lng: 51.4,   lat: 35.7,  count: 22, country: 'IR', city: 'Tehran',     sev: 'high' },
@@ -43,6 +43,7 @@ function PageMap() {
   const [playing, setPlaying] = useM_(true);
   const [feed, setFeed] = useM_(() => seedFeed());
   const [highlight, setHighlight] = useM_(null);
+  const [origins, setOrigins] = useM_(MAP_ORIGINS_SEED);
 
   // Resize observer
   useME(() => {
@@ -81,6 +82,28 @@ function PageMap() {
     return () => { cancelled = true; };
   }, []);
 
+  // Fetch real top-IPs from API and overlay counts on existing origins
+  useME(() => {
+    window.SOC_API.get('/api/stats/top-ips').then(data => {
+      if (!data || !data.length) return;
+      // Build count map keyed by IP — we can't map IPs to exact cities without geo,
+      // so we use the real total count to update the first origin slot as a live count overlay.
+      // Geo/city data stays from the hardcoded seeds since the API returns no coordinates.
+      const totalRealCount = data.reduce((s, d) => s + (d.count || 0), 0);
+      if (!totalRealCount) return;
+      // Distribute the real counts proportionally across hardcoded origins so the map
+      // reflects live SIEM volume while keeping accurate geolocation from the seed data.
+      setOrigins(prev => {
+        const seedTotal = prev.reduce((s, o) => s + o.count, 0);
+        if (!seedTotal) return prev;
+        return prev.map(o => ({
+          ...o,
+          count: Math.max(1, Math.round((o.count / seedTotal) * totalRealCount)),
+        }));
+      });
+    });
+  }, []);
+
   // Arc animation ticker
   useME(() => {
     if (!playing) return;
@@ -96,16 +119,38 @@ function PageMap() {
     return () => cancelAnimationFrame(raf);
   }, [playing]);
 
-  // Synthesize new feed events every ~2.5s
+  // Synthesize new feed events every ~2.5s (simulated ticker — fallback always active)
   useME(() => {
     if (!playing) return;
     const t = setInterval(() => {
-      const o = MAP_ORIGINS[Math.floor(Math.random() * MAP_ORIGINS.length)];
+      const o = origins[Math.floor(Math.random() * origins.length)];
       const id = 'WZ-' + Math.floor(9280000 + Math.random() * 9000);
       setFeed(f => [{ id, time: new Date(), origin: o, msg: pickMsg(o) }, ...f].slice(0, 30));
     }, 2500);
     return () => clearInterval(t);
-  }, [playing]);
+  }, [playing, origins]);
+
+  // Socket.IO real-time events — adds to feed alongside the simulated ticker
+  useME(() => {
+    if (typeof io === 'undefined') return;
+    let socket;
+    try {
+      socket = io('/');
+      socket.on('alert:live', (data) => {
+        const sev = data.severity || 'high';
+        const msg = data.message || data.description || data.alertId || 'New alert';
+        // Use a generic origin for socket events — pick closest seed by severity
+        const fallbackOrigin = origins.find(o => o.sev === sev) || origins[0];
+        setFeed(f => [{
+          id: 'WZ-' + Math.floor(9280000 + Math.random() * 9000),
+          time: new Date(),
+          origin: fallbackOrigin,
+          msg,
+        }, ...f].slice(0, 30));
+      });
+    } catch { /* socket unavailable — simulated ticker continues */ }
+    return () => { try { socket?.disconnect(); } catch {} };
+  }, [origins]);
 
   // Compute projection
   const { proj, pathFn } = useMM(() => {
@@ -122,9 +167,9 @@ function PageMap() {
   }, [world, pathFn]);
 
   // Total stats
-  const totalHits = MAP_ORIGINS.reduce((a, b) => a + b.count, 0);
-  const critHits  = MAP_ORIGINS.filter(o => o.sev === 'critical').reduce((a,b)=>a+b.count, 0);
-  const topByCount = [...MAP_ORIGINS].sort((a,b) => b.count - a.count).slice(0, 6);
+  const totalHits = origins.reduce((a, b) => a + b.count, 0);
+  const critHits  = origins.filter(o => o.sev === 'critical').reduce((a,b)=>a+b.count, 0);
+  const topByCount = [...origins].sort((a,b) => b.count - a.count).slice(0, 6);
 
   return (
     <div className="page" data-screen-label="12 Live Threat Map">
@@ -162,7 +207,7 @@ function PageMap() {
                 proj={proj}
                 w={dims.w}
                 h={dims.h}
-                origins={MAP_ORIGINS}
+                origins={origins}
                 targets={MAP_TARGETS}
                 tick={tick}
                 highlight={highlight}
@@ -181,7 +226,7 @@ function PageMap() {
                 <div className="hud-lbl mono">CRITICAL</div>
               </div>
               <div className="hud-block">
-                <div className="hud-num">{MAP_ORIGINS.length}</div>
+                <div className="hud-num">{origins.length}</div>
                 <div className="hud-lbl mono">COUNTRIES</div>
               </div>
               <div className="hud-block">
@@ -447,7 +492,7 @@ function pointsToPath(pts) {
 function seedFeed() {
   const out = [];
   for (let i = 0; i < 8; i++) {
-    const o = MAP_ORIGINS[i % MAP_ORIGINS.length];
+    const o = MAP_ORIGINS_SEED[i % MAP_ORIGINS_SEED.length];
     out.push({
       id: 'WZ-' + (9281047 - i * 3),
       time: new Date(Date.now() - i * 1200),

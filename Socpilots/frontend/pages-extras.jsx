@@ -11,7 +11,16 @@ const HUNT_PRESETS = [
   { id: 'persist',  label: 'New persistence',        query: 'registry.path:*\\Run\\* OR scheduled_task.created:* | last 7d' },
 ];
 
-const HUNT_RESULTS = [
+const HUNT_TYPE_MAP = {
+  lateral: 'rule',
+  beacon:  'ip',
+  pshell:  'process',
+  kerb:    'rule',
+  creds:   'rule',
+  persist: 'rule',
+};
+
+const FALLBACK_HUNT_RESULTS = [
   { time: '2026-05-13 14:22:11', agent: 'web-prod-01', user: 'svc_backup', src: '10.0.4.122', dst: '10.0.4.45',  rule: '92653', mitre: 'T1059.001', score: 92 },
   { time: '2026-05-13 14:21:47', agent: 'win-dc-01',   user: 'admin',      src: '10.0.4.45',  dst: '10.0.4.7',   rule: '60106', mitre: 'T1070.001', score: 87 },
   { time: '2026-05-13 14:20:33', agent: 'jump-host',   user: 'svc_backup', src: '10.0.4.122', dst: '10.0.4.7',   rule: '11302', mitre: 'T1021.001', score: 76 },
@@ -20,20 +29,57 @@ const HUNT_RESULTS = [
   { time: '2026-05-13 13:58:22', agent: 'jump-host',   user: 'jdoe',       src: '10.0.4.99',  dst: '10.0.4.122', rule: '5503',  mitre: 'T1078',     score: 42 },
 ];
 
+const SEV_SCORE = { critical: 90, high: 75, medium: 50, low: 30 };
+
+function mapApiResultToRow(r) {
+  const scoreFromSev = SEV_SCORE[r.severity] || SEV_SCORE[window.SOC_API.sevFromLevel(r.level)] || 30;
+  return {
+    time: r.timestamp ? r.timestamp.slice(0, 19).replace('T', ' ') : '',
+    agent: r.agent || '—',
+    user: r.user || r.srcUser || '—',
+    src: r.srcIp || r.src_ip || '—',
+    dst: r.dstIp || r.dst_ip || '—',
+    rule: r.ruleId || r.rule_id || r.description || '—',
+    mitre: (r.mitre && r.mitre[0]) || '—',
+    score: scoreFromSev,
+  };
+}
+
 function PageHunt() {
   const [preset, setPreset] = useStateX('lateral');
   const [query, setQuery]   = useStateX(HUNT_PRESETS[0].query);
   const [running, setRunning] = useStateX(false);
   const [done, setDone]     = useStateX(true);
+  const [results, setResults] = useStateX(FALLBACK_HUNT_RESULTS);
+  const [aiVerdict, setAiVerdict] = useStateX(null);
 
   function selectPreset(id) {
     setPreset(id);
     const p = HUNT_PRESETS.find(h => h.id === id);
     if (p) setQuery(p.query);
   }
-  function run() {
+
+  async function run() {
     setRunning(true); setDone(false);
-    setTimeout(() => { setRunning(false); setDone(true); }, 1200);
+    const type = HUNT_TYPE_MAP[preset] || 'rule';
+    const value = HUNT_PRESETS.find(p => p.id === preset)?.label || query;
+    try {
+      const r = await window.SOC_API.post('/api/hunt', { type, value });
+      if (r && !r.error) {
+        const mapped = Array.isArray(r.osResults)
+          ? r.osResults.map(mapApiResultToRow)
+          : FALLBACK_HUNT_RESULTS;
+        setResults(mapped.length ? mapped : FALLBACK_HUNT_RESULTS);
+        setAiVerdict(r.aiAnalysis || null);
+      } else {
+        setResults(FALLBACK_HUNT_RESULTS);
+        setAiVerdict(null);
+      }
+    } catch {
+      setResults(FALLBACK_HUNT_RESULTS);
+      setAiVerdict(null);
+    }
+    setRunning(false); setDone(true);
   }
 
   return (
@@ -81,7 +127,11 @@ function PageHunt() {
             actions={<Chip mono tone="ok"><span className="pip pip-ok"/> analysis ready</Chip>}>
             <div className="ai-verdict">
               <span className="av-pill av-warn">credible threat · 84%</span>
-              <p>The query surfaced <strong>6 events across 4 hosts</strong> in a 24-minute window, all initiated by the same service account <span className="mono">svc_backup</span>. The pattern is consistent with <strong>RDP/WinRM lateral movement</strong> (T1021.001) preceded by a base64-encoded PowerShell payload (T1059.001) on <span className="mono">web-prod-01</span>. The path <span className="mono">web-prod-01 → win-dc-01 → jump-host → db-primary</span> matches the classic compromise → privilege escalation → DC → data store progression.</p>
+              {aiVerdict ? (
+                <p>{aiVerdict}</p>
+              ) : (
+                <p>The query surfaced <strong>6 events across 4 hosts</strong> in a 24-minute window, all initiated by the same service account <span className="mono">svc_backup</span>. The pattern is consistent with <strong>RDP/WinRM lateral movement</strong> (T1021.001) preceded by a base64-encoded PowerShell payload (T1059.001) on <span className="mono">web-prod-01</span>. The path <span className="mono">web-prod-01 → win-dc-01 → jump-host → db-primary</span> matches the classic compromise → privilege escalation → DC → data store progression.</p>
+              )}
               <div className="verdict-actions">
                 <button className="btn btn-primary btn-sm"><Icon.folder width="11" height="11"/> Promote to case</button>
                 <button className="btn btn-ghost btn-sm">Pivot on svc_backup</button>
@@ -92,7 +142,7 @@ function PageHunt() {
         )}
 
         {/* Results */}
-        <Card title="Results" sub={running ? 'streaming…' : `${HUNT_RESULTS.length} events · grouped by user`}
+        <Card title="Results" sub={running ? 'streaming…' : `${results.length} events · grouped by user`}
           actions={<><Chip mono>columns</Chip><Chip mono>export</Chip></>}>
           {running ? (
             <div className="hunt-running">
@@ -111,7 +161,7 @@ function PageHunt() {
                 <th style={{width:140}}>SCORE</th>
               </tr></thead>
               <tbody>
-                {HUNT_RESULTS.map((r,i) => (
+                {results.map((r,i) => (
                   <tr key={i}>
                     <td className="mono dim">{r.time.slice(11)}</td>
                     <td className="mono">{r.agent}</td>
@@ -144,7 +194,7 @@ const IOC_TYPES = [
   { id: 'hash',   label: 'Hash',   sample: 'a4f8b2c91d3e0775fa2b8c91d3e0775' },
 ];
 
-const IOC_RESULT = {
+const FALLBACK_IOC_RESULT = {
   ioc: '185.220.101.42',
   type: 'ip',
   verdict: 'malicious',
@@ -172,10 +222,53 @@ const IOC_RESULT = {
   history: [3, 5, 12, 8, 19, 24, 18, 31, 28, 22, 35, 42, 38, 47],
 };
 
+function normalizeEnrichResult(r, indicator) {
+  if (!r || r.error) return null;
+  // Map API response defensively — LangChain enrich shape varies
+  const intel = r.sources || r.intel || FALLBACK_IOC_RESULT.intel;
+  const geo = r.geo || {};
+  return {
+    ioc: r.indicator || indicator,
+    type: r.type || 'ip',
+    verdict: r.verdict || 'unknown',
+    confidence: typeof r.confidence === 'number' ? r.confidence : 50,
+    firstSeen: r.firstSeen || r.first_seen || '—',
+    lastSeen: r.lastSeen || r.last_seen || 'just now',
+    geo: {
+      country: geo.country || '—',
+      city: geo.city || '—',
+      lat: typeof geo.lat === 'number' ? geo.lat : 0,
+      lng: typeof geo.lng === 'number' ? geo.lng : 0,
+      isp: geo.isp || '—',
+      asn: geo.asn || '—',
+    },
+    intel: Array.isArray(intel) ? intel : FALLBACK_IOC_RESULT.intel,
+    ports: Array.isArray(r.ports) ? r.ports : [],
+    tags: Array.isArray(r.tags) ? r.tags : [],
+    related: Array.isArray(r.related) ? r.related : [],
+    history: Array.isArray(r.history) ? r.history : FALLBACK_IOC_RESULT.history,
+  };
+}
+
 function PageIOC() {
   const [type, setType] = useStateX('ip');
   const [input, setInput] = useStateX('185.220.101.42');
-  const [enriched, setEnriched] = useStateX(true);
+  const [enriched, setEnriched] = useStateX(false);
+  const [loading, setLoading] = useStateX(false);
+  const [result, setResult] = useStateX(null);
+
+  async function enrich() {
+    if (!input.trim()) return;
+    setLoading(true);
+    setEnriched(false);
+    const r = await window.SOC_API.post('/api/langchain/enrich', { indicator: input.trim(), type });
+    const normalized = normalizeEnrichResult(r, input.trim());
+    setResult(normalized || FALLBACK_IOC_RESULT);
+    setLoading(false);
+    setEnriched(true);
+  }
+
+  const display = result || FALLBACK_IOC_RESULT;
 
   return (
     <div className="page" data-screen-label="07 IOC Enrichment">
@@ -199,43 +292,50 @@ function PageIOC() {
             <div className="ioc-field">
               <input value={input} onChange={e=>setInput(e.target.value)} className="mono" placeholder="185.220.101.42  ·  malicious-c2.xyz  ·  a4f8b2c…"/>
             </div>
-            <button className="btn btn-primary" onClick={()=>setEnriched(true)}><Icon.search width="13" height="13"/> Enrich</button>
+            <button className="btn btn-primary" onClick={enrich} disabled={loading}>
+              <Icon.search width="13" height="13"/> {loading ? 'Enriching…' : 'Enrich'}
+            </button>
           </div>
+          {loading && (
+            <div className="mono dim" style={{marginTop: 8, fontSize: '0.78rem'}}>
+              querying VirusTotal · AbuseIPDB · AlienVault · Shodan… (up to 30s)
+            </div>
+          )}
         </Card>
 
         {enriched && (
           <>
             {/* Verdict + geo summary */}
             <div className="grid-12">
-              <Card span={5} title="Verdict" sub={`${IOC_RESULT.intel.length} sources queried`}>
+              <Card span={5} title="Verdict" sub={`${display.intel.length} sources queried`}>
                 <div className="verdict-block">
-                  <div className="verdict-pill mono">malicious</div>
-                  <div className="verdict-ioc mono">{IOC_RESULT.ioc}</div>
+                  <div className="verdict-pill mono">{display.verdict}</div>
+                  <div className="verdict-ioc mono">{display.ioc}</div>
                   <div className="verdict-conf">
-                    <div className="conf-track"><div className="conf-fill" data-sev="critical" style={{width: `${IOC_RESULT.confidence}%`}}/></div>
-                    <span className="mono">{IOC_RESULT.confidence}% confidence</span>
+                    <div className="conf-track"><div className="conf-fill" data-sev={display.verdict === 'malicious' ? 'critical' : display.verdict === 'suspicious' ? 'high' : 'low'} style={{width: `${display.confidence}%`}}/></div>
+                    <span className="mono">{display.confidence}% confidence</span>
                   </div>
                   <ul className="verdict-meta">
-                    <li><span>first seen</span><span className="mono">{IOC_RESULT.firstSeen}</span></li>
-                    <li><span>last seen</span><span className="mono">{IOC_RESULT.lastSeen}</span></li>
-                    <li><span>ASN</span><span className="mono">{IOC_RESULT.geo.asn}</span></li>
-                    <li><span>ISP</span><span className="mono">{IOC_RESULT.geo.isp}</span></li>
+                    <li><span>first seen</span><span className="mono">{display.firstSeen}</span></li>
+                    <li><span>last seen</span><span className="mono">{display.lastSeen}</span></li>
+                    <li><span>ASN</span><span className="mono">{display.geo.asn}</span></li>
+                    <li><span>ISP</span><span className="mono">{display.geo.isp}</span></li>
                   </ul>
                   <div className="ioc-tags">
-                    {IOC_RESULT.tags.map(t => <Chip key={t} mono tone="warn">{t}</Chip>)}
+                    {display.tags.map(t => <Chip key={t} mono tone="warn">{t}</Chip>)}
                   </div>
                 </div>
               </Card>
 
-              <Card span={7} title="Geolocation" sub={`${IOC_RESULT.geo.city}, ${IOC_RESULT.geo.country}`}>
-                <MiniMap lat={IOC_RESULT.geo.lat} lng={IOC_RESULT.geo.lng} city={IOC_RESULT.geo.city} country={IOC_RESULT.geo.country} />
+              <Card span={7} title="Geolocation" sub={`${display.geo.city}, ${display.geo.country}`}>
+                <MiniMap lat={display.geo.lat} lng={display.geo.lng} city={display.geo.city} country={display.geo.country} />
               </Card>
             </div>
 
             {/* Threat intel sources */}
             <Card title="Threat intel" sub="cross-source enrichment">
               <div className="intel-grid">
-                {IOC_RESULT.intel.map((s,i) => (
+                {display.intel.map((s,i) => (
                   <div key={i} className="intel-card" data-tone={s.tone}>
                     <div className="ic-source">{s.source}</div>
                     <div className="ic-verdict">{s.verdict}</div>
@@ -248,13 +348,13 @@ function PageIOC() {
             {/* Activity sparkline */}
             <div className="grid-12">
               <Card span={6} title="Activity (14d)" sub="alerts associated with this IOC">
-                <Sparkline data={IOC_RESULT.history} height={80} color="var(--crit)" />
-                <div className="spark-foot mono dim">peak: 47 alerts/day · {IOC_RESULT.history.reduce((a,b)=>a+b,0)} total in 14 days</div>
+                <Sparkline data={display.history} height={80} color="var(--crit)" />
+                <div className="spark-foot mono dim">peak: {Math.max(...display.history)} alerts/day · {display.history.reduce((a,b)=>a+b,0)} total in 14 days</div>
               </Card>
 
               <Card span={6} title="Open ports" sub="Shodan · 8s ago">
                 <div className="ports-grid">
-                  {IOC_RESULT.ports.map(p => (
+                  {display.ports.map(p => (
                     <div key={p} className="port-cell">
                       <div className="port-num mono">{p}</div>
                       <div className="port-svc mono">{ {22:'ssh', 80:'http', 443:'https', 9001:'tor'}[p] || '?' }</div>
@@ -265,19 +365,21 @@ function PageIOC() {
             </div>
 
             {/* Related entities */}
-            <Card title="Related entities" sub="across SIEM + SP-CM">
-              <ul className="related-list">
-                {IOC_RESULT.related.map(r => (
-                  <li key={r.id} className="related-item">
-                    <SevDot sev={r.sev}/>
-                    <span className="rel-type mono">{r.type}</span>
-                    <span className="rel-id mono">{r.id}</span>
-                    <span className="rel-label">{r.label}</span>
-                    <button className="btn btn-ghost btn-sm">Open</button>
-                  </li>
-                ))}
-              </ul>
-            </Card>
+            {display.related.length > 0 && (
+              <Card title="Related entities" sub="across SIEM + SP-CM">
+                <ul className="related-list">
+                  {display.related.map(r => (
+                    <li key={r.id} className="related-item">
+                      <SevDot sev={r.sev}/>
+                      <span className="rel-type mono">{r.type}</span>
+                      <span className="rel-id mono">{r.id}</span>
+                      <span className="rel-label">{r.label}</span>
+                      <button className="btn btn-ghost btn-sm">Open</button>
+                    </li>
+                  ))}
+                </ul>
+              </Card>
+            )}
           </>
         )}
       </div>

@@ -78,76 +78,49 @@ const COPILOT_CHAIN_V2 = [
 
 // Replacement PageCopilot
 function PageCopilot() {
-  const D = window.SOC_DATA;
-  const [msgs, setMsgs] = useC2S(COPILOT_CHAIN_V2);
+  const [msgs, setMsgs] = useC2S([]);
   const [draft, setDraft] = useC2S('');
   const [thinking, setThinking] = useC2S(false);
   const [thinkingChain, setThinkingChain] = useC2S([]); // tool calls being streamed
   const [thinkingFinalDraft, setThinkingFinalDraft] = useC2S('');
   const scrollRef = useC2R(null);
 
+  const socUser = sessionStorage.getItem('soc_user') || 'analyst';
+  const userAvatar = socUser.slice(0, 2).toUpperCase();
+
   useC2E(() => {
     scrollRef.current?.scrollTo({ top: 999999, behavior: 'smooth' });
   }, [msgs, thinking, thinkingChain]);
 
-  function send(text) {
+  async function send(text) {
     if (!text.trim()) return;
+    const history = msgs.slice(-6).map(m => ({ role: m.role === 'ai' ? 'assistant' : 'user', content: m.text }));
     setMsgs(m => [...m, { role: 'user', text }]);
     setDraft('');
-    runContainmentResponse();
-  }
-
-  // Simulate streaming tool calls
-  function runContainmentResponse() {
-    const planChain = [
-      { id: 'rc1', tool: 'runbook.fetch', args: { template: 'powershell-intrusion' }, duration: 110, result: { hits: 1, summary: '6-step playbook loaded' }},
-      { id: 'rc2', tool: 'wazuh.active_response', args: { action: 'isolate', agent_id: '003' }, duration: 240, result: { hits: 1, summary: 'isolation queued · 2.4s' }, notable: 'cuts network but keeps Wazuh agent online' },
-      { id: 'rc3', tool: 'firewall.block', args: { ip: '185.220.101.42', via: 'n8n' }, duration: 188, result: { hits: 1, summary: 'block rule deployed at edge' }},
-      { id: 'rc4', tool: 'ad.suspend_account', args: { user: 'svc_backup' }, duration: 320, result: { hits: 1, summary: 'pending operator approval' }, notable: 'authenticated on 3 hosts · suspend forces logoff' },
-      { id: 'rc5', tool: 'spcm.update_case', args: { id: 'CASE-4471', priority: 'P1', phase: 'CONTAIN' }, duration: 80, result: { hits: 1, summary: 'case updated' }},
-      { id: 'rc6', tool: 'reason', args: { task: 'draft response plan' }, duration: 1620, result: { hits: 1, summary: 'plan ready' }},
-    ];
     setThinking(true);
-    setThinkingChain([]);
-    setThinkingFinalDraft('');
-    let i = 0;
-    function nextCall() {
-      if (i >= planChain.length) {
-        // Stream the final text response
-        const finalText = "Containment plan ready:\n\n1. **Isolate web-prod-01** via Wazuh active-response (cuts network, keeps the agent).\n2. **Block 185.220.101.42** at the perimeter firewall (deployed via n8n).\n3. **Suspend svc_backup credential** in AD — currently authenticated on 3 hosts, force logoff.\n4. **Capture memory image** for forensics before re-image.\n5. **Promote CASE-4471 to P1** and assign to incident-response.\n\nSteps 1–3 are reversible and can run now; step 4 requires the host to stay powered on. Approve and I'll execute 1–3 immediately.";
-        streamText(finalText, () => {
-          setThinking(false);
-          setMsgs(m => [...m, {
-            role: 'ai',
-            toolCalls: planChain.map(c => ({ ...c, status: 'complete' })),
-            verdict: { label: 'plan ready · 4 auto-actions', confidence: 92, tone: 'info' },
-            text: finalText,
-          }]);
-          setThinkingChain([]);
-          setThinkingFinalDraft('');
+    // Push streaming placeholder
+    setMsgs(m => [...m, { role: 'ai', text: '', streaming: true }]);
+    await window.SOC_API.stream(
+      '/api/ai/chat/stream',
+      { message: text, history, session_id: `soc_${socUser}` },
+      (partial) => {
+        setMsgs(m => {
+          const copy = [...m];
+          const last = copy[copy.length - 1];
+          if (last?.streaming) copy[copy.length - 1] = { ...last, text: partial };
+          return copy;
         });
-        return;
+      },
+      (full) => {
+        setThinking(false);
+        setMsgs(m => {
+          const copy = [...m];
+          const last = copy[copy.length - 1];
+          if (last?.streaming) copy[copy.length - 1] = { role: 'ai', text: full || 'No response from AI.' };
+          return copy;
+        });
       }
-      const call = planChain[i];
-      setThinkingChain(c => [...c, { ...call, status: 'running' }]);
-      setTimeout(() => {
-        setThinkingChain(c => c.map(x => x.id === call.id ? { ...x, status: 'complete' } : x));
-        i++;
-        setTimeout(nextCall, 180);
-      }, call.duration);
-    }
-    setTimeout(nextCall, 200);
-  }
-
-  function streamText(text, done) {
-    let i = 0;
-    function step() {
-      i += Math.max(2, Math.round(text.length / 80));
-      setThinkingFinalDraft(text.slice(0, i));
-      if (i >= text.length) { done(); return; }
-      setTimeout(step, 16);
-    }
-    step();
+    );
   }
 
   return (
@@ -157,8 +130,8 @@ function PageCopilot() {
         sub="Connected to SIEM · SP-CM · MCP · gpt-4o"
         actions={<>
           <Chip mono tone="ok"><span className="pip pip-ok"/> n8n online</Chip>
-          <Chip mono>session · 12 turns</Chip>
-          <button className="btn btn-ghost">New session</button>
+          <Chip mono>session · {msgs.length} turns</Chip>
+          <button className="btn btn-ghost" onClick={() => setMsgs([])}>New session</button>
         </>}
       />
 
@@ -230,7 +203,14 @@ function PageCopilot() {
 
         <main className="copilot-main">
           <div className="chat" ref={scrollRef}>
-            {msgs.map((m, i) => <ChatMessageV2 key={i} msg={m} />)}
+            {msgs.length === 0 && !thinking && (
+              <div className="chat-empty">
+                <Icon.brain width="32" height="32" style={{opacity: 0.3}}/>
+                <div className="mono dim" style={{marginTop: 12}}>Start a conversation</div>
+                <div className="mono dim" style={{fontSize: '0.78rem', marginTop: 4}}>Ask SOCPilots AI to investigate, triage, or summarize</div>
+              </div>
+            )}
+            {msgs.map((m, i) => <ChatMessageV2 key={i} msg={m} userAvatar={userAvatar} socUser={socUser} />)}
             {thinking && (
               <ChatStreamingV2 chain={thinkingChain} text={thinkingFinalDraft}/>
             )}
@@ -265,13 +245,13 @@ function PageCopilot() {
   );
 }
 
-function ChatMessageV2({ msg }) {
+function ChatMessageV2({ msg, userAvatar, socUser }) {
   if (msg.role === 'user') {
     return (
       <div className="msg msg-user">
-        <div className="msg-avatar">YJ</div>
+        <div className="msg-avatar">{userAvatar || 'AN'}</div>
         <div className="msg-body">
-          <div className="msg-name">younes</div>
+          <div className="msg-name">{socUser || 'analyst'}</div>
           <div className="msg-text">{msg.text}</div>
         </div>
       </div>
@@ -301,7 +281,13 @@ function ChatMessageV2({ msg }) {
             </div>
           </div>
         )}
-        <div className="msg-text" dangerouslySetInnerHTML={{ __html: renderMd(msg.text) }} />
+        {msg.streaming ? (
+          <div className="msg-text msg-streaming">
+            {msg.text ? <span dangerouslySetInnerHTML={{ __html: renderMd(msg.text) + '<span class="cursor"></span>' }} /> : <span className="mono dim">…</span>}
+          </div>
+        ) : (
+          <div className="msg-text" dangerouslySetInnerHTML={{ __html: renderMd(msg.text) }} />
+        )}
       </div>
     </div>
   );
