@@ -1,12 +1,15 @@
 # ═══════════════════════════════════════════════════════════════════
-#  SOCPilots — Unified Stack
-#  All services on one server, one network, one .env file at root.
+#  SOCPilots DEV — Isolated development stack
+#  Runs alongside the production stack without port or volume conflicts.
 #
-#  External ports:
-#    80    → Nginx → HTTPS redirect + ACME challenge
-#    443   → Nginx → SOCPilots webapp (HTTPS/TLS)
-#    5678  → n8n automation
-#    8080  → TheHive MCP (direct access for n8n)
+#  Dev external ports (production uses 80/443/5678/8080/7474/7687/8001):
+#    9080  → Nginx HTTP (ACME challenge / redirect)
+#    9443  → Nginx HTTPS → SOCPilots dev webapp
+#    9678  → n8n dev automation
+#    9088  → TheHive MCP dev
+#    9474  → Neo4j Browser UI
+#    9687  → Neo4j Bolt
+#    9001  → LangChain agent (direct access)
 #
 #  Internal only (no host binding):
 #    webapp:3000    — behind nginx
@@ -17,6 +20,8 @@
 #    cp .env.example .env && nano .env
 #    docker compose up -d --build
 # ═══════════════════════════════════════════════════════════════════
+
+name: socpilots-dev   # isolates volumes/networks from the prod 'socpilots' project
 
 networks:
   soc:
@@ -36,11 +41,9 @@ volumes:
 services:
 
   # ── Qdrant Vector Database ─────────────────────────────────────
-  # Stores semantic embeddings for MITRE, detection rules, incidents
-  # REST API at :6333, gRPC at :6334 (internal only)
   qdrant:
     image: qdrant/qdrant:v1.9.3
-    container_name: socpilots-qdrant
+    container_name: dev-qdrant
     restart: unless-stopped
     networks:
       - soc
@@ -56,7 +59,7 @@ services:
   # ── Redis IOC Cache ────────────────────────────────────────────
   redis:
     image: redis:7-alpine
-    container_name: socpilots-redis
+    container_name: dev-redis
     restart: unless-stopped
     networks:
       - soc
@@ -72,7 +75,7 @@ services:
   # ── PostgreSQL ─────────────────────────────────────────────────
   postgres:
     image: postgres:16-alpine
-    container_name: socpilots-db
+    container_name: dev-db
     restart: unless-stopped
     networks:
       - soc
@@ -89,19 +92,19 @@ services:
       retries: 10
       start_period: 15s
 
-  # ── SOCPilots Webapp ───────────────────────────────────────────
+  # ── SOCPilots Webapp (dev) ─────────────────────────────────────
   webapp:
     build:
       context: ./Socpilots
       dockerfile: Dockerfile
-    container_name: socpilots
+    image: socpilots-webapp-dev
+    container_name: dev-webapp
     restart: unless-stopped
     networks:
       - soc
     volumes:
       - ./.env:/app/.env:ro
       - evidence_data:/app/evidence
-    # No host port — nginx handles all external traffic on port 80
     environment:
       NODE_ENV: production
       PORT: 3000
@@ -158,18 +161,19 @@ services:
       retries: 5
       start_period: 30s
 
-  # ── Nginx Reverse Proxy ────────────────────────────────────────
-  # Handles HTTPS termination. On first start uses a self-signed cert
-  # (browser warning) until you run: bash scripts/init-letsencrypt.sh
+  # ── Nginx Reverse Proxy (dev) ──────────────────────────────────
+  # Dev HTTPS: https://YOUR_IP:9443
+  # Dev HTTP:  http://YOUR_IP:9080
   nginx:
     build:
       context: ./Socpilots-webapp/nginx
       dockerfile: Dockerfile
-    container_name: socpilots-nginx
+    image: socpilots-nginx-dev
+    container_name: dev-nginx
     restart: unless-stopped
     ports:
-      - "80:80"
-      - "443:443"
+      - "9080:80"
+      - "9443:443"
     entrypoint: ["/bin/sh", "/entrypoint.sh"]
     environment:
       DOMAIN: ${DOMAIN:-localhost}
@@ -190,20 +194,16 @@ services:
       retries: 3
 
   # ── Certbot (auto-renewal daemon) ─────────────────────────────
-  # Initial cert: bash scripts/init-letsencrypt.sh
-  # This service renews automatically every 12h.
   certbot:
     image: certbot/certbot:latest
-    container_name: socpilots-certbot
+    container_name: dev-certbot
     restart: unless-stopped
     volumes:
       - letsencrypt_data:/etc/letsencrypt
       - certbot_www:/var/www/certbot
     entrypoint: /bin/sh -c 'trap exit TERM; while :; do certbot renew --quiet; sleep 12h & wait $${!}; done'
 
-  # ── Wazuh MCP Server ───────────────────────────────────────────
-  # Accessed internally by n8n via http://mcp-wazuh:3001
-  # Connects to Wazuh Manager on a separate server (WAZUH_HOST in .env)
+  # ── Wazuh MCP Server (dev) ─────────────────────────────────────
   mcp-wazuh:
     build:
       context: ./MCP-WAZUH
@@ -213,27 +213,23 @@ services:
         VERSION: "4.2.1"
         BUILD_DATE: ${BUILD_DATE:-unknown}
       target: production
-    image: mcp-wazuh:4.2.1
-    container_name: mcp-wazuh
+    image: mcp-wazuh-dev:4.2.1
+    container_name: dev-mcp-wazuh
     restart: unless-stopped
     networks:
       - soc
-    # No host port — n8n reaches it via internal network: http://mcp-wazuh:3001
     environment:
       MCP_HOST: 0.0.0.0
       MCP_PORT: 3001
       ENVIRONMENT: production
-      # Auth
       AUTH_MODE: ${WAZUH_MCP_AUTH_MODE:-bearer}
       AUTH_SECRET_KEY: ${AUTH_SECRET_KEY}
       MCP_API_KEY: ${MCP_API_KEY:-}
-      # Wazuh Manager
       WAZUH_HOST: ${WAZUH_HOST}
       WAZUH_PORT: ${WAZUH_PORT:-55000}
       WAZUH_USER: ${WAZUH_USER}
       WAZUH_PASS: ${WAZUH_PASS}
       WAZUH_VERIFY_SSL: "false"
-      # Wazuh Indexer
       WAZUH_INDEXER_HOST: ${WAZUH_INDEXER_HOST}
       WAZUH_INDEXER_PORT: ${WAZUH_INDEXER_PORT:-9200}
       WAZUH_INDEXER_USER: ${WAZUH_INDEXER_USER:-admin}
@@ -263,19 +259,19 @@ services:
           cpus: "0.25"
           memory: 128M
 
-  # ── TheHive MCP Server ─────────────────────────────────────────
-  # Accessed internally by n8n via http://thehive-mcp:8080
+  # ── TheHive MCP Server (dev) ───────────────────────────────────
+  # Dev host port: 9088
   thehive-mcp:
     build:
       context: ./thehive-mcp-new/thehive-mcp-new
       dockerfile: Dockerfile
-    image: thehive-mcp:latest
-    container_name: thehive-mcp
+    image: thehive-mcp-dev:latest
+    container_name: dev-thehive-mcp
     restart: unless-stopped
     networks:
       - soc
     ports:
-      - "8080:8080"
+      - "9088:8080"
     environment:
       THEHIVE_URL: ${THEHIVE_URL}
       THEHIVE_API_KEY: ${THEHIVE_API_KEY}
@@ -287,18 +283,18 @@ services:
       retries: 3
       start_period: 20s
 
-  # ── Neo4j UEBA Graph Database ──────────────────────────────
-  # Community Edition — free forever
-  # Browser UI: http://YOUR_SERVER_IP:7474  (login: neo4j / NEO4J_PASSWORD)
+  # ── Neo4j UEBA Graph Database (dev) ───────────────────────────
+  # Dev Browser UI: http://YOUR_IP:9474
+  # Dev Bolt:       bolt://YOUR_IP:9687
   neo4j:
     image: neo4j:5-community
-    container_name: socpilots-neo4j
+    container_name: dev-neo4j
     restart: unless-stopped
     networks:
       - soc
     ports:
-      - "7474:7474"   # Browser UI
-      - "7687:7687"   # Bolt (used by webapp)
+      - "9474:7474"
+      - "9687:7687"
     environment:
       NEO4J_AUTH: neo4j/${NEO4J_PASSWORD}
       NEO4J_PLUGINS: '["apoc"]'
@@ -315,13 +311,13 @@ services:
       retries: 5
       start_period: 60s
 
-  # ── Network Asset Scanner ───────────────────────────────────
-  # Runs nmap as root in isolated container, called by webapp
+  # ── Network Asset Scanner (dev) ────────────────────────────────
   scanner:
     build:
       context: ./scanner
       dockerfile: Dockerfile
-    container_name: socpilots-scanner
+    image: socpilots-scanner-dev
+    container_name: dev-scanner
     restart: unless-stopped
     networks:
       - soc
@@ -334,19 +330,19 @@ services:
       timeout: 10s
       retries: 3
 
-  # ── LangChain Multi-Step Investigation Agent ───────────────
-  # ReAct agent: Reason → Act → Observe loop
-  # POST /investigate — deep analysis  POST /triage — fast classify
+  # ── LangChain Investigation Agent (dev) ───────────────────────
+  # Dev host port: 9001
   langchain-agent:
     build:
       context: ./langchain-agent
       dockerfile: Dockerfile
-    container_name: socpilots-langchain
+    image: socpilots-langchain-dev
+    container_name: dev-langchain
     restart: unless-stopped
     networks:
       - soc
     ports:
-      - "8001:8001"
+      - "9001:8001"
     environment:
       OPENAI_API_KEY:   ${OPENAI_API_KEY}
       MISTRAL_API_KEY:  ${MISTRAL_API_KEY:-}
@@ -375,14 +371,13 @@ services:
       retries: 3
       start_period: 30s
 
-  # ── Knowledge Ingestion Service ────────────────────────────────
-  # Embeds MITRE ATT&CK + detection rules + TheHive incidents → Qdrant
-  # Internal only: POST /ingest  GET /health  GET /stats
+  # ── Knowledge Ingestion Service (dev) ─────────────────────────
   knowledge-ingestion:
     build:
       context: ./services/knowledge-ingestion
       dockerfile: Dockerfile
-    container_name: socpilots-knowledge-ingestion
+    image: socpilots-knowledge-ingestion-dev
+    container_name: dev-knowledge-ingestion
     restart: unless-stopped
     networks:
       - soc
@@ -406,14 +401,13 @@ services:
       retries: 5
       start_period: 120s
 
-  # ── RAG Retrieval Service ──────────────────────────────────────
-  # Semantic search over Qdrant knowledge base (MITRE, rules, incidents)
-  # Internal only: POST /retrieve  POST /search/investigation  POST /search/hunting
+  # ── RAG Retrieval Service (dev) ────────────────────────────────
   rag-retrieval:
     build:
       context: ./services/rag-retrieval
       dockerfile: Dockerfile
-    container_name: socpilots-rag-retrieval
+    image: socpilots-rag-retrieval-dev
+    container_name: dev-rag-retrieval
     restart: unless-stopped
     networks:
       - soc
@@ -431,14 +425,13 @@ services:
       retries: 5
       start_period: 120s
 
-  # ── Asset Scan Microservice ────────────────────────────────────
-  # Python/Flask — nmap discovery + Wazuh gap detection + Neo4j
-  # Internal only: webapp calls http://asset-scan:5003
+  # ── Asset Scan Microservice (dev) ──────────────────────────────
   asset-scan:
     build:
       context: ./services/asset-scan
       dockerfile: Dockerfile
-    container_name: socpilots-asset-scan
+    image: socpilots-asset-scan-dev
+    container_name: dev-asset-scan
     restart: unless-stopped
     networks:
       - soc
@@ -447,22 +440,18 @@ services:
       - NET_ADMIN
     environment:
       PORT: 5003
-      # PostgreSQL
       PG_HOST:     postgres
       PG_PORT:     5432
       PG_DB:       ${PG_DATABASE:-socpilots}
       PG_USER:     ${PG_USER:-socpilots}
       PG_PASSWORD: ${PG_PASSWORD}
-      # Wazuh Manager REST API
       WAZUH_HOST:  ${WAZUH_HOST}
       WAZUH_PORT:  ${WAZUH_PORT:-55000}
       WAZUH_USER:  ${WAZUH_USER}
       WAZUH_PASS:  ${WAZUH_PASS}
-      # OpenSearch fallback for agent list
       OPENSEARCH_URL:  ${OPENSEARCH_URL}
       OPENSEARCH_USER: ${OPENSEARCH_USER:-admin}
       OPENSEARCH_PASS: ${OPENSEARCH_PASS}
-      # Neo4j UEBA graph
       NEO4J_URI:      bolt://neo4j:7687
       NEO4J_USER:     neo4j
       NEO4J_PASSWORD: ${NEO4J_PASSWORD}
@@ -476,41 +465,38 @@ services:
       retries: 3
       start_period: 20s
 
-  # ── n8n Automation ─────────────────────────────────────────────
-  # AI agent that connects SOCPilots → MCP-Wazuh → TheHive
+  # ── n8n Automation (dev) ───────────────────────────────────────
+  # Dev host port: 9678
   n8n:
     image: n8nio/n8n:latest
-    container_name: socpilots-n8n
+    container_name: dev-n8n
     restart: always
     networks:
       - soc
     ports:
-      - "5678:5678"
+      - "9678:5678"
     environment:
       - N8N_HOST=0.0.0.0
       - N8N_PORT=5678
       - N8N_PROTOCOL=http
       - NODE_ENV=production
-      - WEBHOOK_URL=http://${SERVER_IP:-localhost}:5678/
+      - WEBHOOK_URL=http://${SERVER_IP:-localhost}:9678/
       - N8N_BASIC_AUTH_ACTIVE=true
       - N8N_BASIC_AUTH_USER=${N8N_USER:-admin}
       - N8N_BASIC_AUTH_PASSWORD=${N8N_PASSWORD}
       - N8N_SECURE_COOKIE=false
-      # MCP service coordinates — consumed by workflow $env expressions
       - MCP_WAZUH_HOST=mcp-wazuh
       - MCP_WAZUH_PORT=3001
       - MCP_THEHIVE_HOST=thehive-mcp
       - MCP_THEHIVE_PORT=8080
       - N8N_INTERNAL_HOST=n8n
       - N8N_INTERNAL_PORT=5678
-      # Threat intel API keys — consumed by Enrichment workflow $env expressions
       - VIRUSTOTAL_API_KEY=${VIRUSTOTAL_API_KEY}
       - ABUSEIPDB_API_KEY=${ABUSEIPDB_API_KEY}
       - ASSET_SCAN_URL=http://asset-scan:5003
       - THEHIVE_URL=${THEHIVE_URL}
       - THEHIVE_API_KEY=${THEHIVE_API_KEY}
       - N8N_WEBHOOK_BASE=http://n8n:5678
-      # Allowlist env vars accessible in workflow expressions
       - N8N_SECURITY_ALLOWED_EXTERNAL_ENV_VARS=MCP_WAZUH_HOST,MCP_WAZUH_PORT,MCP_THEHIVE_HOST,MCP_THEHIVE_PORT,N8N_INTERNAL_HOST,N8N_INTERNAL_PORT,VIRUSTOTAL_API_KEY,ABUSEIPDB_API_KEY,ASSET_SCAN_URL,THEHIVE_URL,THEHIVE_API_KEY,N8N_WEBHOOK_BASE
     volumes:
       - n8n_data:/home/node/.n8n
