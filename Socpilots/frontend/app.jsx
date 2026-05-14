@@ -46,21 +46,34 @@ function App() {
 
   function renderPage() {
     switch (page) {
-      case 'dashboard':   return <PageDashboard />;
-      case 'alerts':      return <PageAlerts />;
-      case 'copilot':     return <PageCopilot />;
-      case 'cases':       return <PageCases onOpenCase={setOpenCase} />;
-      case 'correlation': return <PageCorrelation />;
-      case 'hunt':        return <PageHunt />;
-      case 'ioc':         return <PageIOC />;
-      case 'agents':      return <PageAgents />;
-      case 'rules':       return <PageRules />;
-      case 'vulns':       return <PageVulns />;
-      case 'reports':     return <PageReports />;
-      case 'map':         return <PageMap />;
-      case 'sp-alerts':   return <PageSPAlerts />;
-      case 'settings':    return <PageSettings />;
-      default:            return <PageDashboard />;
+      case 'dashboard':    return <PageDashboard />;
+      case 'alerts':       return <PageAlerts />;
+      case 'copilot':      return <PageCopilot />;
+      case 'cases':        return <PageCases onOpenCase={setOpenCase} />;
+      case 'correlation':  return <PageCorrelation />;
+      case 'hunt':         return <PageHunt />;
+      case 'ioc':          return <PageIOC />;
+      case 'agents':       return <PageAgents />;
+      case 'rules':        return <PageRules />;
+      case 'vulns':        return <PageVulns />;
+      case 'reports':      return <PageReports />;
+      case 'map':          return <PageMap />;
+      case 'sp-alerts':    return <PageSPAlerts />;
+      case 'settings':     return <PageSettings />;
+      // New pages
+      case 'ueba':         return <PageUEBA />;
+      case 'darksoc':      return <PageDarkSOC />;
+      case 'mitre':        return <PageMitre />;
+      case 'assets':       return <PageAssets />;
+      case 'sla':          return <PageSLA />;
+      case 'evidence':     return <PageEvidence />;
+      case 'artifacts':    return <PageArtifacts />;
+      case 'users':        return <PageUsers />;
+      case 'langchain':    return <PageLangChain />;
+      case 'log-sources':  return <PageLogSources />;
+      case 'investigation':return <PageInvestigation />;
+      case 'notifications':return <PageNotifications />;
+      default:             return <PageDashboard />;
     }
   }
 
@@ -89,9 +102,15 @@ function App() {
             {value:'copilot',label:'SOCPilots AI'},{value:'cases',label:'SP-CM Cases'},
             {value:'correlation',label:'Correlation'},{value:'hunt',label:'Threat Hunt'},
             {value:'ioc',label:'IOC Enrichment'},{value:'agents',label:'Agents'},
-            {value:'rules',label:'Detection Rules'},{value:'vulns',label:'Vulnerabilities'},
-            {value:'reports',label:'Reports'},{value:'map',label:'Live Threat Map'},
-            {value:'sp-alerts',label:'SP-CM Alerts'},{value:'settings',label:'Settings'},
+            {value:'rules',label:'Detection Rules'},{value:'mitre',label:'ATT&CK Coverage'},
+            {value:'ueba',label:'UEBA'},{value:'darksoc',label:'Dark SOC'},
+            {value:'assets',label:'Assets'},{value:'evidence',label:'Evidence'},
+            {value:'artifacts',label:'Artifacts'},{value:'sla',label:'SLA'},
+            {value:'users',label:'Users'},{value:'langchain',label:'LangChain'},
+            {value:'log-sources',label:'Log Sources'},{value:'investigation',label:'Investigation'},
+            {value:'vulns',label:'Vulnerabilities'},{value:'reports',label:'Reports'},
+            {value:'map',label:'Live Threat Map'},{value:'sp-alerts',label:'SP-CM Alerts'},
+            {value:'notifications',label:'Notifications'},{value:'settings',label:'Settings'},
           ]}
           onChange={setPage} />
       </TweaksPanel>

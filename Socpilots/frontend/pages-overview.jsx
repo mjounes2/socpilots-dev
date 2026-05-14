@@ -588,4 +588,4 @@ function AlertDetail({ alert }) {
   );
 }
 
-Object.assign(window, { PageDashboard, PageAlerts });
+Object.assign(window, { PageDashboard, PageAlerts, KpiCard });

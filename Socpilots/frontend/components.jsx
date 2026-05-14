@@ -64,26 +64,42 @@ function Sidebar({ current, onNav, onLogout }) {
   const initials = (username || 'U').slice(0, 2).toUpperCase();
   const items = [
     { group: 'OVERVIEW', items: [
-      { id: 'dashboard',  label: 'Dashboard',  icon: Icon.grid, badge: null },
-      { id: 'alerts',     label: 'Alerts',     icon: Icon.bell, badge: '7' },
-      { id: 'agents',     label: 'Agents',     icon: Icon.cpu, badge: null },
+      { id: 'dashboard',    label: 'Dashboard',       icon: Icon.grid,    badge: null },
+      { id: 'alerts',       label: 'Alerts',          icon: Icon.bell,    badge: null },
+      { id: 'agents',       label: 'Agents',          icon: Icon.cpu,     badge: null },
+      { id: 'map',          label: 'Live Threat Map', icon: Icon.globe,   badge: null },
     ]},
     { group: 'INVESTIGATE', items: [
-      { id: 'hunt',       label: 'Threat Hunt',     icon: Icon.search, badge: null },
-      { id: 'copilot',    label: 'SOCPilots AI',    icon: Icon.brain, badge: 'NEW' },
-      { id: 'correlation',label: 'Correlation',     icon: Icon.share, badge: null },
-      { id: 'ioc',        label: 'IOC Enrichment',  icon: Icon.target, badge: null },
+      { id: 'hunt',         label: 'Threat Hunt',     icon: Icon.search,  badge: null },
+      { id: 'investigation',label: 'Investigation',   icon: Icon.brain,   badge: null },
+      { id: 'copilot',      label: 'SOCPilots AI',    icon: Icon.spark,   badge: null },
+      { id: 'correlation',  label: 'Correlation',     icon: Icon.share,   badge: null },
+      { id: 'ioc',          label: 'IOC Enrichment',  icon: Icon.target,  badge: null },
+      { id: 'ueba',         label: 'UEBA',            icon: Icon.user,    badge: null },
     ]},
     { group: 'RESPOND', items: [
-      { id: 'cases',      label: 'SP-CM Cases',  icon: Icon.folder, badge: '23' },
-      { id: 'sp-alerts',  label: 'SP-CM Alerts', icon: Icon.inbox, badge: null },
+      { id: 'cases',        label: 'SP-CM Cases',     icon: Icon.folder,  badge: null },
+      { id: 'sp-alerts',    label: 'SP-CM Alerts',    icon: Icon.inbox,   badge: null },
+      { id: 'darksoc',      label: 'Dark SOC',        icon: Icon.alert,   badge: null },
+      { id: 'sla',          label: 'SLA',             icon: Icon.check,   badge: null },
     ]},
-    { group: 'SYSTEM', items: [
-      { id: 'rules',      label: 'Detection Rules', icon: Icon.file, badge: null },
-      { id: 'vulns',      label: 'Vulnerabilities', icon: Icon.bug, badge: '142' },
-      { id: 'map',        label: 'Live Threat Map', icon: Icon.globe, badge: null },
-      { id: 'reports',    label: 'Reports',         icon: Icon.file, badge: null },
-      { id: 'settings',   label: 'Settings',        icon: Icon.cog, badge: null },
+    { group: 'DETECT', items: [
+      { id: 'rules',        label: 'Detection Rules', icon: Icon.file,    badge: null },
+      { id: 'mitre',        label: 'ATT&CK Coverage', icon: Icon.shield,  badge: null },
+      { id: 'artifacts',    label: 'Artifacts & IOC', icon: Icon.target,  badge: null },
+      { id: 'log-sources',  label: 'Log Sources',     icon: Icon.arrowUp, badge: null },
+    ]},
+    { group: 'ASSETS', items: [
+      { id: 'assets',       label: 'Assets',          icon: Icon.cpu,     badge: null },
+      { id: 'vulns',        label: 'Vulnerabilities', icon: Icon.bug,     badge: null },
+      { id: 'evidence',     label: 'Evidence',        icon: Icon.folder,  badge: null },
+    ]},
+    { group: 'PLATFORM', items: [
+      { id: 'users',        label: 'Users',           icon: Icon.user,    badge: null },
+      { id: 'langchain',    label: 'LangChain Agent', icon: Icon.brain,   badge: null },
+      { id: 'reports',      label: 'Reports',         icon: Icon.file,    badge: null },
+      { id: 'notifications',label: 'Notifications',   icon: Icon.bell,    badge: null },
+      { id: 'settings',     label: 'Settings',        icon: Icon.cog,     badge: null },
     ]},
   ];
 

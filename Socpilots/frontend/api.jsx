@@ -84,6 +84,28 @@
     }
   }
 
+  async function put(url, body) {
+    if (!tok()) { redir(); return null; }
+    try {
+      const r = await fetch(url, { method: 'PUT', headers: authHeaders(), body: JSON.stringify(body) });
+      if (r.status === 401) { redir(); return null; }
+      const json = await r.json().catch(() => ({}));
+      if (!r.ok) return { error: json.error || 'Request failed', status: r.status };
+      return json;
+    } catch { return null; }
+  }
+
+  async function patch(url, body) {
+    if (!tok()) { redir(); return null; }
+    try {
+      const r = await fetch(url, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify(body) });
+      if (r.status === 401) { redir(); return null; }
+      const json = await r.json().catch(() => ({}));
+      if (!r.ok) return { error: json.error || 'Request failed', status: r.status };
+      return json;
+    } catch { return null; }
+  }
+
   // Logout helper
   function logout() {
     post('/api/logout', {}).finally(() => {
@@ -114,5 +136,5 @@
     return `${Math.round(h / 24)}d ago`;
   }
 
-  window.SOC_API = { get, post, del, stream, logout, user, sevFromLevel, relTs };
+  window.SOC_API = { get, post, put, patch, del, stream, logout, user, sevFromLevel, relTs };
 })();
