@@ -1535,7 +1535,7 @@ sshd: Failed" style="min-height:80px"></textarea></div>
 <div class="page" id="page-investigation">
   <div class="ph">
     <h1>AI INVESTIGATION</h1>
-    <p>Deep AI analysis of high & critical alerts — dedicated investigation workflow</p>
+    <p>Deep AI analysis of medium, high &amp; critical alerts — dedicated investigation workflow</p>
   </div>
 
   <!-- Auto-Triage Control Bar -->
@@ -1558,9 +1558,10 @@ sshd: Failed" style="min-height:80px"></textarea></div>
   </div>
 
   <!-- Stats Row -->
-  <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:14px">
+  <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:14px">
     <div class="kpi cr"><div class="kpi-lbl">Critical Alerts</div><div class="kpi-val" id="inv-crit">—</div><div class="kpi-sub">level ≥ 12</div></div>
     <div class="kpi co"><div class="kpi-lbl">High Alerts</div><div class="kpi-val" id="inv-high">—</div><div class="kpi-sub">level 8–11</div></div>
+    <div class="kpi" style="--kc:var(--y)"><div class="kpi-lbl">Medium Alerts</div><div class="kpi-val" id="inv-med">—</div><div class="kpi-sub">level 5–7</div></div>
     <div class="kpi cy"><div class="kpi-lbl">Investigated</div><div class="kpi-val" id="inv-done">0</div><div class="kpi-sub">total saved</div></div>
     <div class="kpi cg"><div class="kpi-lbl">Auto-Triaged</div><div class="kpi-val" id="inv-auto">0</div><div class="kpi-sub">by AI engine</div></div>
     <div class="kpi cl"><div class="kpi-lbl">Last 24h</div><div class="kpi-val" id="inv-24h">0</div><div class="kpi-sub">investigations</div></div>
@@ -1571,13 +1572,14 @@ sshd: Failed" style="min-height:80px"></textarea></div>
     <!-- LEFT: Alert List -->
     <div class="card">
       <div class="card-hd">
-        <div class="card-ttl"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>HIGH/CRITICAL ALERTS</div>
-        <div class="row">
-          <select class="fs" style="width:110px" id="inv-sev" onchange="loadInvAlerts()">
-            <option value="">All H+C</option>
-            <option value="critical">Critical Only</option>
-            <option value="high">High Only</option>
-          </select>
+        <div class="card-ttl"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>ALERTS</div>
+        <div class="row" style="flex-wrap:wrap;gap:6px">
+          <div style="display:flex;align-items:center;gap:6px;padding:3px 10px;background:var(--bg);border:1px solid var(--b2);border-radius:var(--r3);white-space:nowrap">
+            <span style="font-size:10px;color:var(--txt3);font-family:var(--fm)">SEV:</span>
+            <label style="display:flex;align-items:center;gap:3px;cursor:pointer;font-size:11px;user-select:none"><input type="checkbox" id="inv-sev-critical" checked onchange="loadInvAlerts()" style="accent-color:var(--r);width:12px;height:12px;cursor:pointer"><span style="color:var(--r);font-weight:600">Critical</span></label>
+            <label style="display:flex;align-items:center;gap:3px;cursor:pointer;font-size:11px;user-select:none"><input type="checkbox" id="inv-sev-high" checked onchange="loadInvAlerts()" style="accent-color:var(--o);width:12px;height:12px;cursor:pointer"><span style="color:var(--o);font-weight:600">High</span></label>
+            <label style="display:flex;align-items:center;gap:3px;cursor:pointer;font-size:11px;user-select:none"><input type="checkbox" id="inv-sev-medium" checked onchange="loadInvAlerts()" style="accent-color:var(--y);width:12px;height:12px;cursor:pointer"><span style="color:var(--y)">Medium</span></label>
+          </div>
           <select class="fs" style="width:90px" id="inv-hrs" onchange="loadInvAlerts()">
             <option value="6">6h</option>
             <option value="24" selected>24h</option>
@@ -6775,34 +6777,34 @@ let _invAutoCount = 0;
 let _invDeepMode = false;
 
 async function loadInvAlerts(){
-  const sev = document.getElementById('inv-sev')?.value || '';
+  const sevChecked = ['critical','high','medium'].filter(s => document.getElementById(`inv-sev-${s}`)?.checked);
   const hrs = document.getElementById('inv-hrs')?.value || '24';
 
   document.getElementById('inv-list').innerHTML = spin('Loading from SIEM...');
 
-  // Fetch alerts: severity=high OR critical
-  const params = new URLSearchParams({hours: hrs, limit: 100});
-  if(sev) {
-    params.set('severity', sev);
+  if(!sevChecked.length){
+    document.getElementById('inv-list').innerHTML = empty('Select at least one severity level');
+    return;
   }
-  // No severity = get both high and critical
-  const d = await G('/api/alerts?' + params + (sev ? '' : '&minLevel=8'));
+
+  const params = new URLSearchParams({hours: hrs, page_size: 100});
+  params.set('severities', sevChecked.join(','));
+  const d = await G('/api/alerts?' + params);
 
   if(!d || d.error){
     document.getElementById('inv-list').innerHTML = errBnr(d?.error || 'SIEM unavailable');
     return;
   }
 
-  _invAlerts = (d.alerts || []).filter(a => {
-    const lvl = parseInt(a.level) || 0;
-    return lvl >= 8;  // High and Critical only
-  });
+  _invAlerts = d.alerts || [];
 
   // Update KPIs
   const crit = _invAlerts.filter(a => parseInt(a.level) >= 12).length;
   const high = _invAlerts.filter(a => {const l=parseInt(a.level); return l >= 8 && l < 12;}).length;
+  const med  = _invAlerts.filter(a => {const l=parseInt(a.level); return l >= 5 && l < 8;}).length;
   document.getElementById('inv-crit').textContent = crit.toLocaleString();
   document.getElementById('inv-high').textContent = high.toLocaleString();
+  document.getElementById('inv-med').textContent  = med.toLocaleString();
 
   const navBadge = document.getElementById('n-investigation');
   if(navBadge) navBadge.textContent = _invAlerts.length;
@@ -6813,18 +6815,20 @@ async function loadInvAlerts(){
 function renderInvList(){
   const el = document.getElementById('inv-list');
   if(!_invAlerts.length){
-    el.innerHTML = empty('No high/critical alerts in selected timeframe');
+    el.innerHTML = empty('No alerts in selected timeframe / severity');
     return;
   }
   el.innerHTML = _invAlerts.slice(0, 50).map((a, i) => {
-    const sev = parseInt(a.level) >= 12 ? 'critical' : 'high';
+    const lvl = parseInt(a.level) || 0;
+    const sev = lvl >= 12 ? 'critical' : lvl >= 8 ? 'high' : 'medium';
+    const borderColor = sev === 'critical' ? '--r' : sev === 'high' ? '--o' : '--y';
     const isSelected = _invSelected && _invSelected.timestamp === a.timestamp && _invSelected.ruleId === a.ruleId;
     return `<div class="inv-card" onclick="selectInvAlert(${i})" style="
       padding:10px 12px;
       margin:6px 0;
       background:${isSelected ? 'var(--cdim)' : 'var(--bg2)'};
       border:1px solid ${isSelected ? 'var(--c)' : 'var(--b1)'};
-      border-left:3px solid var(${sev === 'critical' ? '--r' : '--o'});
+      border-left:3px solid var(${borderColor});
       border-radius:3px;
       cursor:pointer;
       transition:all .15s;
