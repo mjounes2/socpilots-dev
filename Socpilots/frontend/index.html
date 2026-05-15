@@ -3311,15 +3311,27 @@ sshd: Failed" style="min-height:80px"></textarea></div>
   <div class="card">
     <div class="card-hd" style="flex-wrap:wrap;gap:8px">
       <div style="display:flex;gap:6px;flex-wrap:wrap">
-        <button class="btn btn-h btn-sm sla-tab on" onclick="slaSwitchTab('active')">Active</button>
+        <button class="btn btn-p btn-sm sla-tab on" onclick="slaSwitchTab('alerts')">⚡ SIEM Alerts</button>
+        <button class="btn btn-h btn-sm sla-tab" onclick="slaSwitchTab('active')">Active</button>
         <button class="btn btn-h btn-sm sla-tab" onclick="slaSwitchTab('breached')">Breached</button>
         <button class="btn btn-h btn-sm sla-tab" onclick="slaSwitchTab('all')">All SLAs</button>
         <button class="btn btn-h btn-sm sla-tab" onclick="slaSwitchTab('policies')">Policies</button>
       </div>
-      <button class="btn btn-p btn-sm" onclick="openModal('modal-sla-start')">+ Start SLA</button>
+      <div style="display:flex;gap:8px;align-items:center">
+        <select id="sla-alerts-hrs" onchange="loadSlaAlerts()" style="background:var(--bg2);color:var(--txt);border:1px solid var(--b2);border-radius:var(--r3);padding:4px 10px;font-size:12px">
+          <option value="6">Last 6h</option>
+          <option value="24" selected>Last 24h</option>
+          <option value="72">Last 3d</option>
+          <option value="168">Last 7d</option>
+        </select>
+        <button class="btn btn-h btn-sm" onclick="loadSlaAlerts()">↻ Refresh</button>
+      </div>
     </div>
 
-    <div id="sla-tab-active">
+    <div id="sla-tab-alerts">
+      <div id="sla-alerts-body"><div class="loading"><div class="spin"></div><p>Loading alerts &amp; auto-starting SLA timers…</p></div></div>
+    </div>
+    <div id="sla-tab-active" style="display:none">
       <div id="sla-active-body"><div class="loading"><div class="spin"></div></div></div>
     </div>
     <div id="sla-tab-breached" style="display:none">
@@ -4581,11 +4593,14 @@ function renderAlerts(alerts, total){
   const el=document.getElementById('al-body');
   if(!alerts.length){el.innerHTML=empty('No alerts match');return;}
   window._renderedAlerts = alerts;
+  // Ensure policy map is loaded for SLA icons
+  _loadSlaPolicyMap();
 
   const rows=alerts.map((a,i)=>{
     const investigated = isInvestigated(a);
     const lvl = parseInt(a.level) || 0;
     const isHighCritical = lvl >= 8;
+    const isMediumPlus   = lvl >= 5;
     const investigateBtn = isHighCritical
       ? `<button type="button" class="btn btn-sm" onclick="event.stopPropagation();investigateFromAlert(${i})" style="padding:4px 8px;background:var(--cdim);border:1px solid var(--c);color:var(--c)" title="Run AI Investigation">🔍 Investigate</button>`
       : '';
@@ -4596,6 +4611,8 @@ function renderAlerts(alerts, total){
     const statusBadge = investigated
       ? '<span class="badge ok" style="font-size:9px">🤖 DONE</span>'
       : (isHighCritical ? '<span style="font-size:9px;color:var(--txt3)">pending</span>' : '');
+    // SLA icon — inline calculation from alert timestamp + policy map
+    const slaCell = isMediumPlus ? slaIconInline(a.timestamp, a.severity) : '';
     const mitreFull = (a.mitre||[]).map(m=>`<span class="badge low" style="font-size:8px;margin-right:2px">${esc(m)}</span>`).join('');
     const detailHtml = `
       <div class="xdetail-inner">
@@ -4605,6 +4622,7 @@ function renderAlerts(alerts, total){
           <div class="xfield"><span class="xfield-lbl">Level</span><span class="xfield-val"><span class="badge ${sbadge(a.severity)}">${a.level} — ${esc(a.severity)}</span></span></div>
           <div class="xfield"><span class="xfield-lbl">Agent</span><span class="xfield-val">${esc(a.agent)}</span></div>
           <div class="xfield"><span class="xfield-lbl">Source IP</span><span class="xfield-val">${esc(a.srcIp)||'—'}</span></div>
+          ${isMediumPlus ? `<div class="xfield"><span class="xfield-lbl">SLA Status</span><span class="xfield-val">${slaIconInline(a.timestamp, a.severity)} ${_slaSlaLabel(a.timestamp, a.severity)}</span></div>` : ''}
           ${(a.mitre||[]).length ? `<div class="xfield"><span class="xfield-lbl">MITRE Techniques</span><span class="xfield-val">${mitreFull}</span></div>` : ''}
         </div>
         <div class="xfield-lbl" style="margin-top:4px">Full Description</div>
@@ -4621,21 +4639,37 @@ function renderAlerts(alerts, total){
         <td style="color:#8ab0d0;white-space:nowrap">${fmtDate(a.timestamp)}<span class="xcaret">▼</span></td>
         <td><span class="badge ${sbadge(a.severity)}">${a.level}</span></td>
         <td style="color:var(--c)">${esc(a.ruleId)}</td>
-        <td style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(a.description)}</td>
+        <td style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(a.description)}</td>
         <td>${esc(a.agent)}</td>
         <td style="color:var(--txt2)">${esc(a.srcIp)}</td>
         <td>${(a.mitre||[]).slice(0,2).map(m=>`<span class="badge low" style="font-size:8px">${esc(m)}</span>`).join('')}${(a.mitre||[]).length>2?`<span style="font-size:9px;color:var(--txt3)"> +${a.mitre.length-2}</span>`:''}</td>
+        <td style="text-align:center">${slaCell}</td>
         <td>${statusBadge}</td>
         <td style="white-space:nowrap" onclick="event.stopPropagation()">
           <div style="display:flex;gap:3px;flex-wrap:wrap">${investigateBtn}${reportBtn}${askBtn}</div>
         </td>
       </tr>
-      <tr id="xd-al-${i}" class="xdetail" style="display:none"><td colspan="9">${detailHtml}</td></tr>`;
+      <tr id="xd-al-${i}" class="xdetail" style="display:none"><td colspan="10">${detailHtml}</td></tr>`;
   }).join('');
   const pgn=buildPaginator(_alertPage,_alertPageSize,total||alerts.length,
     `loadAlerts(${_alertPage-1})`,`loadAlerts(${_alertPage+1})`,
     'setAlertPageSize(this)');
-  el.innerHTML=`<div class="tbl"><table><thead><tr><th>Time ▼</th><th>Sev</th><th>Rule</th><th>Description</th><th>Agent</th><th>Src IP</th><th>MITRE</th><th>Status</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>${pgn}`;
+  el.innerHTML=`<div class="tbl"><table><thead><tr><th>Time ▼</th><th>Sev</th><th>Rule</th><th>Description</th><th>Agent</th><th>Src IP</th><th>MITRE</th><th title="SLA Status — ✅ on track · ⚠️ at risk · 🔴 breached">SLA</th><th>Status</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>${pgn}`;
+}
+
+// Human-readable SLA label for the detail panel
+function _slaSlaLabel(timestamp, severity) {
+  if (!_slaPolicyMap) return '';
+  const policy = _slaPolicyMap[severity];
+  if (!policy) return '';
+  const elapsedMs  = Date.now() - new Date(timestamp).getTime();
+  const elapsedMin = Math.round(elapsedMs / 60000);
+  const windowMin  = policy.response_minutes;
+  const pct        = Math.round(elapsedMs / (windowMin * 60000) * 100);
+  if (pct >= 100) return `<span style="color:var(--r)">BREACHED — ${elapsedMin}m elapsed / ${windowMin}m SLA</span>`;
+  const remain = windowMin - Math.floor(elapsedMs / 60000);
+  if (pct >= 70) return `<span style="color:var(--o)">AT RISK — ${remain}m remaining (${pct}%)</span>`;
+  return `<span style="color:var(--g)">ON TRACK — ${remain}m remaining</span>`;
 }
 function askAIAboutAlert(i){
   const cached=window._renderedAlerts||_alerts;
@@ -11683,13 +11717,102 @@ async function loadArtSettings() {
 <!-- ══ SLA MANAGEMENT JS ══════════════════════════════════════ -->
 <script>
 // ─── SLA MANAGEMENT ──────────────────────────────────────────────
-let _slaCurTab = 'active';
+let _slaCurTab = 'alerts';
 let _slaActivePage = 1, _slaBreachedPage = 1, _slaAllPage = 1;
 let _slaPolicyEdit = null;
+let _slaPolicyMap  = null;  // severity → {response_minutes, resolution_minutes}
 
 async function loadSla() {
   loadSlaStats();
-  slaSwitchTab(_slaCurTab === 'active' ? 'active' : _slaCurTab);
+  _loadSlaPolicyMap();
+  slaSwitchTab(_slaCurTab);
+}
+
+async function _loadSlaPolicyMap() {
+  if (_slaPolicyMap) return _slaPolicyMap;
+  const d = await G('/api/sla/policy-map');
+  if (d && !d.error) _slaPolicyMap = d;
+  return _slaPolicyMap;
+}
+
+// SLA status icon — computed from elapsed ms vs policy window
+function slaIcon(elapsedMs, responseMinutes, status) {
+  if (status === 'completed') return '<span title="SLA Met ✅" style="font-size:14px">✅</span>';
+  if (status === 'cancelled') return '<span title="Cancelled" style="font-size:14px;opacity:.5">⊘</span>';
+  const windowMs = responseMinutes * 60000;
+  const pct = (elapsedMs / windowMs) * 100;
+  if (status === 'breached' || pct >= 100) return '<span title="SLA BREACHED 🔴" style="font-size:14px">🔴</span>';
+  if (pct >= 90) return '<span title="SLA At Risk ⚠️" style="font-size:14px;animation:pulse 1s infinite">🔴</span>';
+  if (pct >= 70) return '<span title="SLA At Risk ⚠️" style="font-size:14px">⚠️</span>';
+  return '<span title="SLA On Track ✅" style="font-size:14px">✅</span>';
+}
+
+// Inline SLA icon from alert timestamp + policy (no DB lookup, client-side only)
+function slaIconInline(alertTimestamp, severity) {
+  if (!_slaPolicyMap) return '';
+  const policy = _slaPolicyMap[severity];
+  if (!policy) return '';
+  const elapsedMs = Date.now() - new Date(alertTimestamp).getTime();
+  return slaIcon(elapsedMs, policy.response_minutes, 'running');
+}
+
+async function loadSlaAlerts() {
+  const el = document.getElementById('sla-alerts-body');
+  if (!el) return;
+  el.innerHTML = `<div class="loading"><div class="spin"></div><p>Loading SIEM alerts &amp; syncing SLA timers…</p></div>`;
+  const hrs = document.getElementById('sla-alerts-hrs')?.value || '24';
+  const d = await G(`/api/sla/alerts?hours=${hrs}`);
+  if (!d || d.error) { el.innerHTML = errBnr(d?.error || 'Failed to load SLA alerts'); return; }
+  if (!d.alerts?.length) { el.innerHTML = empty('No high/medium/critical alerts in this time window'); return; }
+
+  const rows = d.alerts.map(({ alert, sla }) => {
+    const sev     = sla?.severity || 'medium';
+    const status  = sla?.status || 'running';
+    const elapsedMs = sla ? (Date.now() - new Date(sla.started_at).getTime() - parseInt(sla.total_paused_ms || 0)) : 0;
+    const pct     = sla ? (sla.breach_pct ?? Math.round(elapsedMs / (sla.response_minutes * 60000) * 100)) : 0;
+    const icon    = sla ? slaIcon(elapsedMs, sla.response_minutes, status) : '<span style="color:var(--txt3);font-size:11px">—</span>';
+    const remain  = sla ? esc(sla.remaining_human || '—') : '—';
+    const elapsed = sla ? esc(sla.elapsed_human || '—') : '—';
+    const rule    = alert?.rule || {};
+    const desc    = (rule.description || alert?.rule?.description || '').slice(0, 70);
+    const agent   = alert?.agent?.name || '—';
+    const srcIp   = alert?.data?.srcip || '';
+    const ts      = alert?.['@timestamp'] || '';
+    const mitre   = Array.isArray(rule.mitre?.id) ? rule.mitre.id : (rule.mitre?.id ? [rule.mitre.id] : []);
+    return `<tr>
+      <td style="text-align:center;font-size:16px">${icon}</td>
+      <td><span class="badge ${esc(sev)}">${esc(sev)}</span></td>
+      <td style="color:var(--txt);font-size:11px;max-width:260px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(desc)}">${esc(desc)}</td>
+      <td style="color:var(--c);font-family:var(--fm);font-size:11px">${esc(rule.id||'—')}</td>
+      <td style="color:var(--txt2);font-size:11px">${esc(agent)}</td>
+      <td style="color:var(--txt3);font-family:var(--fm);font-size:10px">${srcIp?esc(srcIp):'—'}</td>
+      <td style="color:var(--txt3);font-size:10px;white-space:nowrap">${fmtDate(ts)}</td>
+      <td style="font-family:var(--fm);font-size:11px">${elapsed}</td>
+      <td style="font-family:var(--fm);font-size:11px;color:${pct>=90?'var(--r)':pct>=70?'var(--y)':'var(--txt)'}">${remain}</td>
+      <td>${sla ? _slaRiskBar(pct, status) : '<span style="color:var(--txt3);font-size:10px">No policy</span>'}</td>
+      <td style="white-space:nowrap">
+        ${sla && ['running','paused','breached'].includes(status)
+          ? `<button class="btn btn-g btn-sm" onclick="slaStopAction(${sla.id})">✓ Resolve</button>`
+          : ''}
+        ${sla ? `<button class="btn btn-h btn-sm" style="margin-left:4px" onclick="slaOpenDetail(${sla.id})">Detail</button>` : ''}
+      </td>
+    </tr>`;
+  }).join('');
+
+  el.innerHTML = `
+    <div style="font-size:10px;color:var(--txt3);padding:8px 0 10px;display:flex;gap:16px;align-items:center">
+      <span>🔴 = SLA Breached &nbsp;⚠️ = At Risk (>70%) &nbsp;✅ = On Track</span>
+      <span style="margin-left:auto;color:var(--txt3)">SLA timers auto-started from alert detection time · ${d.total} alerts</span>
+    </div>
+    <div class="tbl"><table>
+      <thead><tr>
+        <th style="text-align:center">SLA</th>
+        <th>Severity</th><th>Alert</th><th>Rule</th><th>Agent</th>
+        <th>Src IP</th><th>Detected</th><th>Elapsed</th><th>Remaining</th>
+        <th>Risk</th><th>Actions</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>`;
 }
 
 async function loadSlaStats() {
@@ -11727,13 +11850,22 @@ async function loadSlaStats() {
 
 function slaSwitchTab(tab) {
   _slaCurTab = tab;
-  document.querySelectorAll('.sla-tab').forEach(b => b.classList.remove('on'));
+  document.querySelectorAll('.sla-tab').forEach(b => {
+    b.classList.remove('on');
+    b.className = b.className.replace('btn-p', 'btn-h');
+  });
   document.querySelectorAll('[id^="sla-tab-"]').forEach(p => p.style.display = 'none');
-  const btn = [...document.querySelectorAll('.sla-tab')].find(b => b.textContent.trim().toLowerCase().startsWith(tab === 'all' ? 'all' : tab === 'policies' ? 'pol' : tab));
-  if (btn) btn.classList.add('on');
+  const tabKeyMap = { alerts: '⚡', active: 'active', breached: 'breached', all: 'all', policies: 'pol' };
+  const key = tabKeyMap[tab] || tab;
+  const btn = [...document.querySelectorAll('.sla-tab')].find(b => b.textContent.trim().toLowerCase().includes(key.toLowerCase()));
+  if (btn) {
+    btn.classList.add('on');
+    btn.className = btn.className.replace('btn-h', 'btn-p');
+  }
   const panel = document.getElementById('sla-tab-' + tab);
   if (panel) panel.style.display = '';
-  if (tab === 'active')    loadSlaActive(1);
+  if (tab === 'alerts')        loadSlaAlerts();
+  else if (tab === 'active')   loadSlaActive(1);
   else if (tab === 'breached') loadSlaBreached(1);
   else if (tab === 'all')      loadSlaAll(1);
   else if (tab === 'policies') loadSlaPolicies();

@@ -2664,6 +2664,9 @@ module.exports = {
   updateSlaPolicy,
   deleteSlaPolicy,
   createSlaInstance,
+  upsertSlaForAlert,
+  getSlaForEntityBatch,
+  getSlaPolicyMap,
   getSlaInstance,
   getSlaForEntity,
   listSlaInstances,
@@ -2867,15 +2870,65 @@ async function deleteSlaPolicy(id) {
 }
 
 // ── SLA Instances lifecycle ───────────────────────────────────────
-async function createSlaInstance({ policyId, policyName, entityType, entityId, entityLabel, severity, slaType, responseMinutes, resolutionMinutes, owner }) {
+async function createSlaInstance({ policyId, policyName, entityType, entityId, entityLabel, severity, slaType, responseMinutes, resolutionMinutes, owner, startedAt }) {
   const r = await pool.query(
     `INSERT INTO sla_instances(policy_id,policy_name,entity_type,entity_id,entity_label,severity,sla_type,response_minutes,resolution_minutes,owner,status,started_at)
-     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'running',NOW()) RETURNING *`,
+     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'running',$11) RETURNING *`,
     [policyId || null, policyName || null, entityType, String(entityId),
      entityLabel || null, severity || null, slaType || 'response',
-     responseMinutes, resolutionMinutes, owner || null]
+     responseMinutes, resolutionMinutes, owner || null,
+     startedAt ? new Date(startedAt) : new Date()]
   );
   return r.rows[0];
+}
+
+// Find-or-create SLA for a SIEM alert — backdates started_at to alert timestamp
+async function upsertSlaForAlert({ alertId, alertLabel, severity, alertTimestamp, policyId, policyName, responseMinutes, resolutionMinutes }) {
+  const existing = await pool.query(
+    `SELECT * FROM sla_instances WHERE entity_type='alert' AND entity_id=$1 ORDER BY created_at DESC LIMIT 1`,
+    [String(alertId)]
+  );
+  if (existing.rows[0]) return existing.rows[0];
+  const r = await pool.query(
+    `INSERT INTO sla_instances(policy_id,policy_name,entity_type,entity_id,entity_label,severity,sla_type,response_minutes,resolution_minutes,owner,status,started_at)
+     VALUES($1,$2,'alert',$3,$4,$5,'response',$6,$7,'system','running',$8) RETURNING *`,
+    [policyId || null, policyName || null, String(alertId), alertLabel || null,
+     severity || null, responseMinutes, resolutionMinutes,
+     alertTimestamp ? new Date(alertTimestamp) : new Date()]
+  );
+  return r.rows[0];
+}
+
+// Batch lookup: returns map of entity_id → sla instance (latest per entity)
+async function getSlaForEntityBatch(entityType, ids) {
+  if (!ids || !ids.length) return {};
+  const r = await pool.query(
+    `SELECT DISTINCT ON (entity_id) * FROM sla_instances
+     WHERE entity_type=$1 AND entity_id = ANY($2)
+     ORDER BY entity_id, created_at DESC`,
+    [entityType, ids.map(String)]
+  );
+  const map = {};
+  for (const row of r.rows) map[row.entity_id] = row;
+  return map;
+}
+
+// Return map of severity → {response_minutes, resolution_minutes} from active policies
+async function getSlaPolicyMap() {
+  const r = await pool.query(
+    `SELECT severity, MIN(response_minutes) AS response_minutes, MIN(resolution_minutes) AS resolution_minutes
+     FROM sla_policies WHERE active=true AND entity_type IN ('all','alert')
+     GROUP BY severity ORDER BY severity`
+  );
+  const map = {};
+  for (const row of r.rows) {
+    map[row.severity] = { response_minutes: parseInt(row.response_minutes), resolution_minutes: parseInt(row.resolution_minutes) };
+  }
+  // Ensure defaults exist even if no policy seeded
+  if (!map.critical) map.critical = { response_minutes: 15,  resolution_minutes: 120 };
+  if (!map.high)     map.high     = { response_minutes: 30,  resolution_minutes: 240 };
+  if (!map.medium)   map.medium   = { response_minutes: 120, resolution_minutes: 1440 };
+  return map;
 }
 
 async function getSlaInstance(id) {

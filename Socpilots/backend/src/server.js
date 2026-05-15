@@ -7024,6 +7024,90 @@ app.get('/api/sla/breached', authMW, async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── SLA policy map (severity → response/resolution minutes) ─────
+app.get('/api/sla/policy-map', authMW, async (req, res) => {
+  try {
+    const map = await db.getSlaPolicyMap();
+    res.json(map);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── SLA alerts view — auto-starts SLA for all high/medium/critical ──
+// Fetches SIEM alerts, upserts SLA instance per alert (backdated to alert
+// timestamp), returns each alert enriched with live SLA status.
+app.get('/api/sla/alerts', authMW, async (req, res) => {
+  try {
+    const hours    = Math.min(parseInt(req.query.hours) || 24, 168);
+    const sevList  = ['critical', 'high', 'medium'];
+    const policyMap = await db.getSlaPolicyMap();
+
+    // Fetch high/medium/critical alerts from OpenSearch
+    const osBody = {
+      size: 200,
+      sort: [{ '@timestamp': { order: 'desc' } }],
+      query: {
+        bool: {
+          must: [{ terms: { 'rule.level': [5,6,7,8,9,10,11,12,13,14,15] } }],
+          filter: [{ range: { '@timestamp': { gte: `now-${hours}h` } } }],
+        }
+      },
+      _source: ['@timestamp','rule.id','rule.level','rule.description','rule.mitre',
+                'agent.name','data.srcip','data.dstip','full_log'],
+    };
+    const osResp = await osSearch(osBody).catch(() => ({ hits: { hits: [] } }));
+    const hits   = osResp?.hits?.hits || [];
+
+    // Determine severity per alert
+    const severityOf = level => {
+      const l = parseInt(level);
+      if (l >= 12) return 'critical';
+      if (l >= 8)  return 'high';
+      if (l >= 5)  return 'medium';
+      return 'low';
+    };
+
+    // Filter to high/medium/critical only
+    const alerts = hits
+      .map(h => ({ _id: h._id, ...h._source }))
+      .filter(a => sevList.includes(severityOf(a.rule?.level)));
+
+    if (!alerts.length) return res.json({ alerts: [], total: 0 });
+
+    // Upsert SLA instances in parallel (max 50 at once to avoid DB overload)
+    const batch = alerts.slice(0, 100);
+    const slaInstances = await Promise.all(batch.map(async a => {
+      const sev    = severityOf(a.rule?.level);
+      const policy = policyMap[sev];
+      if (!policy) return null;
+      const inst = await db.upsertSlaForAlert({
+        alertId:          a._id,
+        alertLabel:       (a.rule?.description || '').slice(0, 200),
+        severity:         sev,
+        alertTimestamp:   a['@timestamp'],
+        policyId:         null,
+        policyName:       `${sev.charAt(0).toUpperCase() + sev.slice(1)} Severity SLA`,
+        responseMinutes:  policy.response_minutes,
+        resolutionMinutes: policy.resolution_minutes,
+      }).catch(() => null);
+      return { alert: a, sla: inst };
+    }));
+
+    // Compute live SLA status for each
+    const result = slaInstances
+      .filter(Boolean)
+      .map(({ alert, sla }) => {
+        if (!sla) return { alert, sla: null, sla_status: 'no_policy' };
+        const status = computeSlaStatus(sla);
+        return { alert, sla: status };
+      });
+
+    res.json({ alerts: result, total: result.length });
+  } catch(e) {
+    console.error('[sla/alerts]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── SLA breach detection ticker (runs every 60s) ─────────────────
 async function slaTickerRun() {
   try {
