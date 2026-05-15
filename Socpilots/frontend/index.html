@@ -7196,10 +7196,12 @@ function chatKey(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendChat
 const _CHAT_TOOL_LABELS = {
   search_alerts:        '🔍 Searching alerts',
   enrich_ip:            '🌐 Enriching IP reputation',
+  check_cases:          '📋 Checking TheHive cases',
   query_assets:         '🏢 Checking asset inventory',
   query_ueba:           '👤 Analysing UEBA behaviour',
   query_knowledge_base: '📚 Searching knowledge base',
   query_agents:         '🖥️ Querying Wazuh agents',
+  query_log_sources:    '📡 Checking log sources',
 };
 
 async function sendChat(){

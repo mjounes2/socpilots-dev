@@ -1124,16 +1124,44 @@ def query_agents(filter_str: str = "all") -> str:
         return f"Agent query error: {e}"
 
 
-CHAT_TOOLS = [search_alerts, enrich_ip, query_assets, query_ueba, query_knowledge_base, query_agents, query_log_sources]
+CHAT_TOOLS = [search_alerts, enrich_ip, check_cases, query_assets, query_ueba, query_knowledge_base, query_agents, query_log_sources]
 
 # ChatPromptTemplate required by create_tool_calling_agent (native function calling).
 # Works with GPT-4o-mini and Mistral — far more reliable than string-based ReAct.
 CHAT_PROMPT = ChatPromptTemplate.from_messages([
     ("system",
-     "You are SOCPilots AI, an expert SOC analyst assistant with real-time access to your organisation's security data.\n\n"
-     "Use tools when asked about current SIEM data (agents, alerts, IPs, assets). "
-     "Answer general security knowledge questions directly without tools.\n"
-     "Be concise and conversational. Cite specific data from tool results."),
+     "You are SOCPilots AI, a senior Tier-3 SOC analyst with deep expertise in threat detection, "
+     "incident response, SIEM analysis, and threat intelligence. You have real-time access to your "
+     "organisation's live security environment.\n\n"
+     "ANALYST MINDSET\n"
+     "- Think like an experienced threat hunter: correlate data across multiple sources, identify "
+     "patterns, and reason about attacker intent and kill-chain stage\n"
+     "- Always pull real data before answering — use tools proactively and chain multiple tool calls "
+     "to build complete situational awareness before drawing conclusions\n"
+     "- When investigating a host, IP, or alert: search_alerts + enrich_ip + check_cases + "
+     "query_ueba — do not answer from a single tool alone\n"
+     "- Ask: what does the data tell you? What is abnormal? What is the attacker trying to achieve?\n\n"
+     "RESPONSE QUALITY\n"
+     "- Lead with the key finding or direct answer, then support it with specific evidence from tool results\n"
+     "- Include exact numbers, timestamps, rule IDs, agent names, severity levels, and threat scores "
+     "from tool results — vague answers are unacceptable\n"
+     "- Assess risk clearly (Critical / High / Medium / Low) with justification tied to real data\n"
+     "- End with concrete, prioritised next steps the analyst can action immediately\n"
+     "- Use markdown formatting: **bold** for critical findings, `code` for IPs/hashes/commands, "
+     "headers for sections in longer responses\n"
+     "- For multi-step investigations, reason through the data as you gather it\n\n"
+     "TOOL SELECTION GUIDE\n"
+     "- search_alerts: recent SIEM alerts, attack patterns, rule triggers, IOC activity\n"
+     "- enrich_ip: full threat intel (VT + AbuseIPDB + OTX + Shodan) — always use for external IPs\n"
+     "- check_cases: existing TheHive cases — always check for known context on hosts/users/IPs\n"
+     "- query_ueba: user/host behaviour anomaly scores, lateral movement, impossible travel\n"
+     "- query_assets: asset inventory, criticality ratings, Wazuh agent coverage gaps\n"
+     "- query_knowledge_base: MITRE ATT&CK techniques, detection rules, incident playbooks\n"
+     "- query_agents: Wazuh agent status, coverage, last-seen, disconnected endpoints\n"
+     "- query_log_sources: active log sources, collection health, coverage gaps\n\n"
+     "Apply expertise in: MITRE ATT&CK, threat hunting, malware analysis, network forensics, "
+     "Windows/Linux IR, Active Directory attacks, and SOC operations. Cross-reference findings "
+     "against known TTPs and attacker tradecraft."),
     MessagesPlaceholder("chat_history", optional=True),
     ("human", "{input}"),
     MessagesPlaceholder("agent_scratchpad"),
@@ -1143,8 +1171,8 @@ CHAT_PROMPT = ChatPromptTemplate.from_messages([
 def _format_history(history: list[dict]) -> list:
     """Convert history dicts to LangChain message objects for tool-calling agent."""
     messages = []
-    for msg in history[-6:]:
-        content = str(msg.get("content", ""))[:500]
+    for msg in history[-10:]:
+        content = str(msg.get("content", ""))[:1000]
         if msg.get("role") == "user":
             messages.append(HumanMessage(content=content))
         else:
@@ -1179,8 +1207,8 @@ async def chat(req: ChatRequest):
         agent = create_tool_calling_agent(llm, CHAT_TOOLS, CHAT_PROMPT)
         executor = AgentExecutor(
             agent=agent, tools=CHAT_TOOLS,
-            verbose=False, max_iterations=8,
-            max_execution_time=60,
+            verbose=False, max_iterations=12,
+            max_execution_time=120,
             handle_parsing_errors=True,
             return_intermediate_steps=True,
         )
@@ -1212,8 +1240,8 @@ async def chat_stream(req: ChatRequest):
                 agent = create_tool_calling_agent(llm, CHAT_TOOLS, CHAT_PROMPT)
                 executor = AgentExecutor(
                     agent=agent, tools=CHAT_TOOLS,
-                    verbose=False, max_iterations=8,
-                    max_execution_time=60,
+                    verbose=False, max_iterations=12,
+                    max_execution_time=120,
                     handle_parsing_errors=True,
                 )
                 # Pass callbacks via RunnableConfig so they propagate through
@@ -1234,12 +1262,12 @@ async def chat_stream(req: ChatRequest):
 
         while True:
             try:
-                event_type, data = await asyncio.wait_for(queue.get(), timeout=90.0)
+                event_type, data = await asyncio.wait_for(queue.get(), timeout=130.0)
                 yield f"data: {json.dumps({'type': event_type, 'data': data})}\n\n"
                 if event_type in ("done", "error"):
                     break
             except asyncio.TimeoutError:
-                yield f"data: {json.dumps({'type': 'error', 'data': 'Response timed out after 90s'})}\n\n"
+                yield f"data: {json.dumps({'type': 'error', 'data': 'Response timed out after 130s'})}\n\n"
                 break
 
         try:
