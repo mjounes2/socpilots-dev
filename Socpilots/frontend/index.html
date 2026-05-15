@@ -900,7 +900,13 @@ if(localStorage.getItem("soc_dim")==="1")document.body.classList.add("dim");
     <div class="card-hd"><div class="card-ttl">Alert Feed</div>
       <div class="row">
         <input class="fi" style="width:140px" placeholder="Search..." id="al-q" oninput="_alertPage=1;loadAlerts()">
-        <select class="fs" style="width:100px" id="al-sev" onchange="_alertPage=1;loadAlerts()"><option value="">All Sev</option><option value="critical">Critical</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select>
+        <div style="display:flex;align-items:center;gap:6px;padding:3px 10px;background:var(--bg2);border:1px solid var(--b2);border-radius:var(--r3);white-space:nowrap">
+          <span style="font-size:10px;color:var(--txt3);font-family:var(--fm)">SEV:</span>
+          <label style="display:flex;align-items:center;gap:3px;cursor:pointer;font-size:11px;user-select:none"><input type="checkbox" id="sev-critical" checked onchange="_alertPage=1;loadAlerts()" style="accent-color:var(--r);width:12px;height:12px;cursor:pointer"><span style="color:var(--r);font-weight:600">Critical</span></label>
+          <label style="display:flex;align-items:center;gap:3px;cursor:pointer;font-size:11px;user-select:none"><input type="checkbox" id="sev-high" checked onchange="_alertPage=1;loadAlerts()" style="accent-color:var(--o);width:12px;height:12px;cursor:pointer"><span style="color:var(--o);font-weight:600">High</span></label>
+          <label style="display:flex;align-items:center;gap:3px;cursor:pointer;font-size:11px;user-select:none"><input type="checkbox" id="sev-medium" checked onchange="_alertPage=1;loadAlerts()" style="accent-color:var(--y);width:12px;height:12px;cursor:pointer"><span style="color:var(--y)">Medium</span></label>
+          <label style="display:flex;align-items:center;gap:3px;cursor:pointer;font-size:11px;user-select:none"><input type="checkbox" id="sev-low" onchange="_alertPage=1;loadAlerts()" style="accent-color:var(--txt2);width:12px;height:12px;cursor:pointer"><span style="color:var(--txt2)">Low</span></label>
+        </div>
         <select class="fs" style="width:105px" id="al-hrs" onchange="onAlHrsChange()">
           <option value="0">All Time</option>
           <option value="1">Last 1h</option>
@@ -4533,13 +4539,13 @@ async function loadAlerts(page){
   if(page!==undefined){_alertPage=page;}
   document.getElementById('al-body').innerHTML=spin('Loading from SIEM...');
   refreshInvestigatedKeys();
-  const sev=document.getElementById('al-sev')?.value||'';
+  const sevChecked=['critical','high','medium','low'].filter(s=>document.getElementById(`sev-${s}`)?.checked);
   const hrs=document.getElementById('al-hrs')?.value||'24';
   const agent=(document.getElementById('al-agent')?.value||'').trim();
   const srcip=(document.getElementById('al-srcip')?.value||'').trim();
   const q=(document.getElementById('al-q')?.value||'').trim();
   const p=new URLSearchParams({page:_alertPage,page_size:_alertPageSize});
-  if(sev) p.set('severity',sev);
+  if(sevChecked.length&&sevChecked.length<4) p.set('severities',sevChecked.join(','));
   if(agent) p.set('agent',agent);
   if(srcip) p.set('srcip',srcip);
   if(q) p.set('q',q);
@@ -4599,9 +4605,8 @@ function renderAlerts(alerts, total){
   const rows=alerts.map((a,i)=>{
     const investigated = isInvestigated(a);
     const lvl = parseInt(a.level) || 0;
-    const isHighCritical = lvl >= 8;
     const isMediumPlus   = lvl >= 5;
-    const investigateBtn = isHighCritical
+    const investigateBtn = isMediumPlus
       ? `<button type="button" class="btn btn-sm" onclick="event.stopPropagation();investigateFromAlert(${i})" style="padding:4px 8px;background:var(--cdim);border:1px solid var(--c);color:var(--c)" title="Run AI Investigation">🔍 Investigate</button>`
       : '';
     const reportBtn = investigated
@@ -4610,7 +4615,7 @@ function renderAlerts(alerts, total){
     const askBtn = `<button type="button" class="btn btn-sm" onclick="event.stopPropagation();askAIAboutAlert(${i})" style="padding:4px 8px;background:rgba(0,230,118,.08);border:1px solid rgba(0,230,118,.35);color:var(--g)" title="Ask AI">💬 AI</button>`;
     const statusBadge = investigated
       ? '<span class="badge ok" style="font-size:9px">🤖 DONE</span>'
-      : (isHighCritical ? '<span style="font-size:9px;color:var(--txt3)">pending</span>' : '');
+      : (isMediumPlus ? '<span style="font-size:9px;color:var(--txt3)">pending</span>' : '');
     // SLA icon — inline calculation from alert timestamp + policy map
     const slaCell = isMediumPlus ? slaIconInline(a.timestamp, a.severity) : '';
     const mitreFull = (a.mitre||[]).map(m=>`<span class="badge low" style="font-size:8px;margin-right:2px">${esc(m)}</span>`).join('');

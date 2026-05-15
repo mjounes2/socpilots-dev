@@ -649,6 +649,11 @@ app.get('/api/alerts', authMW, async (req, res) => {
     const toTs   = req.query.to   || null;
     const agent  = req.query.agent;
     const srcip  = req.query.srcip;
+    // Multi-severity: severities=critical,high,medium  (takes precedence over single severity)
+    const VALID_SEVS = new Set(['critical','high','medium','low']);
+    const sevList = req.query.severities
+      ? req.query.severities.split(',').map(s => s.trim()).filter(s => VALID_SEVS.has(s))
+      : (sev && VALID_SEVS.has(sev) ? [sev] : []);
 
     const from = (page - 1) * page_size;
     // OpenSearch hard limit is 10000 hits; cap gracefully
@@ -666,9 +671,13 @@ app.get('/api/alerts', authMW, async (req, res) => {
     }
     if (agent)  must.push({ term: { 'agent.name': agent } });
     if (srcip)  must.push({ term: { 'data.srcip': srcip } });
-    if (sev) {
+    if (sevList.length) {
       const ranges = { critical: { gte: 12 }, high: { gte: 8, lt: 12 }, medium: { gte: 5, lt: 8 }, low: { lt: 5 } };
-      if (ranges[sev]) must.push({ range: { 'rule.level': ranges[sev] } });
+      if (sevList.length === 1) {
+        must.push({ range: { 'rule.level': ranges[sevList[0]] } });
+      } else {
+        must.push({ bool: { should: sevList.map(s => ({ range: { 'rule.level': ranges[s] } })), minimum_should_match: 1 } });
+      }
     }
     if (search) must.push({ multi_match: { query: search, fields: ['rule.description', 'full_log', 'agent.name', 'data.srcip'] } });
 
