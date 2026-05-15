@@ -545,7 +545,7 @@ def get_llm(model_preference: str = "auto"):
     raise ValueError("No LLM API key configured (OPENAI_API_KEY or MISTRAL_API_KEY)")
 
 
-# ── ReAct Prompt ──────────────────────────────────────────────
+# ── ReAct Prompt (standard mode — 3-5 tool calls, fast) ───────
 REACT_PROMPT = PromptTemplate.from_template("""You are an expert SOC analyst. Use tools to investigate the input, then write a Final Answer.
 
 IMPORTANT: After 3-5 tool calls, stop gathering data and write your Final Answer. Do not loop endlessly.
@@ -582,6 +582,165 @@ Final Answer: [your structured report]
 
 {agent_scratchpad}""")
 
+
+# ── Deep Investigation Prompt (deep mode — 8+ tool calls, full evidence-grounded report) ──
+DEEP_REACT_PROMPT = PromptTemplate.from_template("""You are a senior SOC analyst performing a DEEP, evidence-based security investigation.
+
+════ ACCURACY MANDATE ════
+You are responsible for 100% accuracy. Every finding you state MUST be grounded in actual tool output.
+• Quote EXACT values from tool results — IPs, scores, CVEs, rule IDs, timestamps, user names
+• If a tool returns no data: state "No data from [source]" — NEVER speculate or invent
+• Confidence per finding: HIGH = 2+ independent sources confirm | MEDIUM = 1 direct source | LOW = indirect
+• If you find counter-evidence (suggests false positive), report it — do NOT ignore it
+
+════ INVESTIGATION PROTOCOL ════
+You MUST complete ALL of these tool calls before writing your Final Answer:
+1. search_alerts — search the specific indicator (source IP / agent / username) in last 24h
+2. search_alerts — broader search on rule description keywords in last 7 days (append hours=168)
+3. enrich_ip — enrich the source IP if present (VirusTotal + AbuseIPDB + OTX reputation)
+4. query_shodan — deep host scan of source IP (open ports, CVEs, running services)
+5. query_ueba — behavioral profile of the agent/host/user involved
+6. query_assets — check if the involved IP/hostname is a known managed asset
+7. check_cases — search for related past cases using the IP or rule description
+8. query_knowledge_base — MITRE ATT&CK technique mapping for the observed behavior
+
+Minimum 7 tool calls required. Complete all 8 if source IP is present.
+
+Tools:
+{tools}
+
+Tool names: {tool_names}
+
+Input: {input}
+
+════ REQUIRED OUTPUT FORMAT ════
+After ALL tool calls are complete, write your Final Answer using EXACTLY these sections:
+
+## VERDICT
+**[TRUE POSITIVE | FALSE POSITIVE | INCONCLUSIVE]**
+Confidence: [HIGH | MEDIUM | LOW]
+False Positive Probability: [0-100]%
+Justification: one sentence citing the strongest evidence for this verdict.
+
+## EXECUTIVE SUMMARY
+3-5 sentences written for a non-technical manager. What happened, who was involved, what is the real risk.
+
+## ATTACK CHAIN
+Step-by-step reconstruction of what occurred. Only include steps supported by tool evidence.
+Format each step as: **Step N** | [timestamp or 'unknown'] | [action/event] | Source: [tool name]
+
+## TECHNICAL EVIDENCE
+| Evidence Source | Exact Finding | Confidence |
+|---|---|---|
+One row per key finding. Quote exact values from tool outputs (scores, IPs, CVE IDs).
+
+## IOC INVENTORY
+Only list IOCs that tools explicitly returned — do NOT add IPs or hashes not seen in tool outputs.
+| Type | Value | Verdict | Intelligence Source |
+|---|---|---|---|
+Types: IP, Domain, Hash, User, Host, Process, Port/Service
+
+## MITRE ATT&CK MAPPING
+Map techniques only when behavioral evidence exists from tool output — not just based on rule name.
+**[TXXXX] Technique Name** — Tactic: [tactic name]
+Evidence: [exact observation from a specific tool that justifies this mapping]
+
+## FALSE POSITIVE ANALYSIS
+**Counter-evidence** (what could make this benign): [state explicitly if none found]
+**Confirming evidence** (what rules out FP): [list each piece]
+**Final FP probability**: [X]% — [one sentence explanation]
+
+## REMEDIATION PLAN
+All steps MUST reference the specific hosts, IPs, users, and processes found during this investigation.
+No generic advice.
+
+### Immediate — within 1 hour:
+- [specific step referencing actual asset/IP/user from investigation]
+
+### Short-term — within 24 hours:
+- [specific investigation and containment steps]
+
+### Long-term — within 1 week:
+- [specific hardening and eradication steps]
+
+## MITIGATION CONTROLS
+Controls to prevent this specific attack pattern from recurring:
+| Control | Specific Implementation | Priority |
+|---|---|---|
+
+## ANALYST DIRECTIVE
+One paragraph. What must the analyst do RIGHT NOW. Reference the specific hosts, IPs, users, and indicators
+found in this investigation. If verdict is FALSE POSITIVE, explicitly state why the analyst can close this safely.
+
+Format:
+Thought: reasoning about what to investigate next
+Action: tool_name
+Action Input: the input string
+Observation: result
+(repeat until all required tool calls are done — minimum 7)
+Final Answer: [complete report with all sections above]
+
+{agent_scratchpad}""")
+
+
+async def _extract_structured(report: str, llm) -> dict:
+    """
+    Second-pass structured extractor.
+    Runs after the ReAct investigation and extracts a fixed JSON schema.
+    ONLY extracts what is explicitly stated in the report — no inference.
+    """
+    schema_prompt = f"""Extract structured data from this security investigation report.
+
+STRICT RULE: Only extract information EXPLICITLY stated in the report text below.
+Do NOT infer, add, or speculate. If a field has no supporting text, use null or [].
+
+Report:
+---
+{report[:4500]}
+---
+
+Return ONLY valid JSON matching this exact schema (no markdown, no explanation):
+{{
+  "verdict": "true_positive|false_positive|inconclusive",
+  "confidence": "high|medium|low",
+  "confidence_score": 0,
+  "false_positive_probability": 0,
+  "mitre_techniques": [
+    {{"id": "T1059", "name": "Technique Name", "tactic": "tactic", "evidence": "brief quote from report"}}
+  ],
+  "key_iocs": [
+    {{"type": "ip|domain|hash|user|host|process", "value": "exact value", "verdict": "malicious|suspicious|benign|unknown", "source": "source name"}}
+  ],
+  "attack_chain": [
+    {{"step": 1, "action": "brief action description", "evidence": "tool source name", "timestamp": null}}
+  ],
+  "remediation_immediate": ["action 1"],
+  "remediation_short_term": ["action 1"],
+  "remediation_long_term": ["action 1"],
+  "mitigation_controls": [
+    {{"control": "control name", "implementation": "specific how-to", "priority": "high|medium|low"}}
+  ],
+  "affected_assets": ["hostname or IP"],
+  "evidence_sources": ["tool names used"],
+  "analyst_directive": "one paragraph from the Analyst Directive section, or null"
+}}"""
+
+    try:
+        response = await llm.ainvoke(schema_prompt)
+        text = response.content.strip()
+        data = _parse_json_response(text)
+        if not isinstance(data, dict):
+            return {}
+        # Clamp numeric fields to valid ranges
+        if "confidence_score" in data:
+            data["confidence_score"] = max(0, min(100, int(data.get("confidence_score") or 0)))
+        if "false_positive_probability" in data:
+            data["false_positive_probability"] = max(0, min(100, int(data.get("false_positive_probability") or 0)))
+        return data
+    except Exception as e:
+        log.warning(f"[structured-extract] Failed: {e}")
+        return {}
+
 TOOLS = [search_alerts, enrich_ip, query_shodan, check_cases, query_ueba, query_assets, query_knowledge_base, query_log_sources]
 
 # ── Request Models ────────────────────────────────────────────
@@ -589,6 +748,7 @@ class InvestigateRequest(BaseModel):
     alert: dict | None = None
     message: str | None = None
     model: str = "auto"
+    deep_mode: bool = False
 
 class TriageRequest(BaseModel):
     alert: dict
@@ -651,22 +811,35 @@ async def investigate(req: InvestigateRequest):
     else:
         context = req.message or "Investigate the current threat landscape"
 
+    prompt_template  = DEEP_REACT_PROMPT if req.deep_mode else REACT_PROMPT
+    max_iterations   = 16 if req.deep_mode else 12
+    max_exec_time    = 155 if req.deep_mode else 120
+
     try:
-        agent = create_react_agent(llm, TOOLS, REACT_PROMPT)
+        agent = create_react_agent(llm, TOOLS, prompt_template)
         executor = AgentExecutor(
             agent=agent, tools=TOOLS,
-            verbose=True, max_iterations=12,
-            max_execution_time=120,
+            verbose=True, max_iterations=max_iterations,
+            max_execution_time=max_exec_time,
             early_stopping_method="force",
             handle_parsing_errors=True,
             return_intermediate_steps=True,
         )
         result = await executor.ainvoke({"input": context})
+        report = result.get("output", "")
+
+        # Deep mode: second-pass structured extraction
+        structured = None
+        if req.deep_mode and report:
+            structured = await _extract_structured(report, llm)
+
         return {
-            "report":      result.get("output", ""),
+            "report":      report,
+            "structured":  structured,
             "steps":       len(result.get("intermediate_steps", [])),
             "duration_ms": int((time.time() - start) * 1000),
             "model":       req.model,
+            "deep_mode":   req.deep_mode,
         }
     except Exception as e:
         log.error(f"Investigation error: {e}")

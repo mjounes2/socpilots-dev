@@ -480,6 +480,11 @@ async function initSchema() {
     // triage_tier + structured_verdict on investigations
     `ALTER TABLE investigations ADD COLUMN IF NOT EXISTS triage_tier VARCHAR(20)`,
     `ALTER TABLE investigations ADD COLUMN IF NOT EXISTS structured_verdict JSONB`,
+    // deep mode flag + extracted verdict/confidence for quick filtering
+    `ALTER TABLE investigations ADD COLUMN IF NOT EXISTS deep_mode BOOLEAN DEFAULT false`,
+    `ALTER TABLE investigations ADD COLUMN IF NOT EXISTS verdict VARCHAR(30)`,
+    `ALTER TABLE investigations ADD COLUMN IF NOT EXISTS confidence_score INT`,
+    `ALTER TABLE investigations ADD COLUMN IF NOT EXISTS fp_probability INT`,
 
     // ── AI-generated Draft Detection Rules ────────────────────────
     `CREATE TABLE IF NOT EXISTS draft_rules (
@@ -822,12 +827,14 @@ async function saveInvestigation(data) {
   const q = `INSERT INTO investigations
     (alert_key, alert_id, rule_id, rule_level, severity, agent, src_ip,
      description, mitre, timestamp, report, report_short, created_by,
-     auto_triaged, duration_ms, raw_alert, composite_risk, group_id)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+     auto_triaged, duration_ms, raw_alert, composite_risk, group_id,
+     deep_mode, structured_verdict, verdict, confidence_score, fp_probability)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
     RETURNING id, created_at`;
 
-  const alertKey = `${data.ruleId}_${data.timestamp}_${data.agent}_${data.srcIp||''}`;
+  const alertKey    = `${data.ruleId}_${data.timestamp}_${data.agent}_${data.srcIp||''}`;
   const reportShort = (data.report || '').slice(0, 300);
+  const sv          = data.structuredVerdict || null;
 
   const vals = [
     alertKey,
@@ -848,6 +855,11 @@ async function saveInvestigation(data) {
     JSON.stringify(data.rawAlert || {}),
     data.compositeRisk != null ? parseInt(data.compositeRisk) : null,
     data.groupId || null,
+    data.deepMode || false,
+    sv ? JSON.stringify(sv) : null,
+    sv?.verdict || null,
+    sv?.confidence_score != null ? parseInt(sv.confidence_score) : null,
+    sv?.false_positive_probability != null ? parseInt(sv.false_positive_probability) : null,
   ];
 
   const r = await pool.query(q, vals);

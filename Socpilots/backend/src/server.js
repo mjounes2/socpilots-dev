@@ -1673,30 +1673,32 @@ app.post('/api/ai/chat/persist', authMW, (req, res) => {
 
 // ── AI INVESTIGATION — Dedicated workflow + DB persistence ──
 app.post('/api/ai/investigate', authMW, async (req, res) => {
-  const { alert, prompt, session_id, autoTriaged = false } = req.body;
+  const { alert, prompt, session_id, autoTriaged = false, deep_mode = false } = req.body;
   if (!prompt && !alert) return res.status(400).json({ error: 'alert or prompt required' });
 
-  // Build alert key (deduplication)
+  // Build alert key (deduplication) — deep mode bypasses cache so analyst gets fresh deep report
   const alertKey = alert ? `${alert.ruleId}_${alert.timestamp}_${alert.agent}_${alert.srcIp||''}` : null;
 
-  // Check if already investigated — return cached report
-  if (alertKey) {
+  // Check if already investigated — return cached report (skip for deep mode or force)
+  if (alertKey && !deep_mode) {
     try {
       const cached = await db.getInvestigationByAlertKey(alertKey);
       if (cached && !req.body.force) {
         return res.json({
-          response: cached.report,
-          cached: true,
+          response:         cached.report,
+          structured:       cached.structured_verdict || null,
+          deep_mode:        cached.deep_mode || false,
+          cached:           true,
           investigation_id: cached.id,
-          created_at: cached.created_at,
-          ok: true,
+          created_at:       cached.created_at,
+          ok:               true,
         });
       }
     } catch(e) { /* DB unavailable, continue */ }
   }
 
   const startTime = Date.now();
-  
+
   // Rate limit per user
   if (!chatRateOk(req.user?.username)) {
     return res.status(429).json({
@@ -1704,32 +1706,48 @@ app.post('/api/ai/investigate', authMW, async (req, res) => {
       rateLimit: true,
     });
   }
-  
+
   const message = prompt || `Investigate alert: ${JSON.stringify(alert)}`;
 
-  // Fire n8n in background for any automation pipelines — non-blocking, result ignored
+  // Fire n8n in background for automation pipelines — non-blocking, result ignored
   axios.post(N8N_INV, {
-    action: 'investigate', message, alert: alert || null,
+    action: 'investigate', message, alert: alert || null, deep_mode,
     session_id: session_id || `inv_${Date.now()}`,
     _user: req.user?.username || 'system', _role: req.user?.role || 'analyst',
   }, { timeout: 60_000, headers: { 'Content-Type': 'application/json' }, validateStatus: () => true })
     .catch(() => {});
 
   try {
-    // Primary: LangChain ReAct agent via /chat (accepts plain message, no schema mismatch)
-    const r = await axios.post(`${LANGCHAIN_URL}/chat`, {
-      message,
-      history:  [],
-      username: req.user?.username || 'system',
-      role:     req.user?.role || 'analyst',
-    }, {
-      timeout: 180_000,
-      headers: { Authorization: `Bearer ${LANGCHAIN_TOKEN}` },
-    });
+    let text = '', structured = null;
 
-    const d = r.data;
-    const text = d?.response || d?.output || d?.text || d?.report || d?.message ||
-      (Array.isArray(d) ? (d[0]?.response || d[0]?.output || '') : '') || '';
+    if (deep_mode) {
+      // Deep mode: dedicated ReAct /investigate endpoint with 8+ tool calls + structured extractor
+      const r = await axios.post(`${LANGCHAIN_URL}/investigate`, {
+        message,
+        model:     'auto',
+        deep_mode: true,
+      }, {
+        timeout: 185_000,
+        headers: { Authorization: `Bearer ${LANGCHAIN_TOKEN}` },
+      });
+      const d = r.data;
+      text       = d?.report || d?.response || d?.output || '';
+      structured = d?.structured || null;
+    } else {
+      // Standard mode: fast tool-calling agent via /chat
+      const r = await axios.post(`${LANGCHAIN_URL}/chat`, {
+        message,
+        history:  [],
+        username: req.user?.username || 'system',
+        role:     req.user?.role || 'analyst',
+      }, {
+        timeout: 180_000,
+        headers: { Authorization: `Bearer ${LANGCHAIN_TOKEN}` },
+      });
+      const d = r.data;
+      text = d?.response || d?.output || d?.text || d?.report || d?.message ||
+        (Array.isArray(d) ? (d[0]?.response || d[0]?.output || '') : '') || '';
+    }
 
     if (!text) {
       return res.status(502).json({ error: 'LangChain agent returned an empty response. Check langchain-agent logs.' });
@@ -1742,11 +1760,10 @@ app.post('/api/ai/investigate', authMW, async (req, res) => {
         const alertSeverity = alert.severity || (alert.level >= 12 ? 'critical' : alert.level >= 8 ? 'high' : alert.level >= 5 ? 'medium' : 'low');
 
         // Alert deduplication: find or create group for this IP+rule within 5-minute window
-        let groupId = null;
-        let groupCount = 1;
+        let groupId = null, groupCount = 1;
         try {
           const grp = await db.upsertAlertGroup(alert.srcIp, alert.ruleId, alert.agent);
-          groupId   = grp.id;
+          groupId    = grp.id;
           groupCount = grp.count;
         } catch(e) { /* non-critical */ }
 
@@ -1760,22 +1777,24 @@ app.post('/api/ai/investigate', authMW, async (req, res) => {
         }).catch(() => null);
 
         const saved = await db.saveInvestigation({
-          alertId:      alert.id || alert._id,
-          ruleId:       alert.ruleId,
-          level:        alert.level,
-          severity:     alertSeverity,
-          agent:        alert.agent,
-          srcIp:        alert.srcIp,
-          description:  alert.description,
-          mitre:        alert.mitre,
-          timestamp:    alert.timestamp,
-          report:       text,
-          user:         req.user?.username || 'system',
-          autoTriaged:  autoTriaged,
-          durationMs:   Date.now() - startTime,
-          rawAlert:     alert,
+          alertId:          alert.id || alert._id,
+          ruleId:           alert.ruleId,
+          level:            alert.level,
+          severity:         alertSeverity,
+          agent:            alert.agent,
+          srcIp:            alert.srcIp,
+          description:      alert.description,
+          mitre:            alert.mitre,
+          timestamp:        alert.timestamp,
+          report:           text,
+          user:             req.user?.username || 'system',
+          autoTriaged:      autoTriaged,
+          durationMs:       Date.now() - startTime,
+          rawAlert:         alert,
           compositeRisk,
           groupId,
+          deepMode:         deep_mode,
+          structuredVerdict: structured,
         });
         savedId = saved.id;
 
@@ -1792,24 +1811,26 @@ app.post('/api/ai/investigate', authMW, async (req, res) => {
           mitre:          alert.mitre || [],
           mitre_tactic:   alert.mitreTactic || [],
           auto_triaged:   autoTriaged,
+          deep_mode,
           timestamp:      new Date().toISOString(),
         });
 
         // Notification for manual investigations
+        const notifTitle = deep_mode ? 'Deep Investigation Complete' : 'Investigation Complete';
         if (!autoTriaged) {
           db.createNotification(
-            'alert', 'Investigation Complete',
+            'alert', notifTitle,
             `Rule ${alert.ruleId} on ${alert.agent} — AI investigation finished.`,
             alertSeverity === 'critical' ? 'critical' : 'warning',
             req.user?.username || null,
-            { investigation_id: savedId, rule_id: alert.ruleId, agent: alert.agent }
+            { investigation_id: savedId, rule_id: alert.ruleId, agent: alert.agent, deep_mode }
           ).catch(() => {});
         }
 
         // UEBA cross-correlation (non-blocking)
         runUebaCorrelation(savedId, alert).catch(() => {});
 
-        // Cross-investigation memory — embed summary in socpilots_knowledge (non-blocking)
+        // Cross-investigation memory — embed in RAG knowledge base (non-blocking)
         (() => {
           const mitreTags = (alert.mitre || []).join(', ');
           const docTitle  = `Investigation: ${alert.ruleId} on ${alert.agent} (${alertSeverity})`;
@@ -1828,8 +1849,8 @@ app.post('/api/ai/investigate', authMW, async (req, res) => {
       } catch(e) { console.warn('[DB] save investigation failed:', e.message); }
     }
 
-    res.json({ response: text, ok: true, investigation_id: savedId, cached: false });
-    
+    res.json({ response: text, structured, deep_mode, ok: true, investigation_id: savedId, cached: false });
+
   } catch (e) {
     const isTimeout = e.code === 'ECONNABORTED' || e.message?.includes('timeout');
     const isRefused = e.code === 'ECONNREFUSED';
