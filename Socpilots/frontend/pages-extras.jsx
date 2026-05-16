@@ -3,49 +3,81 @@ const { useState: useStateX, useMemo: useMemoX, useEffect: useEffectX, useCallba
 
 // ============= THREAT HUNT =============
 const HUNT_PRESETS = [
-  { id: 'lateral',  label: 'Lateral movement',      q: 'lateral movement', hours: 24 },
-  { id: 'pshell',   label: 'Suspicious PowerShell', q: 'powershell', hours: 6 },
-  { id: 'kerb',     label: 'Kerberoasting',          q: 'kerberos', hours: 24 },
-  { id: 'creds',    label: 'Credential dumping',     q: 'credential', hours: 24 },
-  { id: 'brute',    label: 'Brute force',            q: 'authentication failure', hours: 6 },
-  { id: 'persist',  label: 'New persistence',        q: 'persistence', hours: 168 },
+  { id: 'lateral',  label: 'Lateral movement',
+    q: 'rule.mitre.tactic:"Lateral Movement" AND data.win.eventdata.targetUserName:* | last 24h',
+    hours: 24 },
+  { id: 'c2',       label: 'C2 beacon patterns',
+    q: 'dst.port:(443 OR 8080) AND network.bytes_out > 1000 | groupby data.srcip | last 24h',
+    hours: 24 },
+  { id: 'pshell',   label: 'Suspicious PowerShell',
+    q: 'process.name:powershell.exe AND process.args:*-enc* OR process.args:*bypass* | last 24h',
+    hours: 24 },
+  { id: 'kerb',     label: 'Kerberoasting',
+    q: 'event.code:4769 AND ticket.encryption:0x17 | groupby user.name | last 24h',
+    hours: 24 },
+  { id: 'creds',    label: 'Credential dumping',
+    q: 'process.parent.name:(lsass.exe) OR rule.id:(60103 OR 60106) | last 24h',
+    hours: 24 },
+  { id: 'persist',  label: 'New persistence',
+    q: 'registry.path:*\\Run\\* OR scheduled_task.created:* | last 7d',
+    hours: 168 },
 ];
+
+// Extract keyword from DSL-style query (strip directives like | last 24h | groupby X)
+function dslToKeyword(q) {
+  return q.replace(/\|\s*last\s+\S+/gi, '').replace(/\|\s*groupby\s+\S+/gi, '').replace(/\|\s*limit\s+\d+/gi, '').trim();
+}
+// Extract hours from | last Nh directive
+function dslToHours(q) {
+  const m = q.match(/\|\s*last\s+(\d+)([hd])/i);
+  if (!m) return 24;
+  return m[2].toLowerCase() === 'd' ? parseInt(m[1]) * 24 : parseInt(m[1]);
+}
 
 function PageHunt() {
   const API = window.SOC_API;
-  const [preset, setPreset] = useStateX('lateral');
-  const [query, setQuery]   = useStateX('');
-  const [hours, setHours]   = useStateX(24);
+  const [preset, setPreset]   = useStateX('lateral');
+  const [query, setQuery]     = useStateX(HUNT_PRESETS[0].q);
+  const [limit, setLimit]     = useStateX(500);
   const [running, setRunning] = useStateX(false);
   const [results, setResults] = useStateX([]);
-  const [total, setTotal]   = useStateX(0);
+  const [total, setTotal]     = useStateX(0);
   const [aiVerdict, setAiVerdict] = useStateX(null);
   const [aiLoading, setAiLoading] = useStateX(false);
-  const [hasRun, setHasRun] = useStateX(false);
+  const [hasRun, setHasRun]   = useStateX(false);
+  const taRef = useStateX(null)[0]; // for ref — use useRef
+
+  const taRefR = React.useRef(null);
 
   function selectPreset(id) {
     setPreset(id);
     const p = HUNT_PRESETS.find(h => h.id === id);
-    if (p) { setQuery(p.q); setHours(p.hours); }
+    if (p) setQuery(p.q);
   }
+
+  const hours = dslToHours(query);
+
+  // Count lines for gutter
+  const lineCount = Math.max(2, (query.match(/\n/g) || []).length + 1);
 
   const runHunt = async () => {
     const q = query.trim();
     if (!q) return;
-    setRunning(true);
-    setAiVerdict(null);
-    setHasRun(false);
+    setRunning(true); setAiVerdict(null); setHasRun(false);
 
-    const params = new URLSearchParams({ hours, page_size: 50 });
-    if (q) params.set('q', q);
-    const data = await API.get(`/api/alerts?${params}`);
+    const keyword = dslToKeyword(q);
+    const h       = dslToHours(q);
+    const params  = new URLSearchParams({ hours: h, page_size: Math.min(limit, 500) });
+    if (keyword) params.set('q', keyword);
+
+    const data  = await API.get(`/api/alerts?${params}`);
     const items = (data?.items || data?.alerts || []).map(a => ({
-      time: a.timestamp ? a.timestamp.slice(11, 19) : '—',
+      time:  a.timestamp ? a.timestamp.slice(0, 19).replace('T', ' ') : '—',
       agent: a.agent || '—',
-      rule: a.ruleId || '—',
-      desc: (a.description || '').slice(0, 60),
+      rule:  a.ruleId || '—',
+      desc:  (a.description || '').slice(0, 80),
       mitre: Array.isArray(a.mitre) ? (a.mitre[0] || '—') : (a.mitre || '—'),
-      sev: a.severity || window.SOC_API.sevFromLevel(a.level),
+      sev:   a.severity || 'low',
       score: a.level ? Math.min(100, Math.round(a.level * 7)) : 30,
     }));
     setResults(items);
@@ -53,114 +85,119 @@ function PageHunt() {
     setRunning(false);
     setHasRun(true);
 
-    // AI analysis in background
     if (items.length > 0) {
       setAiLoading(true);
-      const ctx = `Threat hunt results for query: "${q}" (last ${hours}h). Found ${data?.total || items.length} alerts. Top alerts: ${items.slice(0,5).map(a => `${a.sev} - ${a.desc} (rule ${a.rule})`).join('; ')}. Analyze this pattern, assess severity, and recommend next steps.`;
+      const ctx = `Threat hunt query: "${q}" (last ${h}h, limit ${limit}). Found ${data?.total || items.length} total alerts. Top results: ${items.slice(0, 5).map(a => `[${a.sev}] rule ${a.rule} — ${a.desc.slice(0, 50)}`).join('; ')}. Provide: risk assessment, MITRE technique mapping, attack chain analysis, and recommended next steps.`;
       const res = await API.post('/api/langchain/investigate', { message: ctx });
       setAiLoading(false);
-      if (res && !res.error) setAiVerdict(res.report);
+      if (res && !res.error) setAiVerdict(res.report || res.result || res.answer);
     }
   };
 
   return (
     <div className="page" data-screen-label="06 Threat Hunt">
-      <Topbar
-        title="Threat Hunt"
-        sub="SIEM search · AI co-analyst"
-        actions={<>
-          <select className="btn btn-ghost" style={{background:'transparent',border:'none',color:'var(--txt)',cursor:'pointer'}}
-            value={hours} onChange={e => setHours(Number(e.target.value))}>
-            <option value={1}>Last 1h</option>
-            <option value={6}>Last 6h</option>
-            <option value={24}>Last 24h</option>
-            <option value={168}>Last 7d</option>
-          </select>
-          <button className="btn btn-primary" onClick={runHunt} disabled={running}>
-            <Icon.search width="13" height="13"/> {running ? 'Running…' : 'Run hunt'}
-          </button>
-        </>}
-      />
+      <Topbar title="Threat Hunt" sub="SIEM search · AI co-analyst" />
       <div className="page-body">
+
+        {/* Hunt presets */}
         <Card title="Hunt presets" sub="MITRE-aligned starting points">
           <div className="hunt-presets">
             {HUNT_PRESETS.map(p => (
-              <button key={p.id} className={`hunt-preset ${preset===p.id?'on':''}`}
+              <button key={p.id} className={`hunt-preset ${preset === p.id ? 'on' : ''}`}
                 onClick={() => selectPreset(p.id)}>
                 <div className="hp-label">{p.label}</div>
-                <div className="hp-q mono">{p.q}</div>
+                <div className="hp-q mono">{p.q.slice(0, 60)}{p.q.length > 60 ? '…' : ''}</div>
               </button>
             ))}
           </div>
         </Card>
 
-        <Card title="Query" sub="SIEM keyword search · time-bounded"
+        {/* Query editor */}
+        <Card title="Query" sub="OpenSearch DSL · time-bounded · grouped"
           actions={<>
-            <Chip mono>{hours}h window</Chip>
+            <button className="btn btn-ghost btn-sm mono" onClick={() => {
+              const h = dslToHours(query);
+              setQuery(q => q.replace(/\|\s*last\s+\S+/i, `| last ${h === 24 ? '7d' : '24h'}`));
+            }}>last {hours}h</button>
+            <button className="btn btn-ghost btn-sm mono" onClick={() => setLimit(l => l === 500 ? 100 : 500)}>limit {limit}</button>
             <button className="btn btn-primary" onClick={runHunt} disabled={running}>
               {running ? 'Running…' : 'Run hunt'}
             </button>
           </>}>
           <div className="query-box">
-            <textarea className="query-input mono" value={query}
-              onChange={e=>setQuery(e.target.value)}
-              onKeyDown={e=>{ if(e.key==='Enter'&&e.ctrlKey){ e.preventDefault(); runHunt(); }}}
-              placeholder="Search keywords: e.g. 'powershell', 'lateral movement', 'authentication failure'"
-              spellCheck="false" rows="2"/>
+            <div className="query-gutter">
+              {Array.from({ length: lineCount }, (_, i) => (
+                <div key={i}>{i + 1}</div>
+              ))}
+            </div>
+            <textarea
+              ref={taRefR}
+              className="query-input mono"
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              onKeyDown={e => {
+                if ((e.key === 'Enter' && e.ctrlKey) || (e.key === 'Enter' && e.metaKey)) { e.preventDefault(); runHunt(); }
+              }}
+              placeholder="rule.mitre.tactic:&quot;Lateral Movement&quot; AND data.win.eventdata.targetUserName:* | last 24h"
+              spellCheck="false"
+              rows={Math.max(2, lineCount)}
+            />
           </div>
           <div className="query-foot">
-            <span className="mono dim">Ctrl+Enter to run · searches SIEM rule descriptions and alert text</span>
+            <span className="mono dim">Ctrl+Enter to run · ⌘+S to save · /docs for syntax</span>
           </div>
         </Card>
 
-        {aiLoading && (
-          <Card title="AI co-analyst" icon={<Icon.brain width="14" height="14"/>}
-            actions={<Chip mono tone="warn">analyzing…</Chip>}>
-            <div className="hunt-running">
-              <div className="hunt-progress"><div /></div>
-              <div className="mono dim">ReAct agent analyzing hunt results…</div>
-            </div>
-          </Card>
-        )}
-
-        {aiVerdict && (
+        {/* AI co-analyst verdict */}
+        {(aiLoading || aiVerdict) && (
           <Card title="AI co-analyst verdict" icon={<Icon.brain width="14" height="14"/>}
-            actions={<Chip mono tone="ok"><span className="pip pip-ok"/> analysis ready</Chip>}>
-            <div className="ai-verdict">
-              <div dangerouslySetInnerHTML={{ __html: aiVerdict
-                .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-                .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')
-                .replace(/`([^`]+)`/g,'<code>$1</code>')
-                .replace(/\n\n/g,'</p><p>').replace(/\n/g,'<br/>')
-                .replace(/^/,'<p>').replace(/$/,'</p>')
-              }} />
-              <div className="verdict-actions">
-                <button className="btn btn-primary btn-sm" onClick={async () => {
-                  const res = await API.post('/api/cases/create', {
-                    title: `Hunt result: ${query}`,
-                    description: `Threat hunt for "${query}" found ${total} alerts.\n\nAI analysis:\n${aiVerdict}`,
-                  });
-                  if (res && !res.error) window.socToast?.({title:'Case created', sub: res.caseId || 'New case', tone:'ok'});
-                }}>
-                  <Icon.folder width="11" height="11"/> Promote to case
-                </button>
-                <button className="btn btn-ghost btn-sm" onClick={runHunt}>Re-run</button>
+            actions={aiLoading
+              ? <Chip mono tone="warn">analyzing…</Chip>
+              : <Chip mono tone="ok"><span className="pip pip-ok"/> analysis ready</Chip>}>
+            {aiLoading ? (
+              <div className="hunt-running">
+                <div className="hunt-progress"><div /></div>
+                <div className="mono dim">ReAct agent analyzing hunt results…</div>
               </div>
-            </div>
+            ) : (
+              <div className="ai-verdict">
+                <div dangerouslySetInnerHTML={{ __html: (aiVerdict || '')
+                  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+                  .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')
+                  .replace(/`([^`]+)`/g,'<code>$1</code>')
+                  .replace(/\n\n/g,'</p><p>').replace(/\n/g,'<br/>')
+                  .replace(/^/,'<p>').replace(/$/,'</p>')
+                }} />
+                <div className="verdict-actions">
+                  <button className="btn btn-primary btn-sm" onClick={async () => {
+                    const res = await API.post('/api/cases/create', {
+                      title: `Hunt: ${dslToKeyword(query).slice(0, 60)}`,
+                      description: `Threat hunt found ${total} alerts.\n\nQuery:\n${query}\n\nAI analysis:\n${aiVerdict}`,
+                    });
+                    if (res && !res.error) window.socToast?.({ title: 'Case created', sub: res.caseId || 'New case', tone: 'ok' });
+                  }}>
+                    <Icon.folder width="11" height="11"/> Promote to case
+                  </button>
+                  <button className="btn btn-ghost btn-sm" onClick={runHunt}>Re-run</button>
+                </div>
+              </div>
+            )}
           </Card>
         )}
 
+        {/* Results */}
         {hasRun && (
-          <Card title="Results" sub={running ? 'streaming…' : `${total.toLocaleString()} events · last ${hours}h`}
-            actions={<><Chip mono>{results.length} shown</Chip></>}>
+          <Card title="Results"
+            sub={running ? 'streaming…' : `${total.toLocaleString()} events · last ${hours}h`}
+            actions={<Chip mono>{results.length} shown</Chip>}>
             {running ? (
               <div className="hunt-running">
                 <div className="hunt-progress"><div /></div>
                 <div className="mono dim">querying SIEM…</div>
               </div>
             ) : results.length === 0 ? (
-              <div style={{padding:'24px',textAlign:'center',color:'var(--txt-3)'}}>
-                No results for "{query}" in the last {hours}h. Try broadening the search terms or time range.
+              <div style={{ padding: '24px', textAlign: 'center', color: 'var(--fg-3)', fontSize: 12 }}>
+                No results for this query in the last {hours}h. Try broadening search terms or the time range.
               </div>
             ) : (
               <table className="data-table hunt-results">
@@ -171,22 +208,21 @@ function PageHunt() {
                   <th>DESCRIPTION</th>
                   <th>AGENT</th>
                   <th>MITRE</th>
-                  <th style={{width:120}}>SCORE</th>
+                  <th style={{ width: 120 }}>SCORE</th>
                 </tr></thead>
                 <tbody>
-                  {results.map((r,i) => (
+                  {results.map((r, i) => (
                     <tr key={i}>
-                      <td className="mono dim">{r.time}</td>
-                      <td><SevChip sev={r.sev} /></td>
+                      <td className="mono dim" style={{ fontSize: 10 }}>{r.time}</td>
+                      <td><SevChip sev={r.sev}/></td>
                       <td className="mono dim">{r.rule}</td>
-                      <td style={{maxWidth:220,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}
-                        title={r.desc}>{r.desc}</td>
+                      <td style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.desc}>{r.desc}</td>
                       <td className="mono">{r.agent}</td>
                       <td className="mono">{r.mitre !== '—' ? <span className="link">{r.mitre}</span> : <span className="dim">—</span>}</td>
                       <td>
                         <div className="score-bar">
                           <div className="sb-fill" data-sev={r.score >= 80 ? 'critical' : r.score >= 60 ? 'high' : r.score >= 40 ? 'medium' : 'low'}
-                            style={{width: `${r.score}%`}}/>
+                            style={{ width: `${r.score}%` }}/>
                           <span className="sb-num mono">{r.score}</span>
                         </div>
                       </td>
