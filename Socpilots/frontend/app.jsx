@@ -27,6 +27,11 @@ function App() {
       `theme-${t.theme} accent-${accentClass} density-${t.density}`;
   }, [t.theme, t.accent, t.density]);
 
+  useEffectA(() => {
+    window.socNav = setPage;
+    return () => { delete window.socNav; };
+  }, [setPage]);
+
   function renderPage() {
     switch (page) {
       // Overview
