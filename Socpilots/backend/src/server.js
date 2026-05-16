@@ -1521,6 +1521,164 @@ app.post('/api/cases/create', authMW, async (req, res) => {
   }
 });
 
+// ── CASE DETAIL SUB-ROUTES ──
+app.get('/api/cases/:id', authMW, async (req, res) => {
+  try {
+    const id = req.params.id;
+    const r = await hiveQuery([{ _name: 'getCase', idOrName: id }]);
+    if (!r || (Array.isArray(r) && r.length === 0)) return res.status(404).json({ error: 'Case not found' });
+    const c = Array.isArray(r) ? r[0] : r;
+    res.json(mapCase(c));
+  } catch (e) {
+    console.error('[case-detail]', e.message);
+    res.status(502).json({ error: e.message });
+  }
+});
+
+app.get('/api/cases/:id/timeline', authMW, async (req, res) => {
+  try {
+    const id = req.params.id;
+    const audits = await hiveQuery([
+      { _name: 'getCase', idOrName: id },
+      { _name: 'audits' },
+      { _name: 'sort', _fields: [{ _createdAt: 'asc' }] },
+      { _name: 'page', from: 0, to: 100 },
+    ]);
+    const items = Array.isArray(audits) ? audits : [];
+    const events = items.map(a => {
+      const by   = (a._createdBy || 'system').replace(/@.*/, '');
+      const ts   = a._createdAt;
+      const det  = a.details || {};
+      const objT = a.objectType || 'Case';
+      let type = 'update', txt = `${objT} updated`;
+      if (objT === 'Alert')      { type = 'link';      txt = `Alert linked to case`; }
+      else if (objT === 'Observable') { type = 'observable'; txt = `Observable added: ${det.data || det.dataType || 'indicator'}`; }
+      else if (det.assignee)     { type = 'assign';    txt = `Assigned to ${det.assignee.replace(/@.*/, '')}`; }
+      else if (det.status)       { type = 'status';    txt = `Status → ${det.status}`; }
+      else if (det.title)        { type = 'create';    txt = `Case created: ${det.title}`; }
+      else if (det.description)  { type = 'update';    txt = 'Description updated'; }
+      return { ts, who: by, type, txt };
+    });
+    res.json({ events });
+  } catch (e) {
+    console.error('[case-timeline]', e.message);
+    res.status(502).json({ error: e.message });
+  }
+});
+
+app.get('/api/cases/:id/observables', authMW, async (req, res) => {
+  try {
+    const id = req.params.id;
+    const raw = await hiveQuery([
+      { _name: 'getCase', idOrName: id },
+      { _name: 'observables' },
+      { _name: 'page', from: 0, to: 100 },
+    ]);
+    const items = Array.isArray(raw) ? raw : [];
+    const observables = items.map(o => ({
+      id:       o._id,
+      type:     o.dataType || 'other',
+      value:    o.data || '',
+      tags:     o.tags || [],
+      tlp:      o.tlpLabel || 'AMBER',
+      ioc:      !!o.ioc,
+      sighted:  o.sightedAt ? 1 : 0,
+    }));
+    res.json({ observables });
+  } catch (e) {
+    console.error('[case-observables]', e.message);
+    res.status(502).json({ error: e.message });
+  }
+});
+
+app.get('/api/cases/:id/tasks', authMW, async (req, res) => {
+  try {
+    const id = req.params.id;
+    const raw = await hiveQuery([
+      { _name: 'getCase', idOrName: id },
+      { _name: 'tasks' },
+      { _name: 'page', from: 0, to: 50 },
+    ]);
+    const items = Array.isArray(raw) ? raw : [];
+    const tasks = items.map(t => ({
+      id:       t._id,
+      title:    t.title || '(task)',
+      status:   t.status || 'Waiting',
+      assignee: (t.assignee || '').replace(/@.*/, '') || null,
+      order:    t.order || 0,
+      dueDate:  t.dueDate || null,
+    }));
+    res.json({ tasks });
+  } catch (e) {
+    console.error('[case-tasks]', e.message);
+    res.status(502).json({ error: e.message });
+  }
+});
+
+app.get('/api/cases/:id/comments', authMW, async (req, res) => {
+  try {
+    const id = req.params.id;
+    const raw = await hiveQuery([
+      { _name: 'getCase', idOrName: id },
+      { _name: 'comments' },
+      { _name: 'page', from: 0, to: 50 },
+    ]);
+    const items = Array.isArray(raw) ? raw : [];
+    const comments = items.map(c => ({
+      id:      c._id,
+      who:     (c._createdBy || 'system').replace(/@.*/, ''),
+      when:    c._createdAt,
+      message: c.message || '',
+    }));
+    res.json({ comments });
+  } catch (e) {
+    console.error('[case-comments]', e.message);
+    res.status(502).json({ error: e.message });
+  }
+});
+
+app.get('/api/cases/:id/alerts', authMW, async (req, res) => {
+  try {
+    const id = req.params.id;
+    const raw = await hiveQuery([
+      { _name: 'getCase', idOrName: id },
+      { _name: 'alerts' },
+      { _name: 'sort', _fields: [{ _createdAt: 'desc' }] },
+      { _name: 'page', from: 0, to: 30 },
+    ]);
+    const items = Array.isArray(raw) ? raw : [];
+    const alerts = items.map(a => ({
+      id:     a._id,
+      ref:    a.sourceRef || a._id,
+      title:  a.title || '(alert)',
+      sev:    hiveSevLabel(a.severity),
+      source: a.source || 'Wazuh',
+      when:   a._createdAt,
+      tags:   a.tags || [],
+    }));
+    res.json({ alerts });
+  } catch (e) {
+    console.error('[case-alerts]', e.message);
+    res.status(502).json({ error: e.message });
+  }
+});
+
+app.post('/api/cases/:id/comments', authMW, async (req, res) => {
+  try {
+    const id      = req.params.id;
+    const { message } = req.body;
+    if (!message?.trim()) return res.status(400).json({ error: 'message required' });
+    const r = await axios.post(`${HIVE_URL}/api/v1/case/${id}/comment`,
+      { message: message.trim() },
+      { headers: { Authorization: `Bearer ${HIVE_KEY}`, 'Content-Type': 'application/json' }, httpsAgent, timeout: 10000 }
+    );
+    res.json({ ok: true, id: r.data._id });
+  } catch (e) {
+    console.error('[case-comment-post]', e.message);
+    res.status(502).json({ error: e.message });
+  }
+});
+
 // ── HUNT — OpenSearch + SOCPilots AI ──
 app.post('/api/hunt', authMW, async (req, res) => {
   const { type, value } = req.body;

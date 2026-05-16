@@ -37,7 +37,7 @@ function caseToCard(c) {
   };
 }
 
-function PageCases() {
+function PageCases({ onOpenCase }) {
   const API = window.SOC_API;
   const [lanes, setLanes] = useStateI({ new: [], inProgress: [], truePositive: [], closed: [] });
   const [totals, setTotals] = useStateI({ new: 0, inProgress: 0, truePositive: 0, closed: 0 });
@@ -141,7 +141,7 @@ function PageCases() {
                       <button
                         key={c.hiveId || c.id}
                         className={`case-card ${selected?.hiveId === c.hiveId ? 'sel' : ''}`}
-                        onClick={() => setSelected(c)}
+                        onClick={() => { setSelected(c); if (onOpenCase) onOpenCase(c); }}
                       >
                         <div className="cc-top">
                           <SevDot sev={c.sev} />
