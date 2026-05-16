@@ -1441,6 +1441,60 @@ app.get('/api/hive-alerts', authMW, async (req, res) => {
   }
 });
 
+// ── PROMOTE HIVE ALERT TO CASE ──
+app.post('/api/hive-alerts/promote', authMW, async (req, res) => {
+  try {
+    const { alertId, title, severity } = req.body;
+    if (!alertId) return res.status(400).json({ error: 'alertId required' });
+    const r = await axios.post(
+      `${HIVE_URL}/api/v1/alert/${alertId}/case`,
+      {},
+      { headers: { Authorization: `Bearer ${HIVE_KEY}`, 'Content-Type': 'application/json' }, httpsAgent, timeout: 15000 }
+    );
+    const caseData = r.data;
+    db.createNotification('case_created', `Alert promoted to case`,
+      `Alert ${alertId} promoted by ${req.user.username}`,
+      'info', null, { alert_id: alertId }).catch(() => {});
+    res.json({ ok: true, caseId: caseData._id || caseData.id, caseNumber: caseData.number });
+  } catch (e) {
+    console.error('[hive-alerts/promote]', e.message);
+    res.status(502).json({ error: e.response?.data?.message || e.message });
+  }
+});
+
+// ── IGNORE / CLOSE HIVE ALERT ──
+app.post('/api/hive-alerts/:id/ignore', authMW, async (req, res) => {
+  try {
+    const { id } = req.params;
+    await axios.patch(
+      `${HIVE_URL}/api/v1/alert/${id}`,
+      { status: 'Ignored' },
+      { headers: { Authorization: `Bearer ${HIVE_KEY}`, 'Content-Type': 'application/json' }, httpsAgent, timeout: 10000 }
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[hive-alerts/ignore]', e.message);
+    res.status(502).json({ error: e.message });
+  }
+});
+
+// ── ASSIGN HIVE ALERT ──
+app.post('/api/hive-alerts/:id/assign', authMW, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { assignee } = req.body;
+    await axios.patch(
+      `${HIVE_URL}/api/v1/alert/${id}`,
+      { assignee: assignee || req.user.username },
+      { headers: { Authorization: `Bearer ${HIVE_KEY}`, 'Content-Type': 'application/json' }, httpsAgent, timeout: 10000 }
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[hive-alerts/assign]', e.message);
+    res.status(502).json({ error: e.message });
+  }
+});
+
 // ── CREATE CASE ──
 app.post('/api/cases/create', authMW, async (req, res) => {
   try {

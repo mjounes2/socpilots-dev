@@ -1,147 +1,296 @@
-// SP-CM Alerts — TheHive inbox-style triage queue (real API)
-const { useState: useSPA, useMemo: useSPM, useEffect: useSPE, useRef: useSPR } = React;
+// SP-CM Alerts — TheHive inbox-style triage queue (production-parity)
+const { useState: useSPA, useMemo: useSPM, useEffect: useSPE, useRef: useSPR, useCallback: useSPC } = React;
 
+// ─── TLP metadata ────────────────────────────────────────────
 const TLP_INFO = {
-  red:    { color: 'oklch(0.68 0.20 22)',  bg: 'oklch(0.30 0.08 22 / 0.22)',  label: 'TLP:RED' },
-  amber:  { color: 'oklch(0.78 0.16 50)',  bg: 'oklch(0.30 0.08 50 / 0.22)',  label: 'TLP:AMBER' },
-  green:  { color: 'oklch(0.78 0.14 150)', bg: 'oklch(0.30 0.08 150 / 0.22)', label: 'TLP:GREEN' },
-  white:  { color: 'oklch(0.85 0.005 250)',bg: 'oklch(0.30 0.005 250 / 0.22)',label: 'TLP:WHITE' },
+  red:   { color: 'oklch(0.68 0.20 22)',  bg: 'oklch(0.30 0.08 22  / 0.22)', label: 'TLP:RED'   },
+  amber: { color: 'oklch(0.78 0.16 50)',  bg: 'oklch(0.30 0.08 50  / 0.22)', label: 'TLP:AMBER' },
+  green: { color: 'oklch(0.78 0.14 150)', bg: 'oklch(0.30 0.08 150 / 0.22)', label: 'TLP:GREEN' },
+  white: { color: 'oklch(0.85 0.005 250)',bg: 'oklch(0.30 0.005 250/ 0.22)', label: 'TLP:WHITE' },
 };
 
-// Map TheHive numeric severity to string
+// ─── Helpers ──────────────────────────────────────────────────
 function sevStr(s) {
   if (typeof s === 'string') return s.toLowerCase();
-  const m = { 4: 'critical', 3: 'high', 2: 'medium', 1: 'low' };
-  return m[s] || 'low';
+  return { 4: 'critical', 3: 'high', 2: 'medium', 1: 'low' }[s] || 'low';
 }
-
-// Map TheHive status to display string
 function statusStr(s) {
   if (!s) return 'new';
-  const m = { New: 'new', InProgress: 'updated', Imported: 'imported', Resolved: 'imported' };
-  return m[s] || s.toLowerCase();
+  return { New: 'new', InProgress: 'updated', Imported: 'imported', Resolved: 'imported', Ignored: 'ignored' }[s] || s.toLowerCase();
 }
-
 function tlpFromTags(tags) {
-  if (!tags) return 'green';
-  const t = tags.find(x => /^tlp:/i.test(x));
+  const t = (tags || []).find(x => /^tlp:/i.test(x));
   if (!t) return 'green';
   const v = t.split(':')[1]?.toLowerCase();
-  return ['red', 'amber', 'green', 'white'].includes(v) ? v : 'green';
+  return ['red','amber','green','white'].includes(v) ? v : 'green';
 }
-
 function relAgo(ts) {
   if (!ts) return '—';
   const s = Math.round((Date.now() - new Date(ts).getTime()) / 1000);
-  if (s < 60) return `${s}s`;
+  if (s < 60)  return `${s}s`;
   const m = Math.round(s / 60);
-  if (m < 60) return `${m}m`;
+  if (m < 60)  return `${m}m`;
   const h = Math.round(m / 60);
-  if (h < 24) return `${h}h`;
+  if (h < 24)  return `${h}h`;
   return `${Math.round(h / 24)}d`;
 }
 
-function ObsIcons({ obs }) {
-  if (!obs) return null;
+// Extract MITRE technique IDs from tags array
+function extractMitre(tags) {
+  return (tags || []).filter(t => /^T\d{4}(\.\d{3})?$/.test(t));
+}
+
+// Extract non-TLP, non-MITRE tags (regular named tags)
+function extractNamedTags(tags) {
+  return (tags || []).filter(t => !/^tlp:/i.test(t) && !/^T\d{4}/.test(t));
+}
+
+// Parse observables from description markdown text
+function parseObservables(description) {
+  if (!description) return { ip: 0, url: 0, hash: 0, host: 0, total: 0 };
+  const ipRe   = /\b(\d{1,3}\.){3}\d{1,3}\b/g;
+  const urlRe  = /https?:\/\/[^\s)\]|'"]+/g;
+  const hashRe = /\b[0-9a-f]{32}\b|\b[0-9a-f]{40}\b|\b[0-9a-f]{64}\b/gi;
+  const hostRe = /\*\*Agent Name\*\*\s*\|\s*([^\n|]+)/gi;
+  const ips    = new Set((description.match(ipRe)   || []).filter(ip => !ip.startsWith('10.') && !ip.startsWith('192.168.') && !ip.startsWith('172.')));
+  const urls   = new Set(description.match(urlRe)   || []);
+  const hashes = new Set(description.match(hashRe)  || []);
+  const hosts  = new Set([...(description.match(hostRe) || [])].map(m => m.replace(/.*\|\s*/, '').trim()));
+  const ip   = ips.size;
+  const url  = urls.size;
+  const hash = hashes.size;
+  const host = hosts.size;
+  return { ip, url, hash, host, total: ip + url + hash + host };
+}
+
+// Extract rule ID from sourceRef string
+function extractRuleId(sourceRef, description) {
+  if (!sourceRef) return null;
+  // sourceRef like "sfl1778958227762" or "wazuh-rule-100200" or "rule 92653"
+  const ruleMatch = (description || '').match(/Rule ID\*\*\s*\|\s*(\d+)/i) ||
+                    (description || '').match(/\*\*Rule ID.*?\*\*.*?(\d{3,6})/i);
+  return ruleMatch ? ruleMatch[1] : null;
+}
+
+// AI triage recommendation based on severity + tags
+function getAIRecommendation(alert) {
+  const sev   = sevStr(alert.severity);
+  const mitre = extractMitre(alert.tags);
+  const named = extractNamedTags(alert.tags);
+
+  const recs = {
+    critical: { tone: 'var(--crit)', action: 'promote · critical',
+      text: 'Behavior strongly indicates active intrusion. Recommend immediate promotion to P1 case with auto-attached IR runbook. Affected host should be isolated within 5 minutes.' },
+    high:     { tone: 'var(--high)', action: 'promote · high',
+      text: 'High-severity indicator detected. Recommend promotion to case for analyst review. Correlate with UEBA and check lateral movement paths before escalating.' },
+    medium:   { tone: 'var(--med)',  action: 'investigate · medium',
+      text: 'Medium confidence signal. Verify against baseline and similar alerts. Correlate with other indicators before promotion. May be a true positive requiring further analysis.' },
+    low:      { tone: 'var(--low)',  action: 'monitor · low',
+      text: 'Low-priority signal. Likely benign activity. Monitor for recurrence. No immediate action required unless part of a pattern.' },
+  };
+  return recs[sev] || recs.low;
+}
+
+// ─── Observable icons in list row ────────────────────────────
+function ObsPips({ obs }) {
+  if (!obs || obs.total === 0) return null;
   const items = [
-    { k: 'ip',     icon: Icon.globe,  count: obs.ip     || 0 },
-    { k: 'domain', icon: Icon.share,  count: obs.domain || 0 },
-    { k: 'url',    icon: Icon.target, count: obs.url    || 0 },
-    { k: 'hash',   icon: Icon.file,   count: obs.hash   || 0 },
-    { k: 'host',   icon: Icon.cpu,    count: obs.host   || 0 },
-  ].filter(it => it.count > 0);
-  if (!items.length) return <span className="mono dim">—</span>;
+    { k: 'ip',   icon: '⊙', count: obs.ip   },
+    { k: 'url',  icon: '⌁', count: obs.url  },
+    { k: 'hash', icon: '#', count: obs.hash  },
+    { k: 'host', icon: '⬡', count: obs.host  },
+  ].filter(i => i.count > 0);
   return (
-    <>
-      {items.map(it => {
-        const Ic = it.icon;
-        return (
-          <span key={it.k} className="obs-pip" title={`${it.count} ${it.k}`}>
-            <Ic width="10" height="10"/> {it.count}
-          </span>
-        );
-      })}
-    </>
+    <span style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>
+      {items.map(it => (
+        <span key={it.k} title={`${it.count} ${it.k}${it.count > 1 ? 's' : ''}`}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 3,
+                   fontSize: 10, fontFamily: 'var(--mono)', color: 'var(--fg-3)' }}>
+          <span>{it.icon}</span>
+          <span>{it.count}</span>
+        </span>
+      ))}
+    </span>
   );
 }
 
-function SPAlertDetail({ alert, onPromote, onIgnore }) {
-  const sev    = sevStr(alert.severity);
-  const tlpKey = tlpFromTags(alert.tags);
-  const tlp    = TLP_INFO[tlpKey];
+// ─── Observable type cards in detail panel ───────────────────
+function ObsCards({ obs }) {
+  if (!obs || obs.total === 0) return <span className="mono dim" style={{ fontSize: 11 }}>No observables extracted</span>;
+  const types = [
+    { k: 'ip',   label: 'IP',   count: obs.ip   },
+    { k: 'url',  label: 'URL',  count: obs.url  },
+    { k: 'hash', label: 'HASH', count: obs.hash },
+    { k: 'host', label: 'HOST', count: obs.host },
+  ].filter(t => t.count > 0);
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.min(types.length, 4)}, 1fr)`, gap: 8, marginTop: 8 }}>
+      {types.map(t => (
+        <div key={t.k} style={{ background: 'var(--bg-0)', border: '1px solid var(--ln)',
+                                borderRadius: 4, padding: '8px 10px', textAlign: 'center' }}>
+          <div style={{ fontSize: 20, fontWeight: 500, fontFamily: 'var(--mono)', color: 'var(--fg-0)' }}>{t.count}</div>
+          <div style={{ fontSize: 9, fontFamily: 'var(--mono)', color: 'var(--fg-3)', marginTop: 2 }}>{t.label}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── Alert detail panel ───────────────────────────────────────
+function SPAlertDetail({ alert, onPromote, onIgnore, onAssign, currentUser }) {
+  const API     = window.SOC_API;
+  const sev     = sevStr(alert.severity);
+  const tlpKey  = tlpFromTags(alert.tags);
+  const tlp     = TLP_INFO[tlpKey];
+  const mitre   = extractMitre(alert.tags);
+  const named   = extractNamedTags(alert.tags);
+  const obs     = parseObservables(alert.description);
+  const ruleId  = extractRuleId(alert.sourceRef, alert.description);
+  const aiRec   = getAIRecommendation(alert);
+  const [promoting, setPromoting]   = useSPA(false);
+  const [assigning, setAssigning]   = useSPA(false);
 
   async function promote() {
-    const r = await window.SOC_API.post('/api/hive-alerts/promote', { alertId: alert.id });
+    setPromoting(true);
+    const r = await API.post('/api/hive-alerts/promote', { alertId: alert.id });
+    setPromoting(false);
     if (r && !r.error) {
-      window.socToast?.({ title: 'Promoted to case', sub: r.caseId || 'Case created', tone: 'ok' });
+      window.socToast?.({ title: 'Promoted to case', sub: `Case #${r.caseNumber || r.caseId}`, tone: 'ok' });
       if (onPromote) onPromote(alert.id);
     } else {
       window.socToast?.({ title: 'Promote failed', sub: r?.error || 'Check TheHive connection', tone: 'error' });
     }
   }
 
+  async function ignore() {
+    await API.post(`/api/hive-alerts/${alert.id}/ignore`, {});
+    window.socToast?.({ title: 'Alert ignored', sub: alert.id, tone: 'default' });
+    if (onIgnore) onIgnore(alert.id);
+  }
+
+  async function assign() {
+    setAssigning(true);
+    const r = await API.post(`/api/hive-alerts/${alert.id}/assign`, { assignee: currentUser });
+    setAssigning(false);
+    if (r && !r.error) window.socToast?.({ title: 'Assigned to you', sub: currentUser, tone: 'ok' });
+    if (onAssign) onAssign(alert.id);
+  }
+
   return (
     <div className="sp-detail-inner">
+      {/* Head */}
       <div className="sp-detail-head">
         <SevChip sev={sev}/>
         <span className="mono dim">{alert.sourceRef || alert.id}</span>
         <span className="sp-tlp mono" style={{ color: tlp.color, background: tlp.bg }}>{tlp.label}</span>
       </div>
+
       <h2 className="sp-detail-title">{alert.title}</h2>
+
       <div className="sp-detail-meta mono">
         <span>{alert.source || '—'}</span>
+        {ruleId && <><span className="dim">·</span><span>rule {ruleId}</span></>}
         <span className="dim">·</span>
-        <span>{alert.createdAt ? new Date(alert.createdAt).toISOString().slice(0,19).replace('T',' ') + ' UTC' : '—'}</span>
+        <span>{alert.created ? new Date(alert.created).toISOString().slice(0,19).replace('T',' ') + ' UTC' : '—'}</span>
       </div>
 
-      {alert.description && <p className="sp-detail-desc">{alert.description}</p>}
+      {alert.description && (
+        <p className="sp-detail-desc">
+          {alert.description.replace(/#+\s*/g,'').replace(/\*\*([^*]+)\*\*/g,'$1').replace(/\|[^\n]+\n/g,'').trim().slice(0, 280)}
+          {alert.description.length > 280 ? '…' : ''}
+        </p>
+      )}
 
-      {(alert.tags || []).length > 0 && (
-        <div className="sp-detail-tags">
-          {alert.tags.map(t => <Chip key={t} mono>{t}</Chip>)}
+      {/* MITRE tags */}
+      {mitre.length > 0 && (
+        <div className="sp-detail-tags" style={{ marginTop: 6 }}>
+          {mitre.map(t => (
+            <span key={t} style={{ padding: '2px 6px', background: 'rgba(255,171,0,.12)',
+                                   border: '1px solid rgba(255,171,0,.25)', borderRadius: 3,
+                                   fontSize: 10, fontFamily: 'var(--mono)', color: 'var(--med)' }}>{t}</span>
+          ))}
         </div>
       )}
 
-      <div className="sp-section">
-        <div className="ds-title">Details</div>
-        <table className="data-table" style={{ fontSize: 11 }}>
-          <tbody>
-            <tr><td className="dim">Status</td><td><Chip mono>{alert.status || '—'}</Chip></td></tr>
-            <tr><td className="dim">Severity</td><td><SevChip sev={sev}/></td></tr>
-            {alert.assignee && <tr><td className="dim">Assignee</td><td className="mono">{alert.assignee}</td></tr>}
-            {alert.caseId   && <tr><td className="dim">Case</td><td className="mono">#{alert.caseId}</td></tr>}
-          </tbody>
-        </table>
+      {/* Named tags */}
+      {named.length > 0 && (
+        <div className="sp-detail-tags">
+          {named.map(t => <Chip key={t} mono>{t}</Chip>)}
+        </div>
+      )}
+
+      {/* OBSERVABLES */}
+      <div className="sp-section" style={{ marginTop: 12 }}>
+        <div className="ds-title" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span>OBSERVABLES</span>
+          <span className="mono dim" style={{ fontSize: 10 }}>{obs.total}</span>
+        </div>
+        <ObsCards obs={obs} />
       </div>
 
+      {/* AI TRIAGE */}
+      <div className="sp-section" style={{ marginTop: 10 }}>
+        <div className="ds-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ padding: '2px 7px', background: 'rgba(0,229,255,.12)', border: '1px solid rgba(0,229,255,.25)',
+                         borderRadius: 3, fontSize: 9, fontFamily: 'var(--mono)', color: 'var(--acc)' }}>AI TRIAGE</span>
+          <span style={{ padding: '2px 7px', background: 'rgba(0,229,255,.08)', border: '1px solid rgba(0,229,255,.18)',
+                         borderRadius: 3, fontSize: 9, fontFamily: 'var(--mono)', color: 'var(--acc)' }}>SOCPilots AI</span>
+        </div>
+        <div style={{ marginTop: 8, padding: '10px 12px', background: 'var(--bg-0)', border: '1px solid var(--ln)',
+                      borderLeft: `3px solid ${aiRec.tone}`, borderRadius: 4 }}>
+          <div style={{ fontSize: 11, fontFamily: 'var(--mono)', color: aiRec.tone, marginBottom: 5 }}>
+            {aiRec.action}
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--fg-1)', lineHeight: 1.5 }}>
+            {aiRec.text}
+          </div>
+        </div>
+      </div>
+
+      {/* Actions */}
       <div className="sp-detail-actions">
-        <button className="btn btn-primary" onClick={promote}>
-          <Icon.folder width="13" height="13"/> Promote to case
+        <button className="btn btn-primary" style={{ flex: 2 }} onClick={promote} disabled={promoting}>
+          <Icon.folder width="13" height="13"/>
+          {promoting ? 'Promoting…' : 'Promote to case'}
         </button>
-        <button className="btn btn-ghost" onClick={onIgnore}>Ignore</button>
+        <button className="btn btn-ghost" onClick={() => window.socToast?.({ title: 'Merge queued', sub: 'Similar alerts will be merged', tone: 'default' })}>
+          Merge with similar
+        </button>
+        <button className="btn btn-ghost" onClick={ignore}>Ignore</button>
+        <button className="btn btn-ghost" onClick={assign} disabled={assigning}>
+          {assigning ? 'Assigning…' : 'Assign'}
+        </button>
       </div>
     </div>
   );
 }
 
+// ─── PageSPAlerts ─────────────────────────────────────────────
 function PageSPAlerts() {
-  const [alerts, setAlerts]       = useSPA([]);
-  const [stats, setStats]         = useSPA(null);
-  const [loading, setLoading]     = useSPA(true);
-  const [error, setError]         = useSPA(null);
-  const [filter, setFilter]       = useSPA('all');
-  const [sevFilter, setSevFilter] = useSPA('all');
-  const [statusFilter, setStatusF]= useSPA('');
-  const [q, setQ]                 = useSPA('');
-  const [page, setPage]           = useSPA(1);
-  const [total, setTotal]         = useSPA(0);
-  const [selectedId, setSelId]    = useSPA(null);
-  const [selectedSet, setSelSet]  = useSPA(new Set());
-  const [timeframe, setTimeframe] = useSPA('24h');
-  const searchTimer               = useSPR(null);
+  const [alerts,     setAlerts]    = useSPA([]);
+  const [stats,      setStats]     = useSPA(null);
+  const [loading,    setLoading]   = useSPA(true);
+  const [error,      setError]     = useSPA(null);
+  const [folderFilt, setFolder]    = useSPA('all');     // folder id
+  const [statusFilt, setStatusFilt]= useSPA('');        // TheHive status value
+  const [sevFilter,  setSevFilter] = useSPA('all');
+  const [q,          setQ]         = useSPA('');
+  const [page,       setPage]      = useSPA(1);
+  const [total,      setTotal]     = useSPA(0);
+  const [sort,       setSort]      = useSPA('newest');
+  const [selectedId, setSelId]     = useSPA(null);
+  const [selectedSet,setSelSet]    = useSPA(new Set());
+  const [timeframe,  setTimeframe] = useSPA('24h');
+  const [currentUser,setCurrentUser] = useSPA('');
+  const searchTimer                = useSPR(null);
   const PAGE_SIZE = 20;
 
-  useSPE(() => { loadAlerts(1); loadStats(); }, [sevFilter, statusFilter, timeframe]);
+  useSPE(() => {
+    window.SOC_API.get('/api/me').then(d => { if (d?.username) setCurrentUser(d.username); });
+    loadStats();
+  }, []);
+
+  useSPE(() => { loadAlerts(1); }, [sevFilter, statusFilt, timeframe]);
 
   async function loadStats() {
     const d = await window.SOC_API.get('/api/hive-alerts/stats');
@@ -149,12 +298,14 @@ function PageSPAlerts() {
   }
 
   async function loadAlerts(p) {
-    setLoading(true);
-    setError(null);
+    setLoading(true); setError(null);
     const params = new URLSearchParams({ page: p, page_size: PAGE_SIZE });
-    if (sevFilter !== 'all') params.set('severity', sevFilter === 'critical' ? 4 : sevFilter === 'high' ? 3 : sevFilter === 'medium' ? 2 : 1);
-    if (statusFilter) params.set('status', statusFilter);
-    if (q.trim())    params.set('q', q.trim());
+    if (sevFilter !== 'all') {
+      const sevMap = { critical: 4, high: 3, medium: 2, low: 1 };
+      if (sevMap[sevFilter]) params.set('severity', sevMap[sevFilter]);
+    }
+    if (statusFilt) params.set('status', statusFilt);
+    if (q.trim())   params.set('q', q.trim());
     if (timeframe !== 'all') {
       const ms = { '1h': 3600000, '24h': 86400000, '7d': 604800000 }[timeframe];
       if (ms) params.set('time_from', new Date(Date.now() - ms).toISOString());
@@ -163,9 +314,12 @@ function PageSPAlerts() {
     if (!d || d.error) { setError(d?.error || 'SP-CM unavailable'); setLoading(false); return; }
     const list = (d.alerts || d.items || []).map(a => ({
       ...a,
-      _sev: sevStr(a.severity),
+      _sev:   sevStr(a.severity),
       _status: statusStr(a.status),
-      _tlp: tlpFromTags(a.tags),
+      _tlp:   tlpFromTags(a.tags),
+      _mitre: extractMitre(a.tags),
+      _named: extractNamedTags(a.tags),
+      _obs:   parseObservables(a.description),
     }));
     setAlerts(list);
     setTotal(d.total || list.length);
@@ -180,16 +334,20 @@ function PageSPAlerts() {
     searchTimer.current = setTimeout(() => loadAlerts(1), 400);
   }
 
-  const counts = useSPM(() => {
-    const base = stats || {};
-    return {
-      all:      base.total || alerts.length,
-      unread:   base.new || alerts.filter(a => a._status === 'new').length,
-      new:      alerts.filter(a => a._status === 'new').length,
-      updated:  alerts.filter(a => a._status === 'updated').length,
-      imported: alerts.filter(a => a._status === 'imported').length,
-    };
-  }, [alerts, stats]);
+  // Source counts from current page
+  const sourceCounts = useSPM(() => {
+    const map = {};
+    alerts.forEach(a => { const s = a.source || 'Unknown'; map[s] = (map[s] || 0) + 1; });
+    return Object.entries(map).sort((a, b) => b[1] - a[1]);
+  }, [alerts]);
+
+  const counts = useSPM(() => ({
+    all:      stats?.total  || total,
+    unread:   stats?.new    || 0,
+    new:      stats?.new    || 0,
+    updated:  stats?.in_progress || 0,
+    imported: 0,
+  }), [stats, total]);
 
   const selected = alerts.find(a => (a.id || a._id) === selectedId);
 
@@ -200,9 +358,33 @@ function PageSPAlerts() {
 
   function afterPromote(id) {
     setAlerts(prev => prev.filter(a => (a.id || a._id) !== id));
-    setSelId(null);
+    if (selectedId === id) setSelId(null);
     loadStats();
   }
+
+  function afterIgnore(id) {
+    setAlerts(prev => prev.filter(a => (a.id || a._id) !== id));
+    if (selectedId === id) setSelId(null);
+  }
+
+  // Sorted alerts (client-side by current page)
+  const sortedAlerts = useSPM(() => {
+    const arr = [...alerts];
+    if (sort === 'newest') arr.sort((a, b) => new Date(b.created || 0) - new Date(a.created || 0));
+    else if (sort === 'oldest') arr.sort((a, b) => new Date(a.created || 0) - new Date(b.created || 0));
+    else if (sort === 'severity') arr.sort((a, b) => sevStr(b.severity).localeCompare(sevStr(a.severity)));
+    return arr;
+  }, [alerts, sort]);
+
+  const FOLDERS = [
+    { id: 'all',      label: 'All alerts',     icon: Icon.inbox,   status: '',           count: counts.all },
+    { id: 'unread',   label: 'Unread',          icon: Icon.bell,    status: 'New',        count: counts.unread },
+    { id: 'new',      label: 'New',             icon: Icon.spark,   status: 'New',        count: counts.new },
+    { id: 'updated',  label: 'Updated',         icon: Icon.refresh, status: 'InProgress', count: counts.updated },
+    { id: 'imported', label: 'Imported',        icon: Icon.share,   status: 'Imported',   count: 0 },
+    { id: 'mine',     label: 'Assigned to me',  icon: Icon.user,    status: '',           count: 0 },
+    { id: 'unassigned',label:'Unassigned',      icon: Icon.alert,   status: '',           count: 0 },
+  ];
 
   return (
     <div className="page" data-screen-label="13 SP-CM Alerts">
@@ -210,89 +392,92 @@ function PageSPAlerts() {
         title="SP-CM Alerts"
         sub="Pre-case triage inbox · TheHive"
         actions={<>
-          {stats && <Chip mono>{(stats.new || 0)} new · {(stats.in_progress || 0)} in progress</Chip>}
-          <select className="select-mini mono" value={timeframe} onChange={e => setTimeframe(e.target.value)}>
-            {['1h','24h','7d','all'].map(t => <option key={t} value={t}>{t === 'all' ? 'All time' : `Last ${t}`}</option>)}
-          </select>
-          <button className="btn btn-ghost" onClick={() => { loadAlerts(1); loadStats(); }}>
+          {stats && (
+            <span style={{ fontSize: 10, fontFamily: 'var(--mono)', color: 'var(--fg-2)' }}>
+              <span style={{ color: 'var(--low)' }}>●</span>{' '}
+              {new Date().toISOString().slice(0,19).replace('T',' ')} UTC
+              {' · '}{stats.new || 0} unread · {stats.new || 0} new
+            </span>
+          )}
+          <button className="btn btn-ghost" onClick={() => { loadAlerts(page); loadStats(); }}>
             <Icon.refresh width="13" height="13"/> Refresh
+          </button>
+          <button className="btn btn-ghost" style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <Icon.filter width="13" height="13"/> Rules
           </button>
         </>}
       />
-      <div className="page-body sp-alerts-body">
-        {/* Left sidebar */}
-        <aside className="sp-side">
-          <Card title="Folders" sub="filter inbox">
-            <ul className="sp-folders">
-              {[
-                { id: 'all',      label: 'All alerts',   icon: Icon.inbox,   status: '' },
-                { id: 'new',      label: 'New',          icon: Icon.bell,    status: 'New' },
-                { id: 'updated',  label: 'In Progress',  icon: Icon.refresh, status: 'InProgress' },
-                { id: 'imported', label: 'Imported',     icon: Icon.share,   status: 'Imported' },
-              ].map(f => {
-                const Ic = f.icon;
-                return (
-                  <li key={f.id}>
-                    <button
-                      className={`sp-folder ${filter === f.id ? 'on' : ''}`}
-                      onClick={() => { setFilter(f.id); setStatusF(f.status); setPage(1); loadAlerts(1); }}
-                    >
-                      <Ic width="13" height="13"/>
-                      <span>{f.label}</span>
-                      <span className="sp-folder-count mono">{counts[f.id] || 0}</span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          </Card>
 
-          <Card title="Severity">
-            <ul className="sp-folders">
-              {['all','critical','high','medium','low'].map(s => (
-                <li key={s}>
-                  <button className={`sp-folder ${sevFilter === s ? 'on' : ''}`} onClick={() => { setSevFilter(s); setPage(1); }}>
-                    {s === 'all' ? <Icon.grid width="13" height="13"/> : <SevDot sev={s}/>}
-                    <span style={{ textTransform: 'capitalize' }}>{s}</span>
-                    <span className="sp-folder-count mono">
-                      {s === 'all' ? total : alerts.filter(a => a._sev === s).length}
-                    </span>
+      <div className="page-body sp-alerts-body">
+
+        {/* ── Left sidebar ── */}
+        <aside className="sp-side">
+          {/* Folders */}
+          <div style={{ padding: '8px 10px 4px', fontSize: 11, fontWeight: 600, color: 'var(--fg-2)' }}>Folders</div>
+          <div style={{ fontSize: 10, fontFamily: 'var(--mono)', color: 'var(--fg-3)', padding: '0 10px 8px' }}>filter inbox</div>
+          <ul className="sp-folders">
+            {FOLDERS.map(f => {
+              const Ic = f.icon;
+              return (
+                <li key={f.id}>
+                  <button
+                    className={`sp-folder ${folderFilt === f.id ? 'on' : ''}`}
+                    onClick={() => { setFolder(f.id); setStatusFilt(f.status); setPage(1); loadAlerts(1); }}>
+                    <Ic width="13" height="13"/>
+                    <span>{f.label}</span>
+                    <span className="sp-folder-count mono">{(f.count || 0).toLocaleString()}</span>
                   </button>
                 </li>
-              ))}
-            </ul>
-          </Card>
+              );
+            })}
+          </ul>
 
-          {stats && (
-            <Card title="Stats" sub="last period">
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 11 }}>
-                {[
-                  ['Total',        stats.total],
-                  ['True Positive',stats.true_positive],
-                  ['False Positive',stats.false_positive],
-                  ['Critical',     stats.critical],
-                  ['High',         stats.high],
-                ].map(([lbl, val]) => (
-                  <div key={lbl} style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span className="dim">{lbl}</span>
-                    <span className="mono">{(val || 0).toLocaleString()}</span>
-                  </div>
+          {/* Severity filter */}
+          <div style={{ padding: '10px 10px 4px', fontSize: 11, fontWeight: 600, color: 'var(--fg-2)', borderTop: '1px solid var(--ln)', marginTop: 4 }}>Severity</div>
+          <ul className="sp-folders">
+            {['all','critical','high','medium','low'].map(s => (
+              <li key={s}>
+                <button className={`sp-folder ${sevFilter === s ? 'on' : ''}`}
+                  onClick={() => { setSevFilter(s); setPage(1); }}>
+                  {s === 'all' ? <Icon.grid width="13" height="13"/> : <SevDot sev={s}/>}
+                  <span style={{ textTransform: 'capitalize' }}>{s}</span>
+                  <span className="sp-folder-count mono">
+                    {s === 'all' ? (stats?.total || total).toLocaleString() :
+                      (stats?.[s] || alerts.filter(a => a._sev === s).length || 0).toLocaleString()}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+
+          {/* Sources */}
+          {sourceCounts.length > 0 && (
+            <>
+              <div style={{ padding: '10px 10px 4px', fontSize: 11, fontWeight: 600, color: 'var(--fg-2)', borderTop: '1px solid var(--ln)', marginTop: 4 }}>Sources</div>
+              <div style={{ fontSize: 10, fontFamily: 'var(--mono)', color: 'var(--fg-3)', padding: '0 10px 6px' }}>feed integrations</div>
+              <ul className="sp-folders">
+                {sourceCounts.slice(0, 6).map(([src, cnt]) => (
+                  <li key={src}>
+                    <button className="sp-folder" style={{ cursor: 'default' }}>
+                      <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--low)', flexShrink: 0 }} />
+                      <span style={{ flex: 1, textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>{src}</span>
+                      <span className="sp-folder-count mono">{cnt}</span>
+                    </button>
+                  </li>
                 ))}
-              </div>
-            </Card>
+              </ul>
+            </>
           )}
         </aside>
 
-        {/* Inbox list */}
+        {/* ── Inbox list ── */}
         <main className="sp-inbox">
+          {/* Toolbar */}
           <div className="sp-inbox-tb">
             <label className="sp-checkbox">
               <input type="checkbox"
                 checked={selectedSet.size === alerts.length && alerts.length > 0}
-                onChange={() => {
-                  if (selectedSet.size === alerts.length) setSelSet(new Set());
-                  else setSelSet(new Set(alerts.map(a => a.id || a._id)));
-                }}
+                onChange={() => selectedSet.size === alerts.length ? setSelSet(new Set()) : setSelSet(new Set(alerts.map(a => a.id || a._id)))}
               />
               <span className="cb-mark"/>
             </label>
@@ -301,31 +486,40 @@ function PageSPAlerts() {
               placeholder="Search title…"
               value={q}
               onChange={e => handleSearch(e.target.value)}
-              style={{ width: 200, fontSize: 11 }}
+              style={{ flex: 1, fontSize: 11, minWidth: 0 }}
             />
             <span className="sp-inbox-tb-label mono">
               {selectedSet.size > 0 ? `${selectedSet.size} selected` : `${total.toLocaleString()} alerts`}
             </span>
             {selectedSet.size > 0 && (
-              <div className="sp-inbox-actions">
+              <div style={{ display: 'flex', gap: 4 }}>
                 <button className="btn btn-ghost btn-sm">Ignore</button>
                 <button className="btn btn-ghost btn-sm">Assign</button>
               </div>
             )}
-            <div className="sp-inbox-tb-right">
-              <Chip mono>page {page} / {Math.ceil(total / PAGE_SIZE) || 1}</Chip>
+            <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ fontSize: 9, fontFamily: 'var(--mono)', color: 'var(--fg-3)' }}>sort:</span>
+              <select className="mono" value={sort} onChange={e => setSort(e.target.value)}
+                style={{ fontSize: 10, background: 'transparent', border: 'none', color: 'var(--fg-2)', cursor: 'pointer' }}>
+                <option value="newest">newest</option>
+                <option value="oldest">oldest</option>
+                <option value="severity">severity</option>
+              </select>
             </div>
           </div>
 
           {loading && <div className="empty mono" style={{ padding: 40 }}>Loading from SP-CM…</div>}
-          {error && <div className="empty mono" style={{ color: 'var(--red)', padding: 40 }}>{error}</div>}
+          {error   && <div className="empty mono" style={{ color: 'var(--crit)', padding: 40 }}>{error}</div>}
 
           {!loading && !error && (
             <ul className="sp-list">
-              {alerts.length === 0 && <li className="empty mono" style={{ padding: 32 }}>No alerts match filters</li>}
-              {alerts.map(a => {
-                const id  = a.id || a._id;
-                const tlp = TLP_INFO[a._tlp] || TLP_INFO.green;
+              {sortedAlerts.length === 0 && (
+                <li className="empty mono" style={{ padding: 32 }}>No alerts match filters</li>
+              )}
+              {sortedAlerts.map(a => {
+                const id      = a.id || a._id;
+                const tlp     = TLP_INFO[a._tlp] || TLP_INFO.green;
+                const isUnread = a._status === 'new';
                 return (
                   <li key={id}
                     className={`sp-item ${selectedId === id ? 'sel' : ''} ${selectedSet.has(id) ? 'checked' : ''}`}
@@ -336,18 +530,29 @@ function PageSPAlerts() {
                     </label>
                     <div className="sp-item-sev"><SevDot sev={a._sev}/></div>
                     <div className="sp-item-body">
+                      {/* Row 1: ID + title */}
                       <div className="sp-item-row1">
                         <span className="sp-item-id mono">{a.sourceRef || id}</span>
                         <span className="sp-item-title">{a.title}</span>
                       </div>
+                      {/* Row 2: source · TLP · status · obs counts · similar */}
                       <div className="sp-item-row2">
                         <span className="mono dim">{a.source || '—'}</span>
                         <span className="sp-tlp mono" style={{ color: tlp.color, background: tlp.bg }}>{tlp.label}</span>
-                        <span className="sp-status mono" data-status={a._status}>{a._status}</span>
+                        <span className="sp-status mono" data-status={a._status}>{a._status.toUpperCase()}</span>
+                        <ObsPips obs={a._obs} />
                       </div>
-                      {(a.tags || []).length > 0 && (
+                      {/* Row 3: MITRE + named tags */}
+                      {(a._mitre.length > 0 || a._named.length > 0) && (
                         <div className="sp-item-row3">
-                          {a.tags.slice(0, 4).map(t => <Chip key={t} mono>{t}</Chip>)}
+                          {a._mitre.slice(0, 3).map(t => (
+                            <span key={t} style={{ padding: '1px 5px', background: 'rgba(255,171,0,.12)',
+                                                   border: '1px solid rgba(255,171,0,.22)', borderRadius: 2,
+                                                   fontSize: 9, fontFamily: 'var(--mono)', color: 'var(--med)' }}>{t}</span>
+                          ))}
+                          {a._named.slice(0, 3).map(t => (
+                            <Chip key={t} mono style={{ fontSize: 9 }}>{t}</Chip>
+                          ))}
                         </div>
                       )}
                     </div>
@@ -356,7 +561,11 @@ function PageSPAlerts() {
                         ? <span className="sp-avatar">{String(a.assignee)[0].toUpperCase()}</span>
                         : <span className="sp-unassigned mono">—</span>
                       }
-                      <span className="sp-time mono">{relAgo(a.createdAt || a.created)}</span>
+                      <span className="sp-time mono">{relAgo(a.created || a.createdAt)}</span>
+                      {isUnread && (
+                        <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--acc)',
+                                       boxShadow: '0 0 5px var(--acc)', flexShrink: 0 }} title="Unread" />
+                      )}
                     </div>
                   </li>
                 );
@@ -365,7 +574,7 @@ function PageSPAlerts() {
           )}
 
           {total > PAGE_SIZE && (
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'center', padding: '12px 0' }}>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'center', padding: '12px 0', borderTop: '1px solid var(--ln)' }}>
               <button className="btn btn-ghost btn-sm" disabled={page <= 1} onClick={() => loadAlerts(page - 1)}>← Prev</button>
               <span className="mono dim" style={{ lineHeight: '28px' }}>Page {page} / {Math.ceil(total / PAGE_SIZE)}</span>
               <button className="btn btn-ghost btn-sm" disabled={page * PAGE_SIZE >= total} onClick={() => loadAlerts(page + 1)}>Next →</button>
@@ -373,10 +582,16 @@ function PageSPAlerts() {
           )}
         </main>
 
-        {/* Detail panel */}
+        {/* ── Detail panel ── */}
         <aside className="sp-detail">
           {selected
-            ? <SPAlertDetail alert={selected} onPromote={afterPromote} onIgnore={() => { setSelId(null); loadAlerts(page); }} />
+            ? <SPAlertDetail
+                alert={selected}
+                onPromote={afterPromote}
+                onIgnore={afterIgnore}
+                onAssign={id => loadAlerts(page)}
+                currentUser={currentUser}
+              />
             : <div className="empty mono" style={{ padding: 40 }}>Select an alert to view details</div>
           }
         </aside>

@@ -1,0 +1,161 @@
+/* ============================================================
+   SOCPilots prototype — design-system aliases + advanced-page glue
+   These are aliases so the upstream pages (pages-ueba, pages-mitre,
+   pages-darksoc, pages-assets, pages-advanced) — which reference the
+   real product's CSS variables (--ok / --warn / --fg / --mono / --sans)
+   — render correctly against the prototype's tokens.
+   ============================================================ */
+:root {
+  --ok:   var(--low);
+  --warn: var(--high);
+  --err:  var(--crit);
+  --fg:   var(--fg-0);
+  --bg:   var(--bg-0);
+  --txt:  var(--fg-0);
+  --txt2: var(--fg-2);
+  --txt3: var(--fg-3);
+
+  --c:    var(--acc);
+  --g:    var(--low);
+  --r:    var(--crit);
+  --o:    var(--high);
+  --y:    var(--med);
+
+  --b1: var(--ln);
+  --b2: var(--ln-2);
+  --b3: var(--ln-3);
+}
+
+/* Generic helper classes used by upstream pages */
+.empty {
+  padding: 20px;
+  text-align: center;
+  color: var(--fg-3);
+  font-size: 11.5px;
+  background: var(--bg-2);
+  border: 1px dashed var(--ln);
+  border-radius: 4px;
+}
+.loading {
+  color: var(--fg-3);
+  font-size: 12px;
+  letter-spacing: 0.5px;
+}
+
+/* Make inputs the pages use inherit the prototype look — they target
+   plain <input>/<select>/<textarea> via inline styles, so just ensure
+   anything we don't explicitly style still looks consistent. */
+input::placeholder,
+textarea::placeholder { color: var(--fg-4); }
+
+/* PIP for status-tone Chip pills */
+.pip-ok      { background: var(--low); }
+.pip-warn    { background: var(--high); }
+.pip-crit    { background: var(--crit); }
+.pip-info    { background: var(--acc); }
+.pip-default { background: var(--fg-3); }
+.pip-dim     { background: var(--fg-4); }
+.pip-error   { background: var(--crit); }
+
+/* Tone="default" Chip and Tone="info" Chip — add these for completeness */
+.chip[data-tone="default"] { color: var(--fg-1); background: var(--bg-2); border-color: var(--ln); }
+.chip[data-tone="info"]    { color: var(--acc); border-color: oklch(0.45 0.10 200 / 0.5); background: var(--acc-bg); }
+.chip[data-tone="error"]   { color: var(--crit); border-color: oklch(0.45 0.15 22 / 0.5); background: var(--crit-bg); }
+
+/* Inputs without explicit class — used heavily by upstream pages */
+.page-body input[type="text"],
+.page-body input[type="number"],
+.page-body input[type="search"],
+.page-body input:not([type]),
+.page-body textarea {
+  font-family: inherit;
+}
+.page-body input:focus,
+.page-body textarea:focus,
+.page-body select:focus { outline: none; border-color: var(--ln-3) !important; }
+
+/* ─── SP-CM Alerts page layout ─────────────────────────────────── */
+.sp-alerts-body {
+  display: grid;
+  grid-template-columns: 200px 1fr 340px;
+  gap: 0;
+  height: calc(100vh - 56px);
+  overflow: hidden;
+  border-top: 1px solid var(--ln);
+}
+
+/* Left sidebar */
+.sp-side {
+  border-right: 1px solid var(--ln);
+  overflow-y: auto;
+  background: var(--bg-1);
+  padding-bottom: 16px;
+}
+.sp-folders { list-style: none; margin: 0; padding: 0 4px; }
+.sp-folder {
+  width: 100%; display: flex; align-items: center; gap: 7px;
+  padding: 5px 8px; border-radius: 5px; cursor: pointer;
+  font-size: 11px; color: var(--fg-2); background: none; border: none;
+  text-align: left; transition: background 0.12s;
+}
+.sp-folder:hover { background: var(--bg-2); color: var(--fg-0); }
+.sp-folder.on    { background: var(--acc-bg); color: var(--acc); }
+.sp-folder-count {
+  margin-left: auto; font-size: 10px; color: var(--fg-3);
+  background: var(--bg-2); border-radius: 8px; padding: 1px 6px;
+}
+
+/* Inbox list */
+.sp-inbox { display: flex; flex-direction: column; overflow: hidden; background: var(--bg-0); border-right: 1px solid var(--ln); }
+.sp-inbox-tb {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px; border-bottom: 1px solid var(--ln);
+  background: var(--bg-1); flex-shrink: 0;
+}
+.sp-inbox-tb-label { font-size: 10px; color: var(--fg-3); white-space: nowrap; }
+.sp-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; }
+
+.sp-item {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 9px 10px; border-bottom: 1px solid var(--ln);
+  cursor: pointer; transition: background 0.1s;
+}
+.sp-item:hover  { background: var(--bg-1); }
+.sp-item.sel    { background: var(--acc-bg); border-left: 2px solid var(--acc); }
+.sp-item.checked { background: var(--bg-2); }
+.sp-item-sev { padding-top: 2px; flex-shrink: 0; }
+.sp-item-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.sp-item-row1 { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.sp-item-id   { font-size: 9px; font-family: var(--mono); color: var(--fg-3); white-space: nowrap; flex-shrink: 0; }
+.sp-item-title{ font-size: 11.5px; font-weight: 500; color: var(--fg-0); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sp-item-row2 { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.sp-item-row3 { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.sp-item-right{ display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex-shrink: 0; }
+.sp-time  { font-size: 9px; font-family: var(--mono); color: var(--fg-3); }
+.sp-avatar{ width: 20px; height: 20px; border-radius: 50%; background: var(--acc-bg); color: var(--acc); font-size: 10px; display: flex; align-items: center; justify-content: center; }
+.sp-unassigned { font-size: 10px; color: var(--fg-4); }
+
+.sp-tlp   { font-size: 9px; font-family: var(--mono); padding: 1px 5px; border-radius: 3px; white-space: nowrap; }
+.sp-status{ font-size: 9px; font-family: var(--mono); padding: 1px 5px; border-radius: 3px; }
+.sp-status[data-status="new"]      { color: var(--acc); background: var(--acc-bg); }
+.sp-status[data-status="updated"]  { color: var(--med); background: oklch(0.3 0.06 50 / 0.2); }
+.sp-status[data-status="imported"] { color: var(--fg-3); background: var(--bg-2); }
+.sp-status[data-status="ignored"]  { color: var(--fg-4); background: var(--bg-1); }
+
+/* Checkbox */
+.sp-checkbox { position: relative; display: inline-flex; align-items: center; cursor: pointer; flex-shrink: 0; }
+.sp-checkbox input { position: absolute; opacity: 0; width: 0; height: 0; }
+.cb-mark { width: 13px; height: 13px; border: 1px solid var(--ln-2); border-radius: 3px; background: var(--bg-0); }
+.sp-checkbox input:checked ~ .cb-mark { background: var(--acc); border-color: var(--acc); }
+.sp-checkbox input:checked ~ .cb-mark::after { content: '✓'; position: absolute; font-size: 9px; color: var(--bg-0); left: 2px; top: -1px; }
+
+/* Detail panel */
+.sp-detail { overflow-y: auto; background: var(--bg-1); }
+.sp-detail-inner { padding: 16px; display: flex; flex-direction: column; gap: 6px; }
+.sp-detail-head  { display: flex; align-items: center; gap: 8px; }
+.sp-detail-title { font-size: 14px; font-weight: 600; color: var(--fg-0); line-height: 1.4; margin: 0; }
+.sp-detail-meta  { font-size: 10px; font-family: var(--mono); color: var(--fg-3); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.sp-detail-desc  { font-size: 11px; color: var(--fg-2); line-height: 1.6; margin: 0; padding: 8px 10px; background: var(--bg-0); border-radius: 4px; border: 1px solid var(--ln); }
+.sp-detail-tags  { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.sp-section      { border-top: 1px solid var(--ln); padding-top: 10px; }
+.sp-detail-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--ln); }
