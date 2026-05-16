@@ -1,8 +1,8 @@
 // Agents · Detection Rules · Vulnerabilities · Reports
-const { useState: useStateS, useMemo: useMemoS, useEffect: useEffectS } = React;
+const { useState: useStateS, useMemo: useMemoS } = React;
 
 // ============= AGENTS =============
-const FALLBACK_AGENTS = [
+const AGENTS = [
   { id: '003', name: 'web-prod-01',  os: 'Ubuntu 22.04', ver: '4.7.5', ip: '10.0.4.122', last: '2s',   alerts: 412, status: 'active',   group: 'web',     cpu: 32, mem: 68 },
   { id: '004', name: 'web-prod-02',  os: 'Ubuntu 22.04', ver: '4.7.5', ip: '10.0.4.123', last: '4s',   alerts: 87,  status: 'active',   group: 'web',     cpu: 24, mem: 51 },
   { id: '007', name: 'db-primary',   os: 'Debian 12',    ver: '4.7.5', ip: '10.0.4.18',  last: '12s',  alerts: 287, status: 'active',   group: 'data',    cpu: 71, mem: 84 },
@@ -22,41 +22,11 @@ const FALLBACK_AGENTS = [
 function PageAgents() {
   const [filter, setFilter] = useStateS('all');
   const [group, setGroup] = useStateS('all');
-  const [agents, setAgents] = useStateS(null);
-  const [loading, setLoading] = useStateS(true);
-
-  useEffectS(() => {
-    (async () => {
-      setLoading(true);
-      const data = await window.SOC_API.get('/api/agents');
-      if (data && Array.isArray(data.agents) && data.agents.length > 0) {
-        // Map API fields to component shape; fill missing fields with defaults
-        const mapped = data.agents.map(a => ({
-          id:      a.id || 'N/A',
-          name:    a.name || 'unknown',
-          os:      '—',
-          ver:     '—',
-          ip:      a.ip || 'N/A',
-          last:    a.lastSeen && a.lastSeen !== 'N/A' ? window.SOC_API.relTs(a.lastSeen) : '—',
-          alerts:  a.alertCount || 0,
-          status:  a.status === 'active' ? 'active' : 'offline',
-          group:   '—',
-          cpu:     0,
-          mem:     0,
-        }));
-        setAgents(mapped);
-      } else {
-        setAgents(FALLBACK_AGENTS);
-      }
-      setLoading(false);
-    })();
-  }, []);
-
-  const data = agents || FALLBACK_AGENTS;
-  const groups = ['all', ...Array.from(new Set(data.map(a => a.group)))];
-  const filtered = data.filter(a => (filter === 'all' || a.status === filter) && (group === 'all' || a.group === group));
-  const active = data.filter(a => a.status === 'active').length;
-  const offline = data.filter(a => a.status === 'offline').length;
+  const groups = ['all', ...Array.from(new Set(AGENTS.map(a => a.group)))];
+  const filtered = AGENTS.filter(a => (filter === 'all' || a.status === filter) && (group === 'all' || a.group === group));
+  const active = AGENTS.filter(a => a.status === 'active').length;
+  const offline = AGENTS.filter(a => a.status === 'offline').length;
+  const outdated = AGENTS.filter(a => a.ver !== '4.7.5').length;
 
   return (
     <div className="page" data-screen-label="08 Agents">
@@ -71,13 +41,13 @@ function PageAgents() {
       />
       <div className="page-body">
         <div className="kpi-grid" style={{gridTemplateColumns:'repeat(4,1fr)'}}>
-          <KpiCard label="Total agents" value={loading ? '…' : data.length} sub="across all groups"/>
-          <KpiCard label="Active" value={loading ? '…' : active} sub="last seen ≤ 24h" />
-          <KpiCard label="Offline" value={loading ? '…' : offline} sub="> 24h silent" sev={offline > 0 ? 'critical' : undefined} />
-          <KpiCard label="Outdated" value="—" sub="version data unavailable" />
+          <KpiCard label="Total agents" value={AGENTS.length} sub="across 7 groups"/>
+          <KpiCard label="Active" value={active} sub="last seen ≤ 1m" />
+          <KpiCard label="Offline" value={offline} sub="> 6h silent" sev={offline > 0 ? 'critical' : undefined} />
+          <KpiCard label="Outdated" value={outdated} sub="needs update to 4.7.5" />
         </div>
 
-        <Card title="Endpoints" sub={loading ? 'Loading…' : `${filtered.length} of ${data.length}`}
+        <Card title="Endpoints" sub={`${filtered.length} of ${AGENTS.length}`}
           actions={<>
             <div className="seg">
               {['all','active','offline'].map(s => (
@@ -91,43 +61,38 @@ function PageAgents() {
               {groups.map(g => <option key={g} value={g}>group: {g}</option>)}
             </select>
           </>}>
-          {loading
-            ? <div className="loading mono" style={{padding:20}}>Loading…</div>
-            : (
-              <table className="data-table">
-                <thead><tr>
-                  <th style={{width:8}}></th>
-                  <th style={{width:50}}>ID</th>
-                  <th>NAME</th>
-                  <th>OS</th>
-                  <th>VERSION</th>
-                  <th>IP</th>
-                  <th>LAST SEEN</th>
-                  <th>CPU</th>
-                  <th>MEM</th>
-                  <th>ALERTS 24H</th>
-                  <th></th>
-                </tr></thead>
-                <tbody>
-                  {filtered.map(a => (
-                    <tr key={a.id}>
-                      <td><span className="sev-bar" data-sev={a.status==='active'?'low':'offline'} style={{height:18}}/></td>
-                      <td className="mono dim">#{a.id}</td>
-                      <td className="mono">{a.name}</td>
-                      <td>{a.os}</td>
-                      <td className="mono dim">{a.ver}{a.ver!=='4.7.5' && a.ver !== '—' && <span className="ver-warn">↑</span>}</td>
-                      <td className="mono">{a.ip}</td>
-                      <td className="mono dim">{a.last}</td>
-                      <td><MiniGauge value={a.cpu}/></td>
-                      <td><MiniGauge value={a.mem}/></td>
-                      <td className="mono">{a.alerts}</td>
-                      <td><button className="btn-icon" onClick={() => window.socToast?.({title:'Agent action', sub:a.name+' · isolated', tone:'crit'})}><Icon.chevron width="12" height="12"/></button></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )
-          }
+          <table className="data-table">
+            <thead><tr>
+              <th style={{width:8}}></th>
+              <th style={{width:50}}>ID</th>
+              <th>NAME</th>
+              <th>OS</th>
+              <th>VERSION</th>
+              <th>IP</th>
+              <th>LAST SEEN</th>
+              <th>CPU</th>
+              <th>MEM</th>
+              <th>ALERTS 24H</th>
+              <th></th>
+            </tr></thead>
+            <tbody>
+              {filtered.map(a => (
+                <tr key={a.id}>
+                  <td><span className="sev-bar" data-sev={a.status==='active'?'low':'offline'} style={{height:18}}/></td>
+                  <td className="mono dim">#{a.id}</td>
+                  <td className="mono">{a.name}</td>
+                  <td>{a.os}</td>
+                  <td className="mono dim">{a.ver}{a.ver!=='4.7.5' && <span className="ver-warn">↑</span>}</td>
+                  <td className="mono">{a.ip}</td>
+                  <td className="mono dim">{a.last}</td>
+                  <td><MiniGauge value={a.cpu}/></td>
+                  <td><MiniGauge value={a.mem}/></td>
+                  <td className="mono">{a.alerts}</td>
+                  <td><button className="btn-icon" onClick={() => window.socToast?.({title:'Agent action', sub:a.name+' · isolated', tone:'crit'})}><Icon.chevron width="12" height="12"/></button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </Card>
       </div>
     </div>
@@ -146,7 +111,7 @@ function MiniGauge({ value }) {
 }
 
 // ============= DETECTION RULES =============
-const FALLBACK_RULES = [
+const RULES = [
   { id: '92653', level: 13, name: 'Suspicious PowerShell execution',          tactic: 'Execution',         technique: 'T1059.001', triggered: 156, enabled: true,  category: 'windows', custom: false },
   { id: '5710',  level: 10, name: 'Multiple authentication failures',          tactic: 'Credential Access',technique: 'T1110',     triggered: 284, enabled: true,  category: 'auth',    custom: false },
   { id: '31151', level: 12, name: 'Web exploit attempt — SQL injection',       tactic: 'Initial Access',    technique: 'T1190',     triggered: 142, enabled: true,  category: 'web',     custom: false },
@@ -165,46 +130,13 @@ const TACTICS = ['all','Initial Access','Execution','Persistence','Privilege Esc
 function PageRules() {
   const [tactic, setTactic] = useStateS('all');
   const [search, setSearch] = useStateS('');
-  const [rules, setRules] = useStateS(null);
-  const [loading, setLoading] = useStateS(true);
-  const [enabled, setEnabled] = useStateS({});
-
-  useEffectS(() => {
-    (async () => {
-      setLoading(true);
-      const data = await window.SOC_API.get('/api/rules');
-      if (data && Array.isArray(data.rules) && data.rules.length > 0) {
-        const mapped = data.rules.map(r => ({
-          id:        String(r.id),
-          level:     r.level || 0,
-          name:      r.description || r.name || '—',
-          tactic:    Array.isArray(r.groups) ? (r.groups[0] || '—') : (r.groups || '—'),
-          technique: Array.isArray(r.mitre) ? (r.mitre[0] || '—') : (r.mitre || '—'),
-          triggered: r.count || 0,
-          enabled:   true,
-          category:  Array.isArray(r.groups) ? (r.groups[0] || 'other') : (r.groups || 'other'),
-          custom:    false,
-          severity:  r.severity,
-        }));
-        setRules(mapped);
-        setEnabled(mapped.reduce((a, r) => ({...a, [r.id]: r.enabled}), {}));
-      } else {
-        setRules(FALLBACK_RULES);
-        setEnabled(FALLBACK_RULES.reduce((a, r) => ({...a, [r.id]: r.enabled}), {}));
-      }
-      setLoading(false);
-    })();
-  }, []);
-
-  const data = rules || FALLBACK_RULES;
-
-  const filtered = useMemoS(() => data.filter(r =>
+  const [enabled, setEnabled] = useStateS(RULES.reduce((a,r) => ({...a, [r.id]: r.enabled}), {}));
+  const filtered = RULES.filter(r =>
     (tactic === 'all' || r.tactic === tactic) &&
     (!search || (r.name + r.technique + r.id).toLowerCase().includes(search.toLowerCase()))
-  ), [data, tactic, search]);
-
+  );
   const totalEnabled = Object.values(enabled).filter(Boolean).length;
-  const custom = data.filter(r => r.custom).length;
+  const custom = RULES.filter(r => r.custom).length;
 
   return (
     <div className="page" data-screen-label="09 Detection Rules">
@@ -219,63 +151,58 @@ function PageRules() {
       />
       <div className="page-body">
         <div className="kpi-grid" style={{gridTemplateColumns:'repeat(4,1fr)'}}>
-          <KpiCard label="Total rules" value={loading ? '…' : data.length} sub="loaded from ruleset" />
-          <KpiCard label="Enabled" value={loading ? '…' : totalEnabled} sub={loading ? '' : `${data.length - totalEnabled} disabled`} />
-          <KpiCard label="Custom" value={loading ? '…' : custom} sub="tuned for this env" />
-          <KpiCard label="Triggered (24h)" value={loading ? '…' : data.reduce((a,r)=>a+r.triggered,0).toLocaleString()} sub="across all rules" />
+          <KpiCard label="Total rules" value={RULES.length} sub="loaded from ruleset" />
+          <KpiCard label="Enabled" value={totalEnabled} sub={`${RULES.length - totalEnabled} disabled`} />
+          <KpiCard label="Custom" value={custom} sub="tuned for this env" />
+          <KpiCard label="Triggered (24h)" value={RULES.reduce((a,r)=>a+r.triggered,0).toLocaleString()} sub="across all rules" />
         </div>
 
-        <Card title="Ruleset" sub={loading ? 'Loading…' : `${filtered.length} of ${data.length} rules`}
+        <Card title="Ruleset" sub={`${filtered.length} of ${RULES.length} rules`}
           actions={<>
             <div className="tb-search rules-search">
               <Icon.search width="13" height="13"/>
               <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="search id, name, MITRE…"/>
             </div>
           </>}>
-          {loading
-            ? <div className="loading mono" style={{padding:20}}>Loading…</div>
-            : <>
-              <div className="tactic-pills">
-                {TACTICS.map(tc => (
-                  <button key={tc} className={`tactic-pill ${tactic===tc?'on':''}`} onClick={()=>setTactic(tc)}>
-                    {tc === 'all' ? 'all tactics' : tc}
-                    {tactic === tc && <span className="tp-count mono">{filtered.length}</span>}
-                  </button>
-                ))}
-              </div>
-              <table className="data-table">
-                <thead><tr>
-                  <th style={{width:60}}>ID</th>
-                  <th style={{width:60}}>LEVEL</th>
-                  <th>NAME</th>
-                  <th>TACTIC</th>
-                  <th>TECHNIQUE</th>
-                  <th style={{width:120}}>TRIGGERED 24H</th>
-                  <th style={{width:80}}>STATUS</th>
-                </tr></thead>
-                <tbody>
-                  {filtered.map(r => (
-                    <tr key={r.id}>
-                      <td className="mono dim">{r.id}{r.custom && <span className="custom-badge mono">⊕</span>}</td>
-                      <td><LevelChip level={r.level}/></td>
-                      <td>{r.name}</td>
-                      <td className="dim">{r.tactic}</td>
-                      <td className="mono"><a href="#" className="link">{r.technique}</a></td>
-                      <td><div className="bar-wrap"><div className="bar" data-sev={r.level>=12?'critical':r.level>=10?'high':r.level>=7?'medium':'low'} style={{width:`${Math.min(100,r.triggered/3)}%`}}/><span className="bar-val mono">{r.triggered}</span></div></td>
-                      <td>
-                        <button
-                          className={`toggle ${enabled[r.id]?'on':''}`}
-                          onClick={() => { setEnabled(e => ({...e, [r.id]: !e[r.id]})); window.socToast?.({title: enabled[r.id] ? 'Rule disabled' : 'Rule enabled', sub: r.id + ' · ' + r.name, tone: enabled[r.id]?'default':'ok'}); }}
-                        >
-                          <span className="toggle-thumb"/>
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </>
-          }
+          <div className="tactic-pills">
+            {TACTICS.map(tc => (
+              <button key={tc} className={`tactic-pill ${tactic===tc?'on':''}`} onClick={()=>setTactic(tc)}>
+                {tc === 'all' ? 'all tactics' : tc}
+                {tactic === tc && <span className="tp-count mono">{filtered.length}</span>}
+              </button>
+            ))}
+          </div>
+          <table className="data-table">
+            <thead><tr>
+              <th style={{width:60}}>ID</th>
+              <th style={{width:60}}>LEVEL</th>
+              <th>NAME</th>
+              <th>TACTIC</th>
+              <th>TECHNIQUE</th>
+              <th style={{width:120}}>TRIGGERED 24H</th>
+              <th style={{width:80}}>STATUS</th>
+            </tr></thead>
+            <tbody>
+              {filtered.map(r => (
+                <tr key={r.id}>
+                  <td className="mono dim">{r.id}{r.custom && <span className="custom-badge mono">⊕</span>}</td>
+                  <td><LevelChip level={r.level}/></td>
+                  <td>{r.name}</td>
+                  <td className="dim">{r.tactic}</td>
+                  <td className="mono"><a href="#" className="link">{r.technique}</a></td>
+                  <td><div className="bar-wrap"><div className="bar" data-sev={r.level>=12?'critical':r.level>=10?'high':r.level>=7?'medium':'low'} style={{width:`${Math.min(100,r.triggered/3)}%`}}/><span className="bar-val mono">{r.triggered}</span></div></td>
+                  <td>
+                    <button
+                      className={`toggle ${enabled[r.id]?'on':''}`}
+                      onClick={() => { setEnabled(e => ({...e, [r.id]: !e[r.id]})); window.socToast?.({title: enabled[r.id] ? 'Rule disabled' : 'Rule enabled', sub: r.id + ' · ' + r.name, tone: enabled[r.id]?'default':'ok'}); }}
+                    >
+                      <span className="toggle-thumb"/>
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </Card>
       </div>
     </div>
@@ -303,33 +230,11 @@ const VULNS = [
 
 function PageVulns() {
   const [sev, setSev] = useStateS('all');
-  const [vulns, setVulns] = useStateS(VULNS);
-  const [loading, setLoading] = useStateS(false);
-  const [empty, setEmpty] = useStateS(false);
-
-  useEffectS(() => {
-    (async () => {
-      setLoading(true);
-      const data = await window.SOC_API.get('/api/assets/scan/status');
-      if (data && Array.isArray(data.scans) && data.scans.length > 0) {
-        setVulns(data.scans);
-        setEmpty(false);
-      } else {
-        // Keep VULNS mock as fallback; show empty message if API explicitly returned empty
-        if (data && data.scans !== undefined && data.scans.length === 0) {
-          setEmpty(true);
-        }
-        setVulns(VULNS);
-      }
-      setLoading(false);
-    })();
-  }, []);
-
-  const filtered = sev === 'all' ? vulns : vulns.filter(v => v.sev === sev);
-  const crit = vulns.filter(v => v.sev === 'critical').length;
-  const high = vulns.filter(v => v.sev === 'high').length;
-  const patched = vulns.filter(v => v.status === 'patched').length;
-  const patchedPct = vulns.length > 0 ? Math.round(patched / vulns.length * 100) : 0;
+  const filtered = sev === 'all' ? VULNS : VULNS.filter(v => v.sev === sev);
+  const crit = VULNS.filter(v => v.sev === 'critical').length;
+  const high = VULNS.filter(v => v.sev === 'high').length;
+  const patched = VULNS.filter(v => v.status === 'patched').length;
+  const patchedPct = Math.round(patched / VULNS.length * 100);
 
   return (
     <div className="page" data-screen-label="10 Vulnerabilities">
@@ -344,13 +249,13 @@ function PageVulns() {
       />
       <div className="page-body">
         <div className="kpi-grid" style={{gridTemplateColumns:'repeat(4,1fr)'}}>
-          <KpiCard label="Open CVEs" value={loading ? '…' : vulns.filter(v=>v.status==='open').length} sub="across 156 agents" />
-          <KpiCard label="Critical" value={loading ? '…' : crit} sub="CVSS ≥ 9.0" sev="critical" />
-          <KpiCard label="High" value={loading ? '…' : high} sub="CVSS 7.0–8.9" />
-          <KpiCard label="Patched (30d)" value={loading ? '…' : `${patchedPct}%`} sub={`${patched} of ${vulns.length}`} />
+          <KpiCard label="Open CVEs" value={VULNS.filter(v=>v.status==='open').length} sub="across 156 agents" />
+          <KpiCard label="Critical" value={crit} sub="CVSS ≥ 9.0" sev="critical" />
+          <KpiCard label="High" value={high} sub="CVSS 7.0–8.9" />
+          <KpiCard label="Patched (30d)" value={`${patchedPct}%`} sub={`${patched} of ${VULNS.length}`} />
         </div>
 
-        <Card title="CVE feed" sub={loading ? 'Loading…' : `${filtered.length} vulnerabilities`}
+        <Card title="CVE feed" sub={`${filtered.length} vulnerabilities`}
           actions={<>
             <div className="seg">
               {['all','critical','high','medium','low'].map(s => (
@@ -361,41 +266,34 @@ function PageVulns() {
               ))}
             </div>
           </>}>
-          {loading
-            ? <div className="loading mono" style={{padding:20}}>Loading…</div>
-            : empty
-              ? <div className="empty mono" style={{padding:20}}>No vulnerability scan data available. Run a scan to populate this view.</div>
-              : (
-                <table className="data-table">
-                  <thead><tr>
-                    <th>CVE</th>
-                    <th style={{width:70}}>CVSS</th>
-                    <th style={{width:80}}>SEVERITY</th>
-                    <th>PACKAGE</th>
-                    <th>INSTALLED</th>
-                    <th>FIX</th>
-                    <th style={{width:110}}>HOSTS</th>
-                    <th style={{width:100}}>STATUS</th>
-                    <th style={{width:60}}>AGE</th>
-                  </tr></thead>
-                  <tbody>
-                    {filtered.map(v => (
-                      <tr key={v.cve}>
-                        <td className="mono"><a href="#" className="link">{v.cve}</a></td>
-                        <td><CvssChip score={v.cvss}/></td>
-                        <td><SevChip sev={v.sev}/></td>
-                        <td className="mono">{v.pkg}</td>
-                        <td className="mono dim">{v.ver}</td>
-                        <td className="mono">{v.fix}</td>
-                        <td><div className="bar-wrap"><div className="bar" data-sev={v.sev} style={{width:`${Math.min(100,v.hosts*3)}%`}}/><span className="bar-val mono">{v.hosts}</span></div></td>
-                        <td><StatusChip status={v.status}/></td>
-                        <td className="mono dim">{v.age}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )
-          }
+          <table className="data-table">
+            <thead><tr>
+              <th>CVE</th>
+              <th style={{width:70}}>CVSS</th>
+              <th style={{width:80}}>SEVERITY</th>
+              <th>PACKAGE</th>
+              <th>INSTALLED</th>
+              <th>FIX</th>
+              <th style={{width:110}}>HOSTS</th>
+              <th style={{width:100}}>STATUS</th>
+              <th style={{width:60}}>AGE</th>
+            </tr></thead>
+            <tbody>
+              {filtered.map(v => (
+                <tr key={v.cve}>
+                  <td className="mono"><a href="#" className="link">{v.cve}</a></td>
+                  <td><CvssChip score={v.cvss}/></td>
+                  <td><SevChip sev={v.sev}/></td>
+                  <td className="mono">{v.pkg}</td>
+                  <td className="mono dim">{v.ver}</td>
+                  <td className="mono">{v.fix}</td>
+                  <td><div className="bar-wrap"><div className="bar" data-sev={v.sev} style={{width:`${Math.min(100,v.hosts*3)}%`}}/><span className="bar-val mono">{v.hosts}</span></div></td>
+                  <td><StatusChip status={v.status}/></td>
+                  <td className="mono dim">{v.age}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </Card>
       </div>
     </div>
@@ -412,7 +310,7 @@ function StatusChip({ status }) {
 }
 
 // ============= REPORTS =============
-const FALLBACK_REPORTS = [
+const REPORTS = [
   { id: 'RPT-2026-019', title: 'Executive · Week 19', range: 'May 6 – May 13', author: 'AI · younes', status: 'draft', pages: 6, when: 'now' },
   { id: 'RPT-2026-018', title: 'Executive · Week 18', range: 'Apr 29 – May 6', author: 'AI · younes', status: 'sent', pages: 6, when: '7d ago' },
   { id: 'RPT-2026-017', title: 'Compliance · ISO 27001', range: 'Apr 1 – Apr 30', author: 'AI · sara', status: 'sent', pages: 14, when: '13d ago' },
@@ -421,24 +319,7 @@ const FALLBACK_REPORTS = [
 
 function PageReports() {
   const [selectedId, setSelectedId] = useStateS('RPT-2026-019');
-  const [summary, setSummary] = useStateS(null);
-  const [summaryLoading, setSummaryLoading] = useStateS(false);
-  const selected = FALLBACK_REPORTS.find(r => r.id === selectedId);
-
-  // Fetch AI summary when the draft report is selected
-  useEffectS(() => {
-    if (selectedId !== 'RPT-2026-019') return;
-    (async () => {
-      setSummaryLoading(true);
-      const data = await window.SOC_API.get('/api/reports/summary');
-      if (data && (data.text || data.ai_summary)) {
-        setSummary(data.text || data.ai_summary || null);
-      } else {
-        setSummary(null);
-      }
-      setSummaryLoading(false);
-    })();
-  }, [selectedId]);
+  const selected = REPORTS.find(r => r.id === selectedId);
 
   return (
     <div className="page" data-screen-label="11 Reports">
@@ -454,9 +335,9 @@ function PageReports() {
       <div className="page-body">
         <div className="reports-layout">
           <aside className="reports-side">
-            <Card title="Reports" sub={`${FALLBACK_REPORTS.length} total`} padded={true}>
+            <Card title="Reports" sub={`${REPORTS.length} total`} padded={true}>
               <ul className="report-list">
-                {FALLBACK_REPORTS.map(r => (
+                {REPORTS.map(r => (
                   <li key={r.id}>
                     <button className={`report-item ${selectedId===r.id?'on':''}`} onClick={()=>setSelectedId(r.id)}>
                       <div className="ri-head">
@@ -489,7 +370,7 @@ function PageReports() {
           </aside>
 
           <main className="reports-main">
-            {selected && <ReportPreview r={selected} summary={selectedId === 'RPT-2026-019' ? summary : null} summaryLoading={selectedId === 'RPT-2026-019' ? summaryLoading : false} />}
+            {selected && <ReportPreview r={selected} />}
           </main>
         </div>
       </div>
@@ -497,7 +378,7 @@ function PageReports() {
   );
 }
 
-function ReportPreview({ r, summary, summaryLoading }) {
+function ReportPreview({ r }) {
   return (
     <Card title={r.title} sub={r.range + ' · ' + r.author}
       actions={<>
@@ -528,12 +409,7 @@ function ReportPreview({ r, summary, summaryLoading }) {
 
         <section className="rd-section">
           <h3 className="rd-h3"><span className="rd-num">01</span> Executive summary</h3>
-          {summaryLoading
-            ? <div className="loading mono" style={{padding:'8px 0'}}>Generating AI summary…</div>
-            : summary
-              ? <p style={{whiteSpace:'pre-wrap'}}>{summary}</p>
-              : <p>This week the SOC processed <strong>1,847 alerts</strong> across <strong>156 endpoints</strong>, opening <strong>23 cases</strong> of which 7 remain active. Mean time to detect improved 18% week-over-week to <strong>4m 12s</strong>; mean time to respond held at <strong>38m</strong>. The single most significant event was an <strong>active intrusion on web-prod-01</strong> (CASE-4471) traced to Tor exit <span className="mono">185.220.101.42</span>; contained in 12 minutes with no data exfiltration confirmed.</p>
-          }
+          <p>This week the SOC processed <strong>1,847 alerts</strong> across <strong>156 endpoints</strong>, opening <strong>23 cases</strong> of which 7 remain active. Mean time to detect improved 18% week-over-week to <strong>4m 12s</strong>; mean time to respond held at <strong>38m</strong>. The single most significant event was an <strong>active intrusion on web-prod-01</strong> (CASE-4471) traced to Tor exit <span className="mono">185.220.101.42</span>; contained in 12 minutes with no data exfiltration confirmed.</p>
         </section>
 
         <section className="rd-section">

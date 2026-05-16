@@ -1,154 +1,181 @@
-// Dashboard + Alerts pages
-const { useState: useState1, useMemo: useMemo1, useEffect: useEffect1 } = React;
+// Dashboard + Alerts pages — wired to real backend APIs
+const { useState: useState1, useMemo: useMemo1, useEffect: useEffect1, useCallback: useCallback1 } = React;
 
 // ============= DASHBOARD =============
 function PageDashboard() {
-  const [state, setState] = useState1({ loading: true, data: null });
+  const API = window.SOC_API;
+  const [dash, setDash] = useState1(null);
+  const [topRules, setTopRules] = useState1([]);
+  const [topAgents, setTopAgents] = useState1([]);
+  const [topIPs, setTopIPs] = useState1([]);
+  const [recentAlerts, setRecentAlerts] = useState1([]);
+  const [loading, setLoading] = useState1(true);
+  const [timeframe, setTimeframe] = useState1('24');
 
-  useEffect1(() => {
-    Promise.all([
-      window.SOC_API.get('/api/dashboard'),
-      window.SOC_API.get('/api/stats/top-rules'),
-      window.SOC_API.get('/api/stats/top-agents'),
-      window.SOC_API.get('/api/alerts?page=1&page_size=8&hours=24'),
-      window.SOC_API.get('/api/stats/top-ips'),
-    ]).then(([dash, topRules, topAgents, alertsResp, topIps]) => {
-      setState({ loading: false, data: { dash, topRules, topAgents, alertsResp, topIps } });
-    });
+  const load = useCallback1(async (hours) => {
+    setLoading(true);
+    const [dashData, rulesData, agentsData, ipsData, alertsData] = await Promise.all([
+      API.get(`/api/dashboard?hours=${hours}`),
+      API.get('/api/stats/top-rules'),
+      API.get('/api/stats/top-agents'),
+      API.get('/api/stats/top-ips'),
+      API.get(`/api/alerts?hours=${hours}&page=1&page_size=8`),
+    ]);
+    setDash(dashData);
+    setTopRules(Array.isArray(rulesData) ? rulesData : []);
+    setTopAgents(Array.isArray(agentsData) ? agentsData : []);
+    setTopIPs(Array.isArray(ipsData) ? ipsData : []);
+    const rawAlerts = alertsData?.items || alertsData?.alerts || [];
+    setRecentAlerts(rawAlerts.map(adaptAlert));
+    setLoading(false);
   }, []);
 
-  if (state.loading || !state.data) {
-    return (
-      <div className="page" data-screen-label="01 Dashboard">
-        <Topbar title="Dashboard" sub="Last 24 hours · SIEM + SP-CM · live" actions={<>
-          <button className="btn btn-ghost"><Icon.refresh width="13" height="13" /> Refresh</button>
-          <button className="btn btn-ghost">Last 24h <Icon.chevron width="12" height="12" /></button>
-          <button className="btn btn-primary"><Icon.plus width="13" height="13" /> New Case</button>
-        </>} />
-        <div className="page-body">
-          <div className="loading mono">Loading…</div>
-        </div>
+  useEffect1(() => { load(timeframe); }, [timeframe]);
+
+  if (loading) return (
+    <div className="page" data-screen-label="01 Dashboard">
+      <Topbar title="Dashboard" sub="Loading…" />
+      <div className="page-body" style={{display:'flex',alignItems:'center',justifyContent:'center',height:300}}>
+        <Spinner />
       </div>
-    );
-  }
+    </div>
+  );
 
-  const { dash, topRules, topAgents, alertsResp, topIps } = state.data;
-
-  // Map timeline: real API has .time ISO string, component wants .hour number
   const timeline = (dash?.timeline || []).map(t => ({
-    hour: new Date(t.time).getHours(),
+    hour: new Date(t.time).getUTCHours(),
     critical: t.critical || 0,
     high: t.high || 0,
     medium: t.medium || 0,
     low: t.low || 0,
   }));
 
-  // Map severity donut
-  const severityDist = [
-    { level: 'critical', count: dash?.criticalAlerts || 0, color: 'crit' },
-    { level: 'high',     count: dash?.highAlerts    || 0, color: 'high' },
-    { level: 'medium',   count: dash?.mediumAlerts  || 0, color: 'med'  },
-    { level: 'low',      count: dash?.lowAlerts     || 0, color: 'low'  },
-  ];
+  const sevDist = [
+    { level: 'crit', color: 'crit', count: dash?.criticalAlerts || 0 },
+    { level: 'high', color: 'high', count: dash?.highAlerts || 0 },
+    { level: 'med',  color: 'med',  count: dash?.mediumAlerts || 0 },
+    { level: 'low',  color: 'low',  count: dash?.lowAlerts || 0 },
+  ].filter(d => d.count > 0);
 
-  // Map top rules: desc → name, severity → sev, first mitre tag or ''
-  const mappedTopRules = (topRules || []).map(r => ({
-    id:    r.id,
-    name:  r.desc,
-    mitre: r.mitre?.[0] || '',
+  const spark = timeline.map(t => t.critical + t.high + t.medium + t.low);
+
+  const adaptedRules = topRules.map(r => ({
+    id: r.id,
+    name: r.desc || r.description || r.id,
+    mitre: Array.isArray(r.mitre) ? (r.mitre[0] || '—') : (r.mitre || '—'),
+    sev: r.severity || API.sevFromLevel(r.level),
     count: r.count,
-    sev:   r.severity,
   }));
 
-  // Map top agents: name, count → alerts, synthetic fields
-  const mappedTopAgents = (topAgents || []).map(a => ({
-    id:     '',
-    name:   a.name,
-    os:     '',
-    alerts: a.count,
-    last:   '',
+  const adaptedAgents = topAgents.map((a, i) => ({
+    id: i + 1,
+    name: a.name,
+    os: a.os || '—',
     status: 'active',
+    last: a.last_seen ? API.relTs(a.last_seen) : 'recently',
+    alerts: a.count,
   }));
 
-  // Map recent alerts: timestamp → Date, description → rule, etc.
-  const recentAlerts = ((alertsResp?.alerts || []).slice(0, 8)).map(a => ({
-    id:     a.id,
-    time:   new Date(a.timestamp),
-    agent:  a.agent,
-    srcIp:  a.srcIp,
-    rule:   a.description,
-    mitre:  Array.isArray(a.mitre) ? a.mitre[0] || '' : a.mitre || '',
-    sev:    a.severity,
-    geo:    '',
-  }));
-
-  // WorldMap: no geo data from API, use fallback card
-  const topIpsList = topIps || [];
-  const totalHits = (dash?.alerts24h || 0);
+  const hours = parseInt(timeframe);
+  const label = hours === 1 ? 'Last 1h' : hours === 24 ? 'Last 24h' : hours === 168 ? 'Last 7d' : `Last ${hours}h`;
 
   return (
     <div className="page" data-screen-label="01 Dashboard">
       <Topbar
         title="Dashboard"
-        sub="Last 24 hours · SIEM + SP-CM · live"
+        sub={`${label} · SIEM + SP-CM · live`}
         actions={<>
-          <button className="btn btn-ghost"><Icon.refresh width="13" height="13" /> Refresh</button>
-          <button className="btn btn-ghost">Last 24h <Icon.chevron width="12" height="12" /></button>
-          <button className="btn btn-primary"><Icon.plus width="13" height="13" /> New Case</button>
+          <button className="btn btn-ghost" onClick={() => load(timeframe)}>
+            <Icon.refresh width="13" height="13" /> Refresh
+          </button>
+          <select className="btn btn-ghost" style={{background:'transparent',border:'none',color:'var(--txt)',cursor:'pointer'}}
+            value={timeframe} onChange={e => setTimeframe(e.target.value)}>
+            <option value="1">Last 1h</option>
+            <option value="24">Last 24h</option>
+            <option value="168">Last 7d</option>
+            <option value="720">Last 30d</option>
+          </select>
         </>}
       />
 
       <div className="page-body">
         {/* KPI Strip */}
         <div className="kpi-grid">
-          <KpiCard label="Alerts (24h)" value={(dash?.alerts24h || 0).toLocaleString()}
-            trend={null} sub="vs. prev. 24h"
-            spark={timeline.map(t => t.critical + t.high + t.medium + t.low)} />
-          <KpiCard label="Critical alerts" value={dash?.criticalAlerts || 0}
-            sub="awaiting triage" sev="critical" big />
-          <KpiCard label="Active agents" value={dash?.totalAgents || 0}
-            sub="monitored" />
-          <KpiCard label="Open cases" value={dash?.openCases || 0}
-            trend={null} sub="across 4 lanes" />
-          <KpiCard label="MTTD" value="—" sub="mean time to detect" mono />
-          <KpiCard label="MTTR" value="—" sub="mean time to respond" mono />
+          <KpiCard label={`Alerts (${label})`}
+            value={(dash?.totalAlerts || dash?.alerts24h || 0).toLocaleString()}
+            sub="total SIEM alerts"
+            spark={spark} />
+          <KpiCard label="Critical alerts"
+            value={(dash?.criticalAlerts || 0).toLocaleString()}
+            sub="rule level ≥ 12" sev="critical" big />
+          <KpiCard label="Active agents"
+            value={dash?.totalAgents || 0}
+            sub="reporting to SIEM" />
+          <KpiCard label="Open cases (SP-CM)"
+            value={(dash?.openCases || 0).toLocaleString()}
+            sub="awaiting triage" />
+          <KpiCard label="High severity"
+            value={(dash?.highAlerts || 0).toLocaleString()}
+            sub="rule level 8–11" sev="high" />
+          <KpiCard label="Medium severity"
+            value={(dash?.mediumAlerts || 0).toLocaleString()}
+            sub="rule level 5–7" />
         </div>
 
         {/* Row 1: timeline + severity donut */}
         <div className="grid-12">
-          <Card title="Alert timeline" sub="hourly · last 24h · stacked by severity" span={8}
-            actions={<><Chip>stack</Chip><Chip tone="dim">line</Chip></>}>
+          <Card title="Alert timeline" sub={`${label} · stacked by severity`} span={8}
+            actions={<><Chip>stack</Chip></>}>
             {timeline.length > 0
               ? <AlertTimeline data={timeline} />
-              : <div className="empty mono">No timeline data</div>}
+              : <EmptyState icon="📊" text="No timeline data available" />}
           </Card>
-          <Card title="Severity mix" sub="last 24h" span={4}>
-            <SeverityDonut data={severityDist} />
+          <Card title="Severity mix" sub={label} span={4}>
+            {sevDist.length > 0
+              ? <SeverityDonut data={sevDist} />
+              : <EmptyState icon="🔵" text="No alert data" />}
           </Card>
         </div>
 
-        {/* Row 2: attack origins (fallback, no geo) + recent alerts */}
+        {/* Row 2: top source IPs + recent alerts */}
         <div className="grid-12">
-          <Card title="Attack origins" sub="top source IPs · last 24h" span={7}
-            actions={<><Chip mono>{totalHits.toLocaleString()} hits / 24h</Chip></>}>
-            <AttackOriginsTable ips={topIpsList} />
+          <Card title="Top source IPs" sub="24h · external attack sources" span={7}
+            actions={topIPs.length > 0 ? <Chip mono>{topIPs.reduce((a,b)=>a+b.count,0).toLocaleString()} hits</Chip> : null}>
+            {topIPs.length > 0
+              ? <TopIPsTable ips={topIPs} />
+              : <EmptyState icon="🌐" text="No external source IP data" />}
           </Card>
           <Card title="Recent alerts" sub="live feed" span={5}
-            actions={<><span className="live-pip"><span className="pip" />LIVE</span></>}>
-            <RecentAlertsFeed alerts={recentAlerts} />
+            actions={<span className="live-pip"><span className="pip" />LIVE</span>}>
+            {recentAlerts.length > 0
+              ? <RecentAlertsFeed alerts={recentAlerts} />
+              : <EmptyState icon="🔔" text="No recent alerts" />}
           </Card>
         </div>
 
         {/* Row 3: top rules + top agents */}
         <div className="grid-12">
-          <Card title="Top triggered rules" sub="24h · with MITRE mapping" span={7}>
-            <TopRulesTable rules={mappedTopRules} />
+          <Card title="Top triggered rules" sub="24h · sorted by volume" span={7}>
+            {adaptedRules.length > 0
+              ? <TopRulesTable rules={adaptedRules} />
+              : <EmptyState icon="📋" text="No rule data" />}
           </Card>
-          <Card title="Top noisy agents" sub="alert count" span={5}>
-            <TopAgentsList agents={mappedTopAgents} />
+          <Card title="Top noisy agents" sub="24h · by alert count" span={5}>
+            {adaptedAgents.length > 0
+              ? <TopAgentsList agents={adaptedAgents} />
+              : <EmptyState icon="🖥" text="No agent data" />}
           </Card>
         </div>
       </div>
+    </div>
+  );
+}
+
+function EmptyState({ icon, text }) {
+  return (
+    <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',
+      padding:'2rem',color:'var(--txt-3)',gap:8}}>
+      <span style={{fontSize:28}}>{icon}</span>
+      <span style={{fontSize:12}}>{text}</span>
     </div>
   );
 }
@@ -167,28 +194,28 @@ function KpiCard({ label, value, sub, trend, spark, sev, big, mono }) {
         )}
         {sub && <span className="kpi-sub">{sub}</span>}
       </div>
-      {spark && <div className="kpi-spark"><Sparkline data={spark} height={28} color="var(--acc)" /></div>}
+      {spark && spark.length > 0 && <div className="kpi-spark"><Sparkline data={spark} height={28} color="var(--acc)" /></div>}
     </div>
   );
 }
 
 // ====== Stacked-area timeline (SVG) ======
 function AlertTimeline({ data }) {
+  if (!data || data.length < 2) return <EmptyState icon="📊" text="Insufficient timeline data" />;
   const w = 800, h = 220, pad = { l: 36, r: 12, t: 12, b: 26 };
   const innerW = w - pad.l - pad.r;
   const innerH = h - pad.t - pad.b;
   const layers = ['low', 'medium', 'high', 'critical'];
   const layerColor = { critical: 'var(--crit)', high: 'var(--high)', medium: 'var(--med)', low: 'var(--low)' };
 
-  // Build stacked values
   const stack = data.map(d => {
     let acc = 0;
     return layers.map(L => {
-      const v0 = acc; acc += d[L]; return [v0, acc];
+      const v0 = acc; acc += (d[L] || 0); return [v0, acc];
     });
   });
-  const maxY = Math.max(...stack.flatMap(s => s.map(p => p[1])));
-  const x = (i) => pad.l + (i / (data.length - 1)) * innerW;
+  const maxY = Math.max(...stack.flatMap(s => s.map(p => p[1])), 1);
+  const x = (i) => pad.l + (i / Math.max(data.length - 1, 1)) * innerW;
   const y = (v) => pad.t + innerH - (v / maxY) * innerH;
 
   const paths = layers.map((L, li) => {
@@ -202,22 +229,18 @@ function AlertTimeline({ data }) {
 
   return (
     <svg viewBox={`0 0 ${w} ${h}`} width="100%" height={h} className="chart">
-      {/* Grid */}
       {yTicks.map((t, i) => (
         <g key={i}>
           <line x1={pad.l} x2={w - pad.r} y1={y(t)} y2={y(t)} stroke="var(--ln)" strokeDasharray="2 4" />
-          <text x={pad.l - 8} y={y(t) + 3} textAnchor="end" className="chart-tick">{t}</text>
+          <text x={pad.l - 8} y={y(t) + 3} textAnchor="end" className="chart-tick">{t >= 1000 ? `${(t/1000).toFixed(0)}k` : t}</text>
         </g>
       ))}
-      {/* X labels */}
-      {data.map((d, i) => i % 4 === 0 && (
+      {data.map((d, i) => i % Math.max(1, Math.floor(data.length / 6)) === 0 && (
         <text key={i} x={x(i)} y={h - 8} textAnchor="middle" className="chart-tick">{String(d.hour).padStart(2, '0')}:00</text>
       ))}
-      {/* Layers */}
       {paths.map(p => (
         <path key={p.L} d={p.d} fill={layerColor[p.L]} opacity={p.L === 'low' ? 0.45 : 0.78} />
       ))}
-      {/* Legend */}
       <g transform={`translate(${pad.l},${pad.t - 2})`}>
         {layers.slice().reverse().map((L, i) => (
           <g key={L} transform={`translate(${i * 78},0)`}>
@@ -233,15 +256,17 @@ function AlertTimeline({ data }) {
 // ====== Severity donut ======
 function SeverityDonut({ data }) {
   const total = data.reduce((a, b) => a + b.count, 0);
+  if (total === 0) return <EmptyState icon="🔵" text="No alerts" />;
   const r = 70, c = 2 * Math.PI * r;
   let offset = 0;
   const colorMap = { crit: 'var(--crit)', high: 'var(--high)', med: 'var(--med)', low: 'var(--low)' };
+  const labelMap = { crit: 'critical', high: 'high', med: 'medium', low: 'low' };
   return (
     <div className="donut-wrap">
       <svg viewBox="0 0 200 200" width="200" height="200">
         <circle cx="100" cy="100" r={r} fill="none" stroke="var(--ln)" strokeWidth="1" />
         {data.map((d, i) => {
-          const frac = total > 0 ? d.count / total : 0;
+          const frac = d.count / total;
           const len = c * frac;
           const dasharray = `${len} ${c - len}`;
           const el = (
@@ -254,15 +279,15 @@ function SeverityDonut({ data }) {
           return el;
         })}
         <text x="100" y="96" textAnchor="middle" className="donut-num">{total.toLocaleString()}</text>
-        <text x="100" y="116" textAnchor="middle" className="donut-lbl">alerts · 24h</text>
+        <text x="100" y="116" textAnchor="middle" className="donut-lbl">alerts</text>
       </svg>
       <ul className="donut-legend">
         {data.map(d => (
           <li key={d.level}>
-            <SevDot sev={d.level === 'crit' ? 'critical' : d.level === 'high' ? 'high' : d.level === 'med' ? 'medium' : 'low'} />
-            <span className="dl-lvl">{d.level === 'crit' ? 'critical' : d.level === 'med' ? 'medium' : d.level}</span>
-            <span className="dl-pct mono">{total > 0 ? Math.round(d.count / total * 100) : 0}%</span>
-            <span className="dl-cnt mono">{d.count}</span>
+            <SevDot sev={labelMap[d.level] || d.level} />
+            <span className="dl-lvl">{labelMap[d.level] || d.level}</span>
+            <span className="dl-pct mono">{Math.round(d.count / total * 100)}%</span>
+            <span className="dl-cnt mono">{d.count.toLocaleString()}</span>
           </li>
         ))}
       </ul>
@@ -270,31 +295,35 @@ function SeverityDonut({ data }) {
   );
 }
 
-// ====== Attack origins fallback (no geo data from API) ======
-function AttackOriginsTable({ ips }) {
-  if (!ips || ips.length === 0) {
-    return <div className="empty mono">No attack origin data available</div>;
-  }
-  const max = Math.max(...ips.map(i => i.count));
+// ====== Top source IPs table (replaces WorldMap — no geo data) ======
+function TopIPsTable({ ips }) {
+  const max = Math.max(...ips.map(ip => ip.count), 1);
+  const sevFor = (count) => count > 1000 ? 'critical' : count > 200 ? 'high' : count > 50 ? 'medium' : 'low';
   return (
     <table className="data-table">
       <thead><tr>
+        <th>#</th>
         <th>SOURCE IP</th>
-        <th style={{width:140}}>HIT COUNT</th>
+        <th style={{width:60}}>SEV</th>
+        <th style={{width:160}}>HIT COUNT</th>
       </tr></thead>
       <tbody>
-        {ips.map((ip, idx) => (
-          <tr key={idx}>
-            <td className="mono">{ip.ip}</td>
-            <td>
-              <div className="bar-wrap">
-                <div className="bar" data-sev={ip.count > 30 ? 'critical' : ip.count > 15 ? 'high' : ip.count > 7 ? 'medium' : 'low'}
-                  style={{ width: `${ip.count / max * 100}%` }} />
-                <span className="bar-val mono">{ip.count}</span>
-              </div>
-            </td>
-          </tr>
-        ))}
+        {ips.map((ip, i) => {
+          const sev = sevFor(ip.count);
+          return (
+            <tr key={ip.ip}>
+              <td className="mono dim">{i + 1}</td>
+              <td className="mono">{ip.ip}</td>
+              <td><SevChip sev={sev} /></td>
+              <td>
+                <div className="bar-wrap">
+                  <div className="bar" data-sev={sev} style={{ width: `${ip.count/max*100}%` }} />
+                  <span className="bar-val mono">{ip.count.toLocaleString()}</span>
+                </div>
+              </td>
+            </tr>
+          );
+        })}
       </tbody>
     </table>
   );
@@ -304,20 +333,17 @@ function AttackOriginsTable({ ips }) {
 function RecentAlertsFeed({ alerts }) {
   return (
     <ul className="feed">
-      {alerts.map(a => (
-        <li key={a.id} className="feed-item" data-sev={a.sev}>
+      {alerts.map((a, i) => (
+        <li key={`${a.id}-${i}`} className="feed-item" data-sev={a.sev}>
           <div className="feed-sev"><SevDot sev={a.sev} size={6} /></div>
           <div className="feed-body">
             <div className="feed-row1">
               <span className="feed-rule">{a.rule}</span>
-              <span className="feed-mitre mono">{a.mitre}</span>
+              {a.mitre && a.mitre !== '—' && <span className="feed-mitre mono">{a.mitre}</span>}
             </div>
             <div className="feed-row2 mono">
               <span>{a.agent}</span>
-              <span className="feed-dim">←</span>
-              <span>{a.srcIp}</span>
-              <span className="feed-dim">·</span>
-              <span className="feed-geo">{a.geo}</span>
+              {a.srcIp && a.srcIp !== '—' && <><span className="feed-dim">←</span><span>{a.srcIp}</span></>}
               <span className="feed-dim">·</span>
               <span className="feed-time">{relTime(a.time)}</span>
             </div>
@@ -329,23 +355,23 @@ function RecentAlertsFeed({ alerts }) {
 }
 
 function relTime(t) {
-  const ms = t instanceof Date ? t.getTime() : new Date(t).getTime();
-  const s = Math.round((Date.now() - ms) / 1000);
+  if (!t) return '—';
+  const d = t instanceof Date ? t : new Date(t);
+  const s = Math.round((Date.now() - d.getTime()) / 1000);
   if (s < 60) return `${s}s ago`;
   const m = Math.round(s / 60);
   if (m < 60) return `${m}m ago`;
-  return `${Math.round(m / 60)}h ago`;
+  return `${Math.round(m/60)}h ago`;
 }
 
 // ====== Top rules table ======
 function TopRulesTable({ rules }) {
-  if (!rules || rules.length === 0) return <div className="empty mono">No rule data</div>;
-  const max = Math.max(...rules.map(r => r.count));
+  const max = Math.max(...rules.map(r => r.count), 1);
   return (
     <table className="data-table">
       <thead><tr>
         <th style={{width:60}}>RULE</th>
-        <th>NAME</th>
+        <th>DESCRIPTION</th>
         <th style={{width:90}}>MITRE</th>
         <th style={{width:60}}>SEV</th>
         <th style={{width:140}}>COUNT</th>
@@ -354,13 +380,13 @@ function TopRulesTable({ rules }) {
         {rules.map(r => (
           <tr key={r.id}>
             <td className="mono dim">{r.id}</td>
-            <td>{r.name}</td>
-            <td className="mono"><a href="#" className="link">{r.mitre}</a></td>
+            <td style={{maxWidth:220,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={r.name}>{r.name}</td>
+            <td className="mono">{r.mitre !== '—' ? <span className="link">{r.mitre}</span> : <span className="dim">—</span>}</td>
             <td><SevChip sev={r.sev} /></td>
             <td>
               <div className="bar-wrap">
-                <div className="bar" data-sev={r.sev} style={{ width: `${r.count / max * 100}%` }} />
-                <span className="bar-val mono">{r.count}</span>
+                <div className="bar" data-sev={r.sev} style={{ width: `${r.count/max*100}%` }} />
+                <span className="bar-val mono">{r.count.toLocaleString()}</span>
               </div>
             </td>
           </tr>
@@ -374,17 +400,17 @@ function TopRulesTable({ rules }) {
 function TopAgentsList({ agents }) {
   return (
     <ul className="agent-list">
-      {agents.map((a, idx) => (
-        <li key={a.id || idx} className="agent-row">
+      {agents.map(a => (
+        <li key={a.id} className="agent-row">
           <div className="agent-id mono">#{a.id}</div>
           <div className="agent-info">
             <div className="agent-name">
-              <SevDot sev={a.status === 'active' ? 'low' : 'offline'} size={6} />
+              <SevDot sev="low" size={6} />
               {a.name}
             </div>
-            <div className="agent-meta mono">{a.os} · {a.last}</div>
+            <div className="agent-meta mono">{a.os !== '—' ? `${a.os} · ` : ''}{a.last}</div>
           </div>
-          <div className="agent-count mono">{a.alerts}</div>
+          <div className="agent-count mono">{a.alerts.toLocaleString()}</div>
         </li>
       ))}
     </ul>
@@ -392,59 +418,75 @@ function TopAgentsList({ agents }) {
 }
 
 // ============= ALERTS PAGE =============
+function adaptAlert(a) {
+  const sev = a.severity || window.SOC_API.sevFromLevel(a.level);
+  const mitre = Array.isArray(a.mitre) ? (a.mitre[0] || '—') : (a.mitre || '—');
+  return {
+    id: a.id || a._id,
+    sev,
+    rule: a.description || a.rule || '—',
+    mitre,
+    agent: a.agent || '—',
+    srcIp: a.srcIp || a.src_ip || '—',
+    geo: a.location || a.geo || '—',
+    ruleId: a.ruleId || a.rule_id,
+    level: a.level,
+    fullLog: a.fullLog || a.full_log,
+    groups: a.groups,
+    time: new Date(a.timestamp || a.time || Date.now()),
+    raw: a,
+  };
+}
+
 function PageAlerts() {
-  const [sevFilter, setSevFilter] = useState1('all');
+  const API = window.SOC_API;
   const [alerts, setAlerts] = useState1([]);
   const [total, setTotal] = useState1(0);
-  const [loading, setLoading] = useState1(true);
+  const [page, setPage] = useState1(1);
+  const [pageSize] = useState1(50);
+  const [sevFilter, setSevFilter] = useState1('all');
   const [selected, setSelected] = useState1(null);
+  const [loading, setLoading] = useState1(true);
+  const [enriching, setEnriching] = useState1(false);
+  const [enrichData, setEnrichData] = useState1(null);
+
+  const load = useCallback1(async (p, sev) => {
+    setLoading(true);
+    const params = new URLSearchParams({ hours: 24, page: p, page_size: pageSize });
+    if (sev && sev !== 'all') params.set('severity', sev);
+    const data = await API.get(`/api/alerts?${params}`);
+    const items = (data?.items || data?.alerts || []).map(adaptAlert);
+    setAlerts(items);
+    setTotal(data?.total || items.length);
+    if (items.length > 0 && !selected) setSelected(items[0]);
+    setLoading(false);
+  }, [pageSize]);
 
   useEffect1(() => {
-    setLoading(true);
+    setPage(1);
     setSelected(null);
-    const url = sevFilter === 'all'
-      ? '/api/alerts?page=1&page_size=50&hours=24'
-      : `/api/alerts?severity=${sevFilter}&page=1&page_size=50&hours=24`;
-    window.SOC_API.get(url).then(resp => {
-      const raw = resp?.alerts || [];
-      const mapped = raw.map(a => ({
-        id:        a.id,
-        time:      new Date(a.timestamp),
-        agent:     a.agent,
-        srcIp:     a.srcIp,
-        rule:      a.description,
-        mitre:     Array.isArray(a.mitre) ? a.mitre[0] || '' : a.mitre || '',
-        sev:       a.severity,
-        geo:       '',
-        // Keep raw fields for AlertDetail
-        timestamp: a.timestamp,
-        ruleId:    a.ruleId,
-        level:     a.level,
-        agentIp:   a.agentIp,
-        mitreTactic: a.mitreTactic,
-      }));
-      setAlerts(mapped);
-      setTotal(resp?.total || mapped.length);
-      setLoading(false);
-    });
+    load(1, sevFilter);
   }, [sevFilter]);
 
-  // Set selected to first alert after load
-  useEffect1(() => {
-    if (!selected && alerts.length > 0) {
-      setSelected(alerts[0]);
-    }
-  }, [alerts]);
+  const sevCounts = useMemo1(() => {
+    const counts = { all: total, critical: 0, high: 0, medium: 0, low: 0 };
+    alerts.forEach(a => { if (counts[a.sev] !== undefined) counts[a.sev]++; });
+    return counts;
+  }, [alerts, total]);
+
+  const handlePrev = () => { const p = page - 1; setPage(p); load(p, sevFilter); };
+  const handleNext = () => { const p = page + 1; setPage(p); load(p, sevFilter); };
+  const totalPages = Math.ceil(total / pageSize);
 
   return (
     <div className="page" data-screen-label="02 Alerts">
       <Topbar
         title="Alerts"
-        sub="Live feed · SIEM"
+        sub="Live feed · SIEM · last 24h"
         actions={<>
-          <button className="btn btn-ghost"><Icon.refresh width="13" height="13" /> Auto-refresh</button>
-          <button className="btn btn-ghost"><Icon.filter width="13" height="13" /> Saved views</button>
-          <button className="btn btn-primary">Bulk → New case</button>
+          <button className="btn btn-ghost" onClick={() => load(page, sevFilter)}>
+            <Icon.refresh width="13" height="13" /> Refresh
+          </button>
         </>}
       />
       <div className="page-body">
@@ -454,64 +496,60 @@ function PageAlerts() {
               <button key={s} className={`seg-btn ${sevFilter===s?'on':''}`} onClick={()=>setSevFilter(s)}>
                 {s !== 'all' && <SevDot sev={s} size={6} />}
                 {s}
-                <span className="seg-count mono">
-                  {s === 'all' ? alerts.length : alerts.filter(a => a.sev === s).length}
-                </span>
+                <span className="seg-count mono">{sevCounts[s] || 0}</span>
               </button>
             ))}
           </div>
           <div className="alerts-filters">
-            <Chip mono icon={<Icon.filter width="11" height="11" />}>agent: any</Chip>
-            <Chip mono>src.ip: any</Chip>
-            <Chip mono>mitre: any</Chip>
-            <Chip mono>time: 24h</Chip>
-            <button className="btn-icon"><Icon.plus width="13" height="13" /></button>
+            <span className="mono dim" style={{fontSize:11}}>
+              {total.toLocaleString()} total · page {page}/{totalPages || 1}
+            </span>
+            {page > 1 && <button className="btn btn-ghost" style={{padding:'2px 8px'}} onClick={handlePrev}>← Prev</button>}
+            {page < totalPages && <button className="btn btn-ghost" style={{padding:'2px 8px'}} onClick={handleNext}>Next →</button>}
           </div>
         </div>
 
         <div className="alerts-layout">
           <div className="alerts-table-wrap">
-            <table className="alerts-table">
-              <thead>
-                <tr>
-                  <th className="th-sev"></th>
-                  <th>TIME</th>
-                  <th>ALERT ID</th>
-                  <th>RULE</th>
-                  <th>MITRE</th>
-                  <th>AGENT</th>
-                  <th>SRC IP</th>
-                  <th>GEO</th>
-                </tr>
-              </thead>
-              <tbody>
-                {loading ? (
-                  <tr>
-                    <td colSpan="8" className="loading mono" style={{textAlign:'center',padding:'2rem'}}>Loading…</td>
-                  </tr>
-                ) : alerts.length === 0 ? (
-                  <tr>
-                    <td colSpan="8" className="empty mono" style={{textAlign:'center',padding:'2rem'}}>No alerts found</td>
-                  </tr>
-                ) : (
-                  alerts.map((a, idx) => (
-                    <tr key={`${a.id}-${idx}`} className={selected?.id === a.id ? 'sel' : ''} onClick={()=>setSelected(a)}>
-                      <td><span className="sev-bar" data-sev={a.sev} /></td>
-                      <td className="mono dim">{relTime(a.time)}</td>
-                      <td className="mono">{a.id}</td>
-                      <td>{a.rule}</td>
-                      <td className="mono"><a href="#" className="link">{a.mitre}</a></td>
-                      <td className="mono">{a.agent}</td>
-                      <td className="mono">{a.srcIp}</td>
-                      <td className="mono dim">{a.geo}</td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+            {loading
+              ? <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:200}}><Spinner /></div>
+              : alerts.length === 0
+                ? <div style={{padding:32,textAlign:'center',color:'var(--txt-3)'}}>No alerts found</div>
+                : (
+                  <table className="alerts-table">
+                    <thead>
+                      <tr>
+                        <th className="th-sev"></th>
+                        <th>TIME</th>
+                        <th>RULE ID</th>
+                        <th>DESCRIPTION</th>
+                        <th>MITRE</th>
+                        <th>AGENT</th>
+                        <th>SRC IP</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {alerts.map((a, idx) => (
+                        <tr key={`${a.id}-${idx}`}
+                          className={selected?.id === a.id ? 'sel' : ''}
+                          onClick={() => { setSelected(a); setEnrichData(null); }}>
+                          <td><span className="sev-bar" data-sev={a.sev} /></td>
+                          <td className="mono dim">{relTime(a.time)}</td>
+                          <td className="mono">{a.ruleId || '—'}</td>
+                          <td style={{maxWidth:240,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}
+                            title={a.rule}>{a.rule}</td>
+                          <td className="mono">{a.mitre !== '—' ? <span className="link">{a.mitre}</span> : <span className="dim">—</span>}</td>
+                          <td className="mono">{a.agent}</td>
+                          <td className="mono">{a.srcIp}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )
+            }
           </div>
           <aside className="alerts-detail">
-            {selected && <AlertDetail alert={selected} />}
+            {selected && <AlertDetail alert={selected} enrichData={enrichData} setEnrichData={setEnrichData} enriching={enriching} setEnriching={setEnriching} />}
           </aside>
         </div>
       </div>
@@ -519,26 +557,39 @@ function PageAlerts() {
   );
 }
 
-function AlertDetail({ alert }) {
-  const timeStr = (() => {
-    try {
-      return new Date(alert.timestamp).toISOString().slice(0, 19).replace('T', ' ');
-    } catch {
-      return alert.time instanceof Date
-        ? alert.time.toISOString().slice(0, 19).replace('T', ' ')
-        : String(alert.timestamp || '');
+function AlertDetail({ alert, enrichData, setEnrichData, enriching, setEnriching }) {
+  const API = window.SOC_API;
+
+  const enrich = async () => {
+    if (!alert.srcIp || alert.srcIp === '—') return;
+    setEnriching(true);
+    const data = await API.get(`/api/langchain/enrich?ip=${encodeURIComponent(alert.srcIp)}`);
+    setEnrichData(data);
+    setEnriching(false);
+  };
+
+  const createCase = async () => {
+    const res = await API.post('/api/cases', {
+      title: alert.rule,
+      description: `Alert ${alert.id}: ${alert.rule}\nAgent: ${alert.agent}\nSrc IP: ${alert.srcIp}`,
+      severity: alert.sev,
+      source_alert_id: alert.id,
+    });
+    if (res && !res.error) {
+      window.socToast?.({ title: 'Case created', sub: `${res.caseId || res.id} · linked to alert`, tone: 'ok' });
+    } else {
+      window.socToast?.({ title: 'Failed to create case', sub: res?.error || 'Unknown error', tone: 'crit' });
     }
-  })();
+  };
 
   return (
     <div className="detail">
       <div className="detail-head">
         <SevChip sev={alert.sev} />
-        <span className="mono dim">{alert.id}</span>
-        <button className="btn-icon detail-close"><Icon.x width="14" height="14"/></button>
+        <span className="mono dim" style={{fontSize:11}}>{alert.ruleId}</span>
       </div>
       <h2 className="detail-title">{alert.rule}</h2>
-      <div className="detail-time mono">{timeStr} UTC</div>
+      <div className="detail-time mono">{alert.time instanceof Date ? alert.time.toISOString().slice(0,19).replace('T',' ') : alert.time} UTC</div>
 
       <div className="detail-grid">
         <div className="detail-cell">
@@ -547,45 +598,80 @@ function AlertDetail({ alert }) {
         </div>
         <div className="detail-cell">
           <div className="dc-label">MITRE</div>
-          <div className="dc-value mono"><a className="link" href="#">{alert.mitre}</a></div>
+          <div className="dc-value mono">{alert.mitre}</div>
         </div>
         <div className="detail-cell">
           <div className="dc-label">SOURCE IP</div>
           <div className="dc-value mono">{alert.srcIp}</div>
         </div>
         <div className="detail-cell">
-          <div className="dc-label">GEO</div>
-          <div className="dc-value mono">{alert.geo}</div>
+          <div className="dc-label">LEVEL</div>
+          <div className="dc-value mono">{alert.level}</div>
         </div>
-      </div>
-
-      <div className="detail-section">
-        <div className="ds-title">AI verdict <span className="ds-tag">SOCPilots AI</span></div>
-        <div className="ai-verdict">
-          <span className="av-pill">true positive · 96%</span>
-          <p>The base64-encoded PowerShell payload spawned by cmd.exe matches behavior consistent with Cobalt Strike beaconing. Source IP is a known Tor exit. Recommend immediate containment of <span className="mono">{alert.agent}</span>.</p>
-        </div>
-      </div>
-
-      <div className="detail-section">
-        <div className="ds-title">IOC enrichment</div>
-        <div className="ioc-row">
-          <div className="ioc-key mono">{alert.srcIp}</div>
-          <div className="ioc-vals">
-            <Chip mono tone="crit">VT 18/94</Chip>
-            <Chip mono tone="crit">AbuseIPDB 100%</Chip>
-            <Chip mono tone="warn">Tor exit</Chip>
+        {alert.groups && (
+          <div className="detail-cell" style={{gridColumn:'1/-1'}}>
+            <div className="dc-label">GROUPS</div>
+            <div className="dc-value mono" style={{wordBreak:'break-all'}}>
+              {Array.isArray(alert.groups) ? alert.groups.join(', ') : alert.groups}
+            </div>
           </div>
-        </div>
+        )}
       </div>
+
+      {alert.fullLog && (
+        <div className="detail-section">
+          <div className="ds-title">Raw log</div>
+          <pre style={{fontSize:10,background:'var(--bg-0)',padding:8,borderRadius:4,
+            overflowX:'auto',maxHeight:120,whiteSpace:'pre-wrap',wordBreak:'break-all',
+            color:'var(--txt-2)'}}>
+            {typeof alert.fullLog === 'string' ? alert.fullLog : JSON.stringify(alert.fullLog, null, 2)}
+          </pre>
+        </div>
+      )}
+
+      {alert.srcIp && alert.srcIp !== '—' && (
+        <div className="detail-section">
+          <div className="ds-title">
+            IOC enrichment
+            {!enrichData && !enriching && (
+              <button className="btn btn-ghost" style={{marginLeft:8,padding:'2px 8px',fontSize:11}}
+                onClick={enrich}>Enrich IP</button>
+            )}
+            {enriching && <span className="dim" style={{marginLeft:8,fontSize:11}}>Enriching…</span>}
+          </div>
+          {enrichData && (
+            <div className="ioc-row">
+              <div className="ioc-key mono">{alert.srcIp}</div>
+              <div className="ioc-vals">
+                {enrichData.virustotal?.malicious > 0 &&
+                  <Chip mono tone="crit">VT {enrichData.virustotal.malicious}/{enrichData.virustotal.total}</Chip>}
+                {enrichData.abuseipdb?.abuseConfidenceScore > 0 &&
+                  <Chip mono tone={enrichData.abuseipdb.abuseConfidenceScore > 50 ? 'crit' : 'warn'}>
+                    AbuseIPDB {enrichData.abuseipdb.abuseConfidenceScore}%
+                  </Chip>}
+                {enrichData.abuseipdb?.countryCode &&
+                  <Chip mono>{enrichData.abuseipdb.countryCode}</Chip>}
+                {enrichData.abuseipdb?.isp &&
+                  <Chip mono tone="dim">{enrichData.abuseipdb.isp}</Chip>}
+                {enrichData.otx?.pulse_count > 0 &&
+                  <Chip mono tone="warn">OTX {enrichData.otx.pulse_count} pulses</Chip>}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="detail-actions">
-        <button className="btn btn-primary" onClick={() => window.socToast?.({title:'Case created', sub: 'CASE-4473 · linked to ' + alert.id, tone:'ok'})}><Icon.folder width="13" height="13"/> Create case</button>
-        <button className="btn btn-ghost" onClick={() => window.socToast?.({title:'Isolation queued', sub: alert.agent + ' · cordoned in 2.4s', tone:'crit'})}>Isolate agent</button>
-        <button className="btn btn-ghost" onClick={() => window.socToast?.({title:'Alert suppressed', sub: alert.id + ' · 24h', tone:'default'})}>Suppress</button>
+        <button className="btn btn-primary" onClick={createCase}>
+          <Icon.folder width="13" height="13"/> Create case
+        </button>
+        <button className="btn btn-ghost" onClick={() =>
+          window.socToast?.({ title: 'Alert suppressed', sub: `${alert.id} · 24h`, tone: 'default' })}>
+          Suppress
+        </button>
       </div>
     </div>
   );
 }
 
-Object.assign(window, { PageDashboard, PageAlerts, KpiCard });
+Object.assign(window, { PageDashboard, PageAlerts });

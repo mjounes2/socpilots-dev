@@ -58,48 +58,58 @@ function Chip({ children, tone = 'default', mono = false, icon }) {
 
 function Kbd({ children }) { return <kbd className="kbd">{children}</kbd>; }
 
+function Spinner({ size = 24 }) {
+  return (
+    <div style={{
+      width: size, height: size,
+      border: `2px solid var(--ln)`,
+      borderTopColor: 'var(--acc)',
+      borderRadius: '50%',
+      animation: 'spin 0.7s linear infinite',
+    }} />
+  );
+}
+
 // ============= SIDEBAR =============
-function Sidebar({ current, onNav, onLogout }) {
-  const { username, role } = window.SOC_API.user();
-  const initials = (username || 'U').slice(0, 2).toUpperCase();
+function Sidebar({ current, onNav }) {
   const items = [
     { group: 'OVERVIEW', items: [
-      { id: 'dashboard',    label: 'Dashboard',       icon: Icon.grid,    badge: null },
-      { id: 'alerts',       label: 'Alerts',          icon: Icon.bell,    badge: null },
-      { id: 'agents',       label: 'Agents',          icon: Icon.cpu,     badge: null },
-      { id: 'map',          label: 'Live Threat Map', icon: Icon.globe,   badge: null },
-    ]},
-    { group: 'INVESTIGATE', items: [
-      { id: 'hunt',         label: 'Threat Hunt',     icon: Icon.search,  badge: null },
-      { id: 'investigation',label: 'Investigation',   icon: Icon.brain,   badge: null },
-      { id: 'copilot',      label: 'SOCPilots AI',    icon: Icon.spark,   badge: null },
-      { id: 'correlation',  label: 'Correlation',     icon: Icon.share,   badge: null },
-      { id: 'ioc',          label: 'IOC Enrichment',  icon: Icon.target,  badge: null },
-      { id: 'ueba',         label: 'UEBA',            icon: Icon.user,    badge: null },
-    ]},
-    { group: 'RESPOND', items: [
-      { id: 'cases',        label: 'SP-CM Cases',     icon: Icon.folder,  badge: null },
-      { id: 'sp-alerts',    label: 'SP-CM Alerts',    icon: Icon.inbox,   badge: null },
-      { id: 'darksoc',      label: 'Dark SOC',        icon: Icon.alert,   badge: null },
-      { id: 'sla',          label: 'SLA',             icon: Icon.check,   badge: null },
+      { id: 'dashboard',     label: 'Dashboard',          icon: Icon.grid, badge: null },
+      { id: 'alerts',        label: 'Alerts',             icon: Icon.bell, badge: '7' },
+      { id: 'investigation', label: 'Investigations',     icon: Icon.search, badge: null },
+      { id: 'notifications', label: 'Notifications',      icon: Icon.inbox, badge: '3' },
     ]},
     { group: 'DETECT', items: [
-      { id: 'rules',        label: 'Detection Rules', icon: Icon.file,    badge: null },
-      { id: 'mitre',        label: 'ATT&CK Coverage', icon: Icon.shield,  badge: null },
-      { id: 'artifacts',    label: 'Artifacts & IOC', icon: Icon.target,  badge: null },
-      { id: 'log-sources',  label: 'Log Sources',     icon: Icon.arrowUp, badge: null },
+      { id: 'mitre',        label: 'ATT&CK Coverage',    icon: Icon.grid, badge: null },
+      { id: 'rules',        label: 'Detection Rules',     icon: Icon.file, badge: null },
+      { id: 'hunt',         label: 'Threat Hunt',         icon: Icon.search, badge: null },
+      { id: 'log-sources',  label: 'Log Sources',         icon: Icon.share, badge: null },
     ]},
-    { group: 'ASSETS', items: [
-      { id: 'assets',       label: 'Assets',          icon: Icon.cpu,     badge: null },
-      { id: 'vulns',        label: 'Vulnerabilities', icon: Icon.bug,     badge: null },
-      { id: 'evidence',     label: 'Evidence',        icon: Icon.folder,  badge: null },
+    { group: 'INVESTIGATE', items: [
+      { id: 'copilot',      label: 'SOCPilots AI',        icon: Icon.brain, badge: null },
+      { id: 'langchain',    label: 'LangChain Health',    icon: Icon.cpu, badge: null },
+      { id: 'correlation',  label: 'Correlation',         icon: Icon.share, badge: null },
+      { id: 'ioc',          label: 'IOC Enrichment',      icon: Icon.target, badge: null },
     ]},
-    { group: 'PLATFORM', items: [
-      { id: 'users',        label: 'Users',           icon: Icon.user,    badge: null },
-      { id: 'langchain',    label: 'LangChain Agent', icon: Icon.brain,   badge: null },
-      { id: 'reports',      label: 'Reports',         icon: Icon.file,    badge: null },
-      { id: 'notifications',label: 'Notifications',   icon: Icon.bell,    badge: null },
-      { id: 'settings',     label: 'Settings',        icon: Icon.cog,     badge: null },
+    { group: 'ANALYTICS', items: [
+      { id: 'ueba',         label: 'UEBA',                icon: Icon.user, badge: 'NEW' },
+      { id: 'artifacts',    label: 'IOC Store',           icon: Icon.target, badge: null },
+      { id: 'evidence',     label: 'Evidence',            icon: Icon.file, badge: null },
+      { id: 'map',          label: 'Live Threat Map',     icon: Icon.globe, badge: null },
+    ]},
+    { group: 'RESPOND', items: [
+      { id: 'cases',        label: 'SP-CM Cases',         icon: Icon.folder, badge: '23' },
+      { id: 'sp-alerts',    label: 'SP-CM Alerts',        icon: Icon.inbox, badge: null },
+      { id: 'darksoc',      label: 'Dark SOC',            icon: Icon.shield, badge: 'BETA' },
+      { id: 'sla',          label: 'SLA Management',      icon: Icon.cog, badge: null },
+    ]},
+    { group: 'SYSTEM', items: [
+      { id: 'agents',       label: 'Agents',              icon: Icon.cpu, badge: null },
+      { id: 'assets',       label: 'Assets',              icon: Icon.globe, badge: null },
+      { id: 'vulns',        label: 'Vulnerabilities',     icon: Icon.bug, badge: '142' },
+      { id: 'reports',      label: 'Reports',             icon: Icon.file, badge: null },
+      { id: 'users',        label: 'Users',               icon: Icon.user, badge: null },
+      { id: 'settings',     label: 'Settings',            icon: Icon.cog, badge: null },
     ]},
   ];
 
@@ -148,14 +158,14 @@ function Sidebar({ current, onNav, onLogout }) {
           <SevDot sev="low" />
           <div className="sb-status-text">
             <div className="sb-status-label">SIEM · SP-CM · AI</div>
-            <div className="sb-status-sub">all systems nominal</div>
+            <div className="sb-status-sub">all systems nominal · 41ms</div>
           </div>
         </div>
-        <div className="sb-user" style={{cursor:'pointer'}} onClick={onLogout} title="Logout">
-          <div className="sb-avatar">{initials}</div>
+        <div className="sb-user">
+          <div className="sb-avatar">YJ</div>
           <div className="sb-user-text">
-            <div className="sb-user-name">{username || 'user'}</div>
-            <div className="sb-user-role">{role || 'analyst'} · logout</div>
+            <div className="sb-user-name">younes</div>
+            <div className="sb-user-role">analyst · L3</div>
           </div>
         </div>
       </div>
