@@ -211,7 +211,7 @@ function PageUEBA() {
     setPathLoading(true);
     setPathResult(null);
     try {
-      const r = await window.SOC_API.get(`/api/ueba/attack-path?from=${encodeURIComponent(pathFrom.trim())}&to=${encodeURIComponent(pathTo.trim())}`);
+      const r = await window.SOC_API.get(`/api/ueba/path?from=${encodeURIComponent(pathFrom.trim())}&to=${encodeURIComponent(pathTo.trim())}`);
       setPathResult(r && !r.error ? r : { error: r?.error || 'No path found' });
     } catch {
       setPathResult({ error: 'Request failed' });

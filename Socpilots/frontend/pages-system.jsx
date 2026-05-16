@@ -1,32 +1,51 @@
 // Agents · Detection Rules · Vulnerabilities · Reports
-const { useState: useStateS, useMemo: useMemoS } = React;
+const { useState: useStateS, useMemo: useMemoS, useEffect: useEffectS, useRef: useRefS } = React;
 
 // ============= AGENTS =============
-const AGENTS = [
-  { id: '003', name: 'web-prod-01',  os: 'Ubuntu 22.04', ver: '4.7.5', ip: '10.0.4.122', last: '2s',   alerts: 412, status: 'active',   group: 'web',     cpu: 32, mem: 68 },
-  { id: '004', name: 'web-prod-02',  os: 'Ubuntu 22.04', ver: '4.7.5', ip: '10.0.4.123', last: '4s',   alerts: 87,  status: 'active',   group: 'web',     cpu: 24, mem: 51 },
-  { id: '007', name: 'db-primary',   os: 'Debian 12',    ver: '4.7.5', ip: '10.0.4.18',  last: '12s',  alerts: 287, status: 'active',   group: 'data',    cpu: 71, mem: 84 },
-  { id: '008', name: 'db-replica',   os: 'Debian 12',    ver: '4.7.4', ip: '10.0.4.19',  last: '8s',   alerts: 4,   status: 'active',   group: 'data',    cpu: 48, mem: 62 },
-  { id: '011', name: 'win-dc-01',    os: 'Win Srv 2022', ver: '4.7.5', ip: '10.0.4.45',  last: '4s',   alerts: 198, status: 'active',   group: 'identity',cpu: 38, mem: 71 },
-  { id: '012', name: 'win-dc-02',    os: 'Win Srv 2022', ver: '4.7.5', ip: '10.0.4.46',  last: '6s',   alerts: 12,  status: 'active',   group: 'identity',cpu: 22, mem: 48 },
-  { id: '015', name: 'mail-gw-01',   os: 'Rocky 9',      ver: '4.7.5', ip: '10.0.4.7',   last: '1m',   alerts: 154, status: 'active',   group: 'edge',    cpu: 41, mem: 56 },
-  { id: '022', name: 'jump-host',    os: 'Ubuntu 22.04', ver: '4.7.5', ip: '10.0.4.99',  last: '3s',   alerts: 89,  status: 'active',   group: 'access',  cpu: 18, mem: 34 },
-  { id: '023', name: 'jump-host-2',  os: 'Ubuntu 22.04', ver: '4.7.3', ip: '10.0.4.100', last: '11s',  alerts: 3,   status: 'active',   group: 'access',  cpu: 12, mem: 28 },
-  { id: '028', name: 'k8s-worker-3', os: 'Talos 1.6',    ver: '4.7.5', ip: '10.0.5.13',  last: '4h',   alerts: 0,   status: 'offline',  group: 'platform',cpu: 0,  mem: 0  },
-  { id: '029', name: 'k8s-worker-1', os: 'Talos 1.6',    ver: '4.7.5', ip: '10.0.5.11',  last: '3s',   alerts: 18,  status: 'active',   group: 'platform',cpu: 67, mem: 79 },
-  { id: '030', name: 'k8s-worker-2', os: 'Talos 1.6',    ver: '4.7.5', ip: '10.0.5.12',  last: '5s',   alerts: 7,   status: 'active',   group: 'platform',cpu: 58, mem: 72 },
-  { id: '034', name: 'macbook-yj',   os: 'macOS 14.4',   ver: '4.7.4', ip: '10.0.8.41',  last: '2m',   alerts: 2,   status: 'active',   group: 'endpoint',cpu: 8,  mem: 41 },
-  { id: '041', name: 'lab-vm-01',    os: 'Kali 2024.2',  ver: '4.7.2', ip: '10.0.9.5',   last: '1d',   alerts: 0,   status: 'offline',  group: 'lab',     cpu: 0,  mem: 0  },
-];
+function fmtLastSeen(ts) {
+  if (!ts) return '—';
+  const s = Math.round((Date.now() - new Date(ts).getTime()) / 1000);
+  if (s < 60)  return `${s}s ago`;
+  const m = Math.round(s / 60);
+  if (m < 60)  return `${m}m ago`;
+  const h = Math.round(m / 60);
+  if (h < 24)  return `${h}h ago`;
+  return `${Math.round(h / 24)}d ago`;
+}
 
 function PageAgents() {
-  const [filter, setFilter] = useStateS('all');
+  const [agents, setAgents]   = useStateS([]);
+  const [loading, setLoading] = useStateS(true);
+  const [error, setError]     = useStateS(null);
+  const [filter, setFilter]   = useStateS('all');
+  const [search, setSearch]   = useStateS('');
+
+  useEffectS(() => { load(); }, []);
+
+  async function load() {
+    setLoading(true);
+    const d = await window.SOC_API.get('/api/agents');
+    if (!d || d.error) { setError(d?.error || 'SIEM unavailable'); setLoading(false); return; }
+    setAgents(d.agents || []);
+    setLoading(false);
+  }
+
+  const groups = ['all', ...Array.from(new Set(agents.map(a => a.group || 'default').filter(Boolean)))];
   const [group, setGroup] = useStateS('all');
-  const groups = ['all', ...Array.from(new Set(AGENTS.map(a => a.group)))];
-  const filtered = AGENTS.filter(a => (filter === 'all' || a.status === filter) && (group === 'all' || a.group === group));
-  const active = AGENTS.filter(a => a.status === 'active').length;
-  const offline = AGENTS.filter(a => a.status === 'offline').length;
-  const outdated = AGENTS.filter(a => a.ver !== '4.7.5').length;
+
+  const filtered = agents.filter(a => {
+    if (filter !== 'all' && a.status !== filter) return false;
+    if (group !== 'all' && (a.group || 'default') !== group) return false;
+    if (search) {
+      const q = search.toLowerCase();
+      if (!(a.name || '').toLowerCase().includes(q) && !(a.ip || '').includes(q)) return false;
+    }
+    return true;
+  });
+
+  const active   = agents.filter(a => a.status === 'active').length;
+  const offline  = agents.filter(a => a.status !== 'active').length;
+  const outdated = agents.filter(a => a.version && a.version !== agents[0]?.version).length;
 
   return (
     <div className="page" data-screen-label="08 Agents">
@@ -34,65 +53,73 @@ function PageAgents() {
         title="Agents"
         sub="Wazuh monitored endpoints"
         actions={<>
-          <button className="btn btn-ghost"><Icon.refresh width="13" height="13"/> Sync</button>
+          <button className="btn btn-ghost" onClick={load}><Icon.refresh width="13" height="13"/> Sync</button>
           <button className="btn btn-ghost">Export CSV</button>
-          <button className="btn btn-primary"><Icon.plus width="13" height="13"/> Enroll agent</button>
         </>}
       />
       <div className="page-body">
-        <div className="kpi-grid" style={{gridTemplateColumns:'repeat(4,1fr)'}}>
-          <KpiCard label="Total agents" value={AGENTS.length} sub="across 7 groups"/>
-          <KpiCard label="Active" value={active} sub="last seen ≤ 1m" />
-          <KpiCard label="Offline" value={offline} sub="> 6h silent" sev={offline > 0 ? 'critical' : undefined} />
-          <KpiCard label="Outdated" value={outdated} sub="needs update to 4.7.5" />
+        <div className="kpi-grid" style={{ gridTemplateColumns: 'repeat(4,1fr)' }}>
+          <KpiCard label="Total agents"  value={agents.length} sub="enrolled in SIEM"/>
+          <KpiCard label="Active"        value={active}        sub="reporting now"/>
+          <KpiCard label="Offline"       value={offline}       sub="silent > threshold" sev={offline > 0 ? 'critical' : undefined}/>
+          <KpiCard label="Outdated"      value={outdated}      sub="version mismatch"/>
         </div>
 
-        <Card title="Endpoints" sub={`${filtered.length} of ${AGENTS.length}`}
+        <Card title="Endpoints" sub={`${filtered.length} of ${agents.length}`}
           actions={<>
+            <input className="mono" placeholder="Search name or IP…" value={search}
+              onChange={e => setSearch(e.target.value)} style={{ width: 180, fontSize: 11 }}/>
             <div className="seg">
-              {['all','active','offline'].map(s => (
-                <button key={s} className={`seg-btn ${filter===s?'on':''}`} onClick={()=>setFilter(s)}>
-                  {s !== 'all' && <SevDot sev={s==='active'?'low':'offline'} size={6}/>}
+              {['all','active','disconnected'].map(s => (
+                <button key={s} className={`seg-btn ${filter===s?'on':''}`} onClick={() => setFilter(s)}>
+                  {s !== 'all' && <SevDot sev={s==='active'?'low':'critical'} size={6}/>}
                   {s}
                 </button>
               ))}
             </div>
-            <select className="select-mini mono" value={group} onChange={e=>setGroup(e.target.value)}>
+            <select className="select-mini mono" value={group} onChange={e => setGroup(e.target.value)}>
               {groups.map(g => <option key={g} value={g}>group: {g}</option>)}
             </select>
           </>}>
-          <table className="data-table">
-            <thead><tr>
-              <th style={{width:8}}></th>
-              <th style={{width:50}}>ID</th>
-              <th>NAME</th>
-              <th>OS</th>
-              <th>VERSION</th>
-              <th>IP</th>
-              <th>LAST SEEN</th>
-              <th>CPU</th>
-              <th>MEM</th>
-              <th>ALERTS 24H</th>
-              <th></th>
-            </tr></thead>
-            <tbody>
-              {filtered.map(a => (
-                <tr key={a.id}>
-                  <td><span className="sev-bar" data-sev={a.status==='active'?'low':'offline'} style={{height:18}}/></td>
-                  <td className="mono dim">#{a.id}</td>
-                  <td className="mono">{a.name}</td>
-                  <td>{a.os}</td>
-                  <td className="mono dim">{a.ver}{a.ver!=='4.7.5' && <span className="ver-warn">↑</span>}</td>
-                  <td className="mono">{a.ip}</td>
-                  <td className="mono dim">{a.last}</td>
-                  <td><MiniGauge value={a.cpu}/></td>
-                  <td><MiniGauge value={a.mem}/></td>
-                  <td className="mono">{a.alerts}</td>
-                  <td><button className="btn-icon" onClick={() => window.socToast?.({title:'Agent action', sub:a.name+' · isolated', tone:'crit'})}><Icon.chevron width="12" height="12"/></button></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          {loading && <div className="empty mono">Loading from SIEM…</div>}
+          {error   && <div className="empty mono" style={{ color: 'var(--red)' }}>{error}</div>}
+          {!loading && !error && (
+            <table className="data-table">
+              <thead><tr>
+                <th style={{ width: 8 }}></th>
+                <th style={{ width: 50 }}>ID</th>
+                <th>NAME</th>
+                <th>OS</th>
+                <th>VERSION</th>
+                <th>IP</th>
+                <th>LAST SEEN</th>
+                <th>ALERTS 24H</th>
+                <th></th>
+              </tr></thead>
+              <tbody>
+                {filtered.length === 0 && (
+                  <tr><td colSpan="9" className="empty mono">No agents match</td></tr>
+                )}
+                {filtered.map(a => (
+                  <tr key={a.id}>
+                    <td><span className="sev-bar" data-sev={a.status==='active'?'low':'critical'} style={{ height: 18 }}/></td>
+                    <td className="mono dim">#{a.id}</td>
+                    <td className="mono">{a.name}</td>
+                    <td className="dim">{a.os || '—'}</td>
+                    <td className="mono dim">{a.version || '—'}</td>
+                    <td className="mono">{a.ip || '—'}</td>
+                    <td className="mono dim">{fmtLastSeen(a.lastSeen)}</td>
+                    <td className="mono">{(a.alertCount || 0).toLocaleString()}</td>
+                    <td>
+                      <button className="btn-icon" onClick={() => window.socToast?.({ title: 'Agent detail', sub: a.name, tone: 'default' })}>
+                        <Icon.chevron width="12" height="12"/>
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </Card>
       </div>
     </div>
@@ -111,32 +138,83 @@ function MiniGauge({ value }) {
 }
 
 // ============= DETECTION RULES =============
-const RULES = [
-  { id: '92653', level: 13, name: 'Suspicious PowerShell execution',          tactic: 'Execution',         technique: 'T1059.001', triggered: 156, enabled: true,  category: 'windows', custom: false },
-  { id: '5710',  level: 10, name: 'Multiple authentication failures',          tactic: 'Credential Access',technique: 'T1110',     triggered: 284, enabled: true,  category: 'auth',    custom: false },
-  { id: '31151', level: 12, name: 'Web exploit attempt — SQL injection',       tactic: 'Initial Access',    technique: 'T1190',     triggered: 142, enabled: true,  category: 'web',     custom: false },
-  { id: '40111', level: 14, name: 'Process injection detected',                tactic: 'Defense Evasion',   technique: 'T1055',     triggered: 76,  enabled: true,  category: 'edr',     custom: false },
-  { id: '60106', level: 12, name: 'Windows audit log cleared',                 tactic: 'Defense Evasion',   technique: 'T1070.001', triggered: 41,  enabled: true,  category: 'windows', custom: false },
-  { id: '11302', level: 8,  name: 'Remote Desktop session opened',             tactic: 'Lateral Movement',  technique: 'T1021.001', triggered: 38,  enabled: true,  category: 'auth',    custom: false },
-  { id: '92900', level: 12, name: 'Kerberoasting attempt',                     tactic: 'Credential Access',technique: 'T1558.003', triggered: 8,   enabled: true,  category: 'ad',      custom: true  },
-  { id: '60103', level: 11, name: 'Credential dumping (LSASS access)',         tactic: 'Credential Access',technique: 'T1003.001', triggered: 12,  enabled: true,  category: 'edr',     custom: false },
-  { id: '92805', level: 13, name: 'Cobalt Strike beacon hash match',           tactic: 'Command & Control', technique: 'T1071',     triggered: 4,   enabled: true,  category: 'threat',  custom: true  },
-  { id: '5503',  level: 3,  name: 'PAM: user login session opened',            tactic: 'Initial Access',    technique: 'T1078',     triggered: 98,  enabled: false, category: 'auth',    custom: false },
-  { id: '92107', level: 9,  name: 'Outbound to Tor exit node',                 tactic: 'Command & Control', technique: 'T1090.003', triggered: 31,  enabled: true,  category: 'net',     custom: true  },
-  { id: '92450', level: 11, name: 'Scheduled task created — suspicious path',  tactic: 'Persistence',       technique: 'T1053.005', triggered: 14,  enabled: true,  category: 'windows', custom: false },
-];
-const TACTICS = ['all','Initial Access','Execution','Persistence','Privilege Escalation','Defense Evasion','Credential Access','Discovery','Lateral Movement','Command & Control','Exfiltration'];
+function sevFromLevel(l) {
+  if (l >= 12) return 'critical';
+  if (l >= 10) return 'high';
+  if (l >= 7)  return 'medium';
+  return 'low';
+}
+
+function actBadge(lastSeen) {
+  if (!lastSeen) return null;
+  const d = Date.now() - lastSeen;
+  if (d < 86400000)  return { label: '24h',    tone: 'ok' };
+  if (d < 604800000) return { label: '7d',     tone: 'warn' };
+  return                    { label: 'DORMANT', tone: 'dim' };
+}
 
 function PageRules() {
-  const [tactic, setTactic] = useStateS('all');
-  const [search, setSearch] = useStateS('');
-  const [enabled, setEnabled] = useStateS(RULES.reduce((a,r) => ({...a, [r.id]: r.enabled}), {}));
-  const filtered = RULES.filter(r =>
-    (tactic === 'all' || r.tactic === tactic) &&
-    (!search || (r.name + r.technique + r.id).toLowerCase().includes(search.toLowerCase()))
-  );
-  const totalEnabled = Object.values(enabled).filter(Boolean).length;
-  const custom = RULES.filter(r => r.custom).length;
+  const [rules, setRules]       = useStateS([]);
+  const [filtered, setFiltered] = useStateS([]);
+  const [loading, setLoading]   = useStateS(true);
+  const [error, setError]       = useStateS(null);
+  const [page, setPage]         = useStateS(1);
+  const [search, setSearch]     = useStateS('');
+  const [fSev, setFSev]         = useStateS('');
+  const [fAct, setFAct]         = useStateS('');
+  const [fMitre, setFMitre]     = useStateS('');
+  const [fDecoder, setFDecoder] = useStateS('');
+  const [sortBy, setSortBy]     = useStateS('count_desc');
+  const searchTimer             = useRefS(null);
+  const PAGE_SIZE = 50;
+
+  useEffectS(() => { load(); }, []);
+  useEffectS(() => { applyFilters(); }, [rules, search, fSev, fAct, fMitre, fDecoder, sortBy]);
+
+  async function load() {
+    setLoading(true);
+    const d = await window.SOC_API.get('/api/rules');
+    if (!d || d.error) { setError(d?.error || 'SIEM unavailable'); setLoading(false); return; }
+    setRules(d.rules || []);
+    setLoading(false);
+  }
+
+  function applyFilters() {
+    const now = Date.now();
+    const q = search.toLowerCase().trim();
+    let out = rules.filter(r => {
+      if (q && !`${r.id} ${r.description} ${(r.groups||[]).join(' ')} ${(r.mitre||[]).join(' ')} ${r.decoder||''}`.toLowerCase().includes(q)) return false;
+      if (fSev && r.severity !== fSev) return false;
+      if (fMitre && !(r.mitre||[]).includes(fMitre)) return false;
+      if (fDecoder && r.decoder !== fDecoder) return false;
+      if (fAct) {
+        const ls = r.last_seen || 0;
+        if (fAct === '24h'    && now - ls >= 86400000)  return false;
+        if (fAct === '7d'     && now - ls >= 604800000) return false;
+        if (fAct === 'dormant'&& now - ls < 604800000)  return false;
+      }
+      return true;
+    });
+    if (sortBy === 'count_asc')      out.sort((a,b) => a.count - b.count);
+    else if (sortBy === 'sev_desc')  out.sort((a,b) => b.level - a.level);
+    else if (sortBy === 'sev_asc')   out.sort((a,b) => a.level - b.level);
+    else if (sortBy === 'alpha')     out.sort((a,b) => (a.description||'').localeCompare(b.description||''));
+    else if (sortBy === 'recent')    out.sort((a,b) => (b.last_seen||0) - (a.last_seen||0));
+    else                             out.sort((a,b) => b.count - a.count);
+    setFiltered(out);
+    setPage(1);
+  }
+
+  const mitreSet   = useMemoS(() => [...new Set(rules.flatMap(r => r.mitre||[]))].sort(), [rules]);
+  const decoderSet = useMemoS(() => [...new Set(rules.map(r => r.decoder).filter(Boolean))].sort(), [rules]);
+
+  const crit    = rules.filter(r => r.severity === 'critical').length;
+  const high    = rules.filter(r => r.severity === 'high').length;
+  const now2    = Date.now();
+  const active24= rules.filter(r => r.last_seen && now2 - r.last_seen < 86400000).length;
+  const mitreMapped = rules.filter(r => (r.mitre||[]).length > 0).length;
+
+  const pageSlice = filtered.slice((page-1)*PAGE_SIZE, page*PAGE_SIZE);
 
   return (
     <div className="page" data-screen-label="09 Detection Rules">
@@ -144,65 +222,101 @@ function PageRules() {
         title="Detection Rules"
         sub="Active ruleset · MITRE ATT&CK mapped"
         actions={<>
-          <button className="btn btn-ghost">Import</button>
-          <button className="btn btn-ghost">Export</button>
-          <button className="btn btn-primary"><Icon.plus width="13" height="13"/> New rule</button>
+          <button className="btn btn-ghost" onClick={load}><Icon.refresh width="13" height="13"/> Refresh</button>
         </>}
       />
       <div className="page-body">
-        <div className="kpi-grid" style={{gridTemplateColumns:'repeat(4,1fr)'}}>
-          <KpiCard label="Total rules" value={RULES.length} sub="loaded from ruleset" />
-          <KpiCard label="Enabled" value={totalEnabled} sub={`${RULES.length - totalEnabled} disabled`} />
-          <KpiCard label="Custom" value={custom} sub="tuned for this env" />
-          <KpiCard label="Triggered (24h)" value={RULES.reduce((a,r)=>a+r.triggered,0).toLocaleString()} sub="across all rules" />
+        <div className="kpi-grid" style={{ gridTemplateColumns: 'repeat(5,1fr)' }}>
+          <KpiCard label="Total rules"   value={rules.length}   sub="from SIEM ruleset"/>
+          <KpiCard label="Critical"      value={crit}           sub="level ≥ 12" sev="critical"/>
+          <KpiCard label="High"          value={high}           sub="level 10–11"/>
+          <KpiCard label="Active (24h)"  value={active24}       sub="fired in last 24h"/>
+          <KpiCard label="MITRE mapped"  value={mitreMapped}    sub="ATT&CK technique"/>
         </div>
 
-        <Card title="Ruleset" sub={`${filtered.length} of ${RULES.length} rules`}
+        <Card title="Ruleset" sub={`${filtered.length} of ${rules.length} rules`}
           actions={<>
-            <div className="tb-search rules-search">
-              <Icon.search width="13" height="13"/>
-              <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="search id, name, MITRE…"/>
-            </div>
+            <input className="mono" placeholder="Search ID, name, MITRE…" value={search}
+              onChange={e => { setSearch(e.target.value); clearTimeout(searchTimer.current); searchTimer.current = setTimeout(() => {}, 250); }}
+              style={{ width: 220, fontSize: 11 }}/>
+            <select className="select-mini mono" value={fSev} onChange={e => setFSev(e.target.value)}>
+              <option value="">All severity</option>
+              {['critical','high','medium','low'].map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+            <select className="select-mini mono" value={fAct} onChange={e => setFAct(e.target.value)}>
+              <option value="">All activity</option>
+              <option value="24h">Active 24h</option>
+              <option value="7d">Active 7d</option>
+              <option value="dormant">Dormant</option>
+            </select>
+            <select className="select-mini mono" value={fMitre} onChange={e => setFMitre(e.target.value)}>
+              <option value="">All MITRE</option>
+              {mitreSet.map(m => <option key={m} value={m}>{m}</option>)}
+            </select>
+            <select className="select-mini mono" value={fDecoder} onChange={e => setFDecoder(e.target.value)}>
+              <option value="">All decoders</option>
+              {decoderSet.map(d => <option key={d} value={d}>{d}</option>)}
+            </select>
+            <select className="select-mini mono" value={sortBy} onChange={e => setSortBy(e.target.value)}>
+              <option value="count_desc">Sort: Most fires</option>
+              <option value="count_asc">Sort: Least fires</option>
+              <option value="sev_desc">Sort: Severity ↓</option>
+              <option value="sev_asc">Sort: Severity ↑</option>
+              <option value="recent">Sort: Recently seen</option>
+              <option value="alpha">Sort: A–Z</option>
+            </select>
           </>}>
-          <div className="tactic-pills">
-            {TACTICS.map(tc => (
-              <button key={tc} className={`tactic-pill ${tactic===tc?'on':''}`} onClick={()=>setTactic(tc)}>
-                {tc === 'all' ? 'all tactics' : tc}
-                {tactic === tc && <span className="tp-count mono">{filtered.length}</span>}
-              </button>
-            ))}
-          </div>
-          <table className="data-table">
-            <thead><tr>
-              <th style={{width:60}}>ID</th>
-              <th style={{width:60}}>LEVEL</th>
-              <th>NAME</th>
-              <th>TACTIC</th>
-              <th>TECHNIQUE</th>
-              <th style={{width:120}}>TRIGGERED 24H</th>
-              <th style={{width:80}}>STATUS</th>
-            </tr></thead>
-            <tbody>
-              {filtered.map(r => (
-                <tr key={r.id}>
-                  <td className="mono dim">{r.id}{r.custom && <span className="custom-badge mono">⊕</span>}</td>
-                  <td><LevelChip level={r.level}/></td>
-                  <td>{r.name}</td>
-                  <td className="dim">{r.tactic}</td>
-                  <td className="mono"><a href="#" className="link">{r.technique}</a></td>
-                  <td><div className="bar-wrap"><div className="bar" data-sev={r.level>=12?'critical':r.level>=10?'high':r.level>=7?'medium':'low'} style={{width:`${Math.min(100,r.triggered/3)}%`}}/><span className="bar-val mono">{r.triggered}</span></div></td>
-                  <td>
-                    <button
-                      className={`toggle ${enabled[r.id]?'on':''}`}
-                      onClick={() => { setEnabled(e => ({...e, [r.id]: !e[r.id]})); window.socToast?.({title: enabled[r.id] ? 'Rule disabled' : 'Rule enabled', sub: r.id + ' · ' + r.name, tone: enabled[r.id]?'default':'ok'}); }}
-                    >
-                      <span className="toggle-thumb"/>
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          {loading && <div className="empty mono">Loading from SIEM…</div>}
+          {error   && <div className="empty mono" style={{ color: 'var(--red)' }}>{error}</div>}
+          {!loading && !error && (
+            <>
+              <table className="data-table">
+                <thead><tr>
+                  <th style={{ width: 70 }}>ID</th>
+                  <th style={{ width: 60 }}>LEVEL</th>
+                  <th>DESCRIPTION</th>
+                  <th>GROUPS</th>
+                  <th>MITRE</th>
+                  <th>DECODER</th>
+                  <th style={{ width: 70 }}>ACTIVITY</th>
+                  <th style={{ width: 80 }}>FIRES</th>
+                </tr></thead>
+                <tbody>
+                  {pageSlice.length === 0 && <tr><td colSpan="8" className="empty mono">No rules match filters</td></tr>}
+                  {pageSlice.map(r => {
+                    const act = actBadge(r.last_seen);
+                    return (
+                      <tr key={r.id}>
+                        <td className="mono" style={{ color: 'var(--acc)' }}>{r.id}</td>
+                        <td><LevelChip level={r.level}/></td>
+                        <td style={{ maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.description}>{r.description}</td>
+                        <td style={{ maxWidth: 160 }}>
+                          {(Array.isArray(r.groups) ? r.groups : [r.groups]).filter(Boolean).slice(0,3).map(g => (
+                            <span key={g} className="mono dim" style={{ fontSize: 9, background: 'var(--b1)', padding: '1px 5px', borderRadius: 3, marginRight: 2 }}>{g}</span>
+                          ))}
+                        </td>
+                        <td>
+                          {(Array.isArray(r.mitre) ? r.mitre : [r.mitre]).filter(Boolean).slice(0,2).map(m => (
+                            <Chip key={m} mono>{m}</Chip>
+                          ))}
+                        </td>
+                        <td className="mono dim">{r.decoder || '—'}</td>
+                        <td>{act ? <Chip mono tone={act.tone}>{act.label}</Chip> : <span className="mono dim">—</span>}</td>
+                        <td className="mono" style={{ color: 'var(--acc)' }}>{(r.count || 0).toLocaleString()}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+              {filtered.length > PAGE_SIZE && (
+                <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginTop: 12 }}>
+                  <button className="btn btn-ghost btn-sm" disabled={page <= 1} onClick={() => setPage(p => p-1)}>← Prev</button>
+                  <span className="mono dim" style={{ lineHeight: '28px' }}>Page {page} / {Math.ceil(filtered.length / PAGE_SIZE)}</span>
+                  <button className="btn btn-ghost btn-sm" disabled={page * PAGE_SIZE >= filtered.length} onClick={() => setPage(p => p+1)}>Next →</button>
+                </div>
+              )}
+            </>
+          )}
         </Card>
       </div>
     </div>

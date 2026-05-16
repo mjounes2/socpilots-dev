@@ -1,30 +1,79 @@
-// Live Threat Map — real GeoJSON, animated arcs
+// Live Threat Map — real GeoJSON, animated arcs, live top-IPs from API
 const { useState: useM_, useEffect: useME, useRef: useMR, useMemo: useMM } = React;
 
-// Extra attack-origin events (more variety than the dashboard subset)
-const MAP_ORIGINS_SEED = [
-  { lng: 37.6,   lat: 55.7,  count: 47, country: 'RU', city: 'Moscow',     sev: 'critical' },
-  { lng: 116.4,  lat: 39.9,  count: 38, country: 'CN', city: 'Beijing',    sev: 'critical' },
-  { lng: 51.4,   lat: 35.7,  count: 22, country: 'IR', city: 'Tehran',     sev: 'high' },
-  { lng: 4.9,    lat: 52.4,  count: 18, country: 'NL', city: 'Amsterdam',  sev: 'high' },
-  { lng: -3.7,   lat: 40.4,  count: 14, country: 'ES', city: 'Madrid',     sev: 'medium' },
-  { lng: 127.0,  lat: 37.5,  count: 11, country: 'KR', city: 'Seoul',      sev: 'medium' },
-  { lng: 121.5,  lat: 25.0,  count: 9,  country: 'TW', city: 'Taipei',     sev: 'medium' },
-  { lng: -99.1,  lat: 19.4,  count: 7,  country: 'MX', city: 'Mexico City',sev: 'low' },
-  { lng: -46.6,  lat: -23.5, count: 5,  country: 'BR', city: 'São Paulo',  sev: 'low' },
-  { lng: 77.2,   lat: 28.6,  count: 4,  country: 'IN', city: 'New Delhi',  sev: 'low' },
-  { lng: 28.9,   lat: 41.0,  count: 4,  country: 'TR', city: 'Istanbul',   sev: 'low' },
-  { lng: 25.3,   lat: 54.7,  count: 3,  country: 'LT', city: 'Vilnius',    sev: 'low' },
-  { lng: 30.5,   lat: 50.5,  count: 21, country: 'UA', city: 'Kyiv',       sev: 'high' },
-  { lng: 105.8,  lat: 21.0,  count: 8,  country: 'VN', city: 'Hanoi',      sev: 'medium' },
-  { lng: -74.0,  lat: 40.7,  count: 12, country: 'US', city: 'New York',   sev: 'medium' },
-  { lng: 13.4,   lat: 52.5,  count: 7,  country: 'DE', city: 'Berlin',     sev: 'low' },
-];
+// Geo heuristic: map first octet ranges to approximate lat/lng + country
+function geoHeuristic(ip) {
+  const first = parseInt((ip || '').split('.')[0]) || 0;
+  const GEO_TABLE = [
+    { range: [1,  9],   lng: 116.4, lat: 39.9,  country: 'CN', city: 'Beijing'    },
+    { range: [14,14],   lng: 139.7, lat: 35.7,  country: 'JP', city: 'Tokyo'      },
+    { range: [23,23],   lng: -77.0, lat: 38.9,  country: 'US', city: 'Virginia'   },
+    { range: [27,27],   lng: 116.4, lat: 39.9,  country: 'CN', city: 'Beijing'    },
+    { range: [31,31],   lng: 37.6,  lat: 55.7,  country: 'RU', city: 'Moscow'     },
+    { range: [36,36],   lng: 116.4, lat: 39.9,  country: 'CN', city: 'Beijing'    },
+    { range: [37,37],   lng: 37.6,  lat: 55.7,  country: 'RU', city: 'Moscow'     },
+    { range: [43,43],   lng: 139.7, lat: 35.7,  country: 'JP', city: 'Tokyo'      },
+    { range: [45,45],   lng: -77.0, lat: 38.9,  country: 'US', city: 'Ashburn'    },
+    { range: [46,46],   lng: 37.6,  lat: 55.7,  country: 'RU', city: 'Moscow'     },
+    { range: [51,51],   lng: 4.9,   lat: 52.4,  country: 'NL', city: 'Amsterdam'  },
+    { range: [52,52],   lng: -77.0, lat: 38.9,  country: 'US', city: 'Virginia'   },
+    { range: [54,54],   lng: -122.3,lat: 47.6,  country: 'US', city: 'Seattle'    },
+    { range: [58,60],   lng: 116.4, lat: 39.9,  country: 'CN', city: 'Beijing'    },
+    { range: [77,79],   lng: 25.0,  lat: 60.2,  country: 'FI', city: 'Helsinki'   },
+    { range: [80,80],   lng: 4.9,   lat: 52.4,  country: 'NL', city: 'Amsterdam'  },
+    { range: [81,81],   lng: 13.4,  lat: 52.5,  country: 'DE', city: 'Berlin'     },
+    { range: [83,83],   lng: 2.3,   lat: 48.9,  country: 'FR', city: 'Paris'      },
+    { range: [84,85],   lng: 13.4,  lat: 52.5,  country: 'DE', city: 'Frankfurt'  },
+    { range: [86,86],   lng: 37.6,  lat: 55.7,  country: 'RU', city: 'Moscow'     },
+    { range: [91,91],   lng: 37.6,  lat: 55.7,  country: 'RU', city: 'Moscow'     },
+    { range: [92,93],   lng: 4.9,   lat: 52.4,  country: 'NL', city: 'Amsterdam'  },
+    { range: [94,95],   lng: 4.9,   lat: 52.4,  country: 'NL', city: 'Amsterdam'  },
+    { range: [103,103], lng: 103.8, lat: 1.4,   country: 'SG', city: 'Singapore'  },
+    { range: [104,104], lng: -94.6, lat: 38.9,  country: 'US', city: 'Kansas'     },
+    { range: [107,107], lng: 116.4, lat: 39.9,  country: 'CN', city: 'Beijing'    },
+    { range: [110,112], lng: 116.4, lat: 39.9,  country: 'CN', city: 'Beijing'    },
+    { range: [117,117], lng: 116.4, lat: 39.9,  country: 'CN', city: 'Beijing'    },
+    { range: [118,118], lng: 116.4, lat: 39.9,  country: 'CN', city: 'Beijing'    },
+    { range: [120,120], lng: 116.4, lat: 39.9,  country: 'CN', city: 'Beijing'    },
+    { range: [121,121], lng: 121.5, lat: 25.0,  country: 'TW', city: 'Taipei'     },
+    { range: [122,125], lng: 116.4, lat: 39.9,  country: 'CN', city: 'Beijing'    },
+    { range: [138,138], lng: 151.2, lat: -33.8, country: 'AU', city: 'Sydney'     },
+    { range: [140,140], lng: 139.7, lat: 35.7,  country: 'JP', city: 'Tokyo'      },
+    { range: [149,149], lng: 37.6,  lat: 55.7,  country: 'RU', city: 'Moscow'     },
+    { range: [159,159], lng: 37.6,  lat: 55.7,  country: 'RU', city: 'Moscow'     },
+    { range: [162,163], lng: 4.9,   lat: 52.4,  country: 'NL', city: 'Amsterdam'  },
+    { range: [176,176], lng: 37.6,  lat: 55.7,  country: 'RU', city: 'Moscow'     },
+    { range: [178,179], lng: 37.6,  lat: 55.7,  country: 'RU', city: 'Moscow'     },
+    { range: [180,180], lng: 37.6,  lat: 55.7,  country: 'RU', city: 'Moscow'     },
+    { range: [181,181], lng: -46.6, lat: -23.5, country: 'BR', city: 'São Paulo'  },
+    { range: [182,183], lng: 116.4, lat: 39.9,  country: 'CN', city: 'Beijing'    },
+    { range: [185,185], lng: 4.9,   lat: 52.4,  country: 'NL', city: 'Amsterdam'  },
+    { range: [186,191], lng: -46.6, lat: -23.5, country: 'BR', city: 'São Paulo'  },
+    { range: [193,195], lng: 4.9,   lat: 52.4,  country: 'NL', city: 'Amsterdam'  },
+    { range: [196,197], lng: 28.0,  lat: -26.2, country: 'ZA', city: 'Jo\'burg'  },
+    { range: [200,201], lng: -46.6, lat: -23.5, country: 'BR', city: 'São Paulo'  },
+    { range: [202,203], lng: 116.4, lat: 39.9,  country: 'CN', city: 'Beijing'    },
+    { range: [210,211], lng: 116.4, lat: 39.9,  country: 'CN', city: 'Beijing'    },
+    { range: [213,213], lng: 51.4,  lat: 35.7,  country: 'IR', city: 'Tehran'     },
+    { range: [216,216], lng: -77.0, lat: 38.9,  country: 'US', city: 'Virginia'   },
+    { range: [217,217], lng: 30.5,  lat: 50.5,  country: 'UA', city: 'Kyiv'       },
+  ];
+  const match = GEO_TABLE.find(e => first >= e.range[0] && first <= e.range[1]);
+  return match || { lng: (first * 137.5) % 360 - 180, lat: (first * 79.3) % 140 - 70, country: `X${first}`, city: 'Unknown' };
+}
 
-const MAP_TARGETS = [
-  { lng: 36.3, lat: 33.5, label: 'HQ · Damascus DC' },
-  { lng: -0.1, lat: 51.5, label: 'EU edge · London' },
-  { lng: -122.4, lat: 37.8, label: 'US edge · SF' },
+function countToSev(count, max) {
+  const pct = count / (max || 1);
+  if (pct > 0.5) return 'critical';
+  if (pct > 0.3) return 'high';
+  if (pct > 0.15) return 'medium';
+  return 'low';
+}
+
+const MAP_TARGETS_DEFAULT = [
+  { lng: 36.3,   lat: 33.5, label: 'HQ · SOC DC'       },
+  { lng: 4.9,    lat: 52.4, label: 'EU edge · Amsterdam' },
+  { lng: -122.4, lat: 37.8, label: 'US edge · SF'        },
 ];
 
 const SEV_COLOR = {
@@ -36,14 +85,46 @@ const SEV_COLOR = {
 
 function PageMap() {
   const wrapRef = useMR(null);
-  const [dims, setDims] = useM_({ w: 1200, h: 600 });
-  const [world, setWorld] = useM_(null);
-  const [loadErr, setLoadErr] = useM_(null);
-  const [tick, setTick] = useM_(0);
-  const [playing, setPlaying] = useM_(true);
-  const [feed, setFeed] = useM_(() => seedFeed());
+  const [dims, setDims]           = useM_({ w: 1200, h: 600 });
+  const [world, setWorld]         = useM_(null);
+  const [loadErr, setLoadErr]     = useM_(null);
+  const [tick, setTick]           = useM_(0);
+  const [playing, setPlaying]     = useM_(true);
+  const [feed, setFeed]           = useM_([]);
   const [highlight, setHighlight] = useM_(null);
-  const [origins, setOrigins] = useM_(MAP_ORIGINS_SEED);
+  const [origins, setOrigins]     = useM_(MAP_TARGETS_DEFAULT.map((t,i) => ({
+    lng: t.lng + 10, lat: t.lat + 5, count: 5, country: '??', city: 'Loading…', sev: 'low',
+  })));
+  const [dataLoaded, setDataLoaded] = useM_(false);
+
+  // Load real top-IPs from API
+  useME(() => {
+    window.SOC_API.get('/api/stats/top-ips').then(data => {
+      if (!data || data.error || !Array.isArray(data) || data.length === 0) return;
+      const maxCount = Math.max(...data.map(d => d.count));
+      const mapped = data.map(d => {
+        const geo = geoHeuristic(d.ip);
+        // add tiny jitter so overlapping countries don't stack
+        return {
+          ...geo,
+          lng: geo.lng + (Math.random() - 0.5) * 4,
+          lat: geo.lat + (Math.random() - 0.5) * 4,
+          count: d.count,
+          ip: d.ip,
+          sev: countToSev(d.count, maxCount),
+        };
+      });
+      setOrigins(mapped);
+      setDataLoaded(true);
+      // seed ticker with real data
+      setFeed(mapped.map((o, i) => ({
+        id: 'WZ-' + (9280000 + i),
+        time: new Date(Date.now() - i * 45000),
+        origin: o,
+        msg: `Attack from ${o.ip} · ${o.count} hits`,
+      })));
+    });
+  }, []);
 
   // Resize observer
   useME(() => {
@@ -82,28 +163,6 @@ function PageMap() {
     return () => { cancelled = true; };
   }, []);
 
-  // Fetch real top-IPs from API and overlay counts on existing origins
-  useME(() => {
-    window.SOC_API.get('/api/stats/top-ips').then(data => {
-      if (!data || !data.length) return;
-      // Build count map keyed by IP — we can't map IPs to exact cities without geo,
-      // so we use the real total count to update the first origin slot as a live count overlay.
-      // Geo/city data stays from the hardcoded seeds since the API returns no coordinates.
-      const totalRealCount = data.reduce((s, d) => s + (d.count || 0), 0);
-      if (!totalRealCount) return;
-      // Distribute the real counts proportionally across hardcoded origins so the map
-      // reflects live SIEM volume while keeping accurate geolocation from the seed data.
-      setOrigins(prev => {
-        const seedTotal = prev.reduce((s, o) => s + o.count, 0);
-        if (!seedTotal) return prev;
-        return prev.map(o => ({
-          ...o,
-          count: Math.max(1, Math.round((o.count / seedTotal) * totalRealCount)),
-        }));
-      });
-    });
-  }, []);
-
   // Arc animation ticker
   useME(() => {
     if (!playing) return;
@@ -119,38 +178,17 @@ function PageMap() {
     return () => cancelAnimationFrame(raf);
   }, [playing]);
 
-  // Synthesize new feed events every ~2.5s (simulated ticker — fallback always active)
+  // Synthesize new feed events every ~2.5s
   useME(() => {
     if (!playing) return;
     const t = setInterval(() => {
+      if (!origins.length) return;
       const o = origins[Math.floor(Math.random() * origins.length)];
       const id = 'WZ-' + Math.floor(9280000 + Math.random() * 9000);
-      setFeed(f => [{ id, time: new Date(), origin: o, msg: pickMsg(o) }, ...f].slice(0, 30));
+      setFeed(f => [{ id, time: new Date(), origin: o, msg: `${o.ip || o.country} · ${o.count} hits` }, ...f].slice(0, 30));
     }, 2500);
     return () => clearInterval(t);
-  }, [playing, origins]);
-
-  // Socket.IO real-time events — adds to feed alongside the simulated ticker
-  useME(() => {
-    if (typeof io === 'undefined') return;
-    let socket;
-    try {
-      socket = io('/');
-      socket.on('alert:live', (data) => {
-        const sev = data.severity || 'high';
-        const msg = data.message || data.description || data.alertId || 'New alert';
-        // Use a generic origin for socket events — pick closest seed by severity
-        const fallbackOrigin = origins.find(o => o.sev === sev) || origins[0];
-        setFeed(f => [{
-          id: 'WZ-' + Math.floor(9280000 + Math.random() * 9000),
-          time: new Date(),
-          origin: fallbackOrigin,
-          msg,
-        }, ...f].slice(0, 30));
-      });
-    } catch { /* socket unavailable — simulated ticker continues */ }
-    return () => { try { socket?.disconnect(); } catch {} };
-  }, [origins]);
+  }, [playing]);
 
   // Compute projection
   const { proj, pathFn } = useMM(() => {
@@ -167,8 +205,8 @@ function PageMap() {
   }, [world, pathFn]);
 
   // Total stats
-  const totalHits = origins.reduce((a, b) => a + b.count, 0);
-  const critHits  = origins.filter(o => o.sev === 'critical').reduce((a,b)=>a+b.count, 0);
+  const totalHits  = origins.reduce((a, b) => a + b.count, 0);
+  const critHits   = origins.filter(o => o.sev === 'critical').reduce((a,b)=>a+b.count, 0);
   const topByCount = [...origins].sort((a,b) => b.count - a.count).slice(0, 6);
 
   return (
@@ -208,7 +246,7 @@ function PageMap() {
                 w={dims.w}
                 h={dims.h}
                 origins={origins}
-                targets={MAP_TARGETS}
+                targets={MAP_TARGETS_DEFAULT}
                 tick={tick}
                 highlight={highlight}
                 onHover={setHighlight}
@@ -230,7 +268,7 @@ function PageMap() {
                 <div className="hud-lbl mono">COUNTRIES</div>
               </div>
               <div className="hud-block">
-                <div className="hud-num">{MAP_TARGETS.length}</div>
+                <div className="hud-num">{MAP_TARGETS_DEFAULT.length}</div>
                 <div className="hud-lbl mono">TARGETS</div>
               </div>
             </div>
@@ -275,7 +313,7 @@ function PageMap() {
 
             <Card title="Targets" sub="protected infrastructure">
               <ul className="map-target-list">
-                {MAP_TARGETS.map((t, i) => (
+                {MAP_TARGETS_DEFAULT.map((t, i) => (
                   <li key={i}>
                     <Icon.target width="14" height="14"/>
                     <div>
@@ -489,10 +527,11 @@ function pointsToPath(pts) {
   return d;
 }
 
-function seedFeed() {
+function seedFeed(origs) {
   const out = [];
+  if (!origs || !origs.length) return out;
   for (let i = 0; i < 8; i++) {
-    const o = MAP_ORIGINS_SEED[i % MAP_ORIGINS_SEED.length];
+    const o = origs[i % origs.length];
     out.push({
       id: 'WZ-' + (9281047 - i * 3),
       time: new Date(Date.now() - i * 1200),
