@@ -1,7 +1,7 @@
 // Settings — connection diagnostics, integrations, users, audit log
 const { useState: useStateSet, useMemo: useMemoSet, useEffect: useEffectSet } = React;
 
-const FALLBACK_INTEGRATIONS = [
+const INTEGRATIONS = [
   { id: 'siem',    name: 'SIEM · Wazuh + OpenSearch', host: 'vmi3247591.contaboserver.net:9200', latency: 41, status: 'healthy', uptime: 99.97, lastEvent: '2s ago', icon: 'globe',  desc: 'Alerts · agents · rules · MITRE mapping' },
   { id: 'spcm',    name: 'SP-CM · TheHive',           host: 'app.socpilots.com',                 latency: 22, status: 'healthy', uptime: 99.99, lastEvent: '4s ago', icon: 'folder', desc: 'Case management · alert inbox' },
   { id: 'n8n',     name: 'SOCPilots AI · n8n',         host: 'vmi3254460.contaboserver.net:5678', latency: 38, status: 'healthy', uptime: 99.92, lastEvent: '8s ago', icon: 'brain',  desc: 'Workflow automation · MCP bridge' },
@@ -20,7 +20,7 @@ const USERS = [
   { id: 'u5', name: 'on-call', email: 'oncall@socpilots.com', role: 'analyst', last: '12d ago', mfa: false, cases: 0  },
 ];
 
-const FALLBACK_AUDIT_LOG = [
+const AUDIT_LOG = [
   { t: '14:22:47', who: 'younes',  action: 'case.create',      target: 'CASE-4471',       tone: 'ok' },
   { t: '14:22:31', who: 'system',  action: 'agent.isolate',    target: 'web-prod-01',     tone: 'crit' },
   { t: '14:22:08', who: 'younes',  action: 'runbook.advance',  target: 'CASE-4471 · 2/6', tone: 'default' },
@@ -44,80 +44,8 @@ const SECRETS = [
   { key: 'N8N_PASSWORD',          value: '••••••••••••••••', rotated: '14d ago' },
 ];
 
-// Map /api/status response fields to integration card status
-function applyStatusToIntegrations(integrations, statusData) {
-  if (!statusData) return integrations;
-  return integrations.map(s => {
-    let override = null;
-    if (s.id === 'siem' && statusData.opensearch) {
-      const ok = statusData.opensearch.ok;
-      override = {
-        status:  ok ? 'healthy' : 'offline',
-        latency: statusData.opensearch.latency || s.latency,
-        lastEvent: ok ? 'just now' : s.lastEvent,
-      };
-    } else if (s.id === 'spcm' && statusData.thehive) {
-      const ok = statusData.thehive.ok;
-      override = {
-        status:  ok ? 'healthy' : 'offline',
-        latency: statusData.thehive.latency || s.latency,
-        lastEvent: ok ? 'just now' : s.lastEvent,
-      };
-    } else if (s.id === 'n8n' && statusData.n8n) {
-      const ok = statusData.n8n.ok;
-      override = {
-        status:  ok ? 'healthy' : 'offline',
-        latency: statusData.n8n.latency || s.latency,
-        lastEvent: ok ? 'just now' : s.lastEvent,
-      };
-    }
-    return override ? { ...s, ...override } : s;
-  });
-}
-
-// Map /api/system-events event status to audit tone
-function eventStatusToTone(status, source) {
-  if (!status) return 'default';
-  const s = String(status).toLowerCase();
-  if (s === 'critical' || s === 'error' || s === 'fail' || s === 'failed') return 'crit';
-  if (s === 'warning' || s === 'warn' || s === 'degraded') return 'warn';
-  if (s === 'ok' || s === 'success' || s === 'executed') return 'ok';
-  return 'default';
-}
-
 function PageSettings() {
   const [section, setSection] = useStateSet('integrations');
-  const [integrations, setIntegrations] = useStateSet(FALLBACK_INTEGRATIONS);
-  const [auditLog, setAuditLog] = useStateSet(FALLBACK_AUDIT_LOG);
-  const [statusLoading, setStatusLoading] = useStateSet(false);
-
-  useEffectSet(() => {
-    (async () => {
-      setStatusLoading(true);
-      const [statusData, eventsData] = await Promise.all([
-        window.SOC_API.get('/api/status'),
-        window.SOC_API.get('/api/system-events?limit=20'),
-      ]);
-
-      if (statusData && !statusData.error) {
-        setIntegrations(applyStatusToIntegrations(FALLBACK_INTEGRATIONS, statusData));
-      }
-
-      if (eventsData && Array.isArray(eventsData.events) && eventsData.events.length > 0) {
-        const mapped = eventsData.events.map(e => ({
-          t:      e.created_at ? new Date(e.created_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—',
-          who:    e.actor || 'system',
-          action: e.title || e.event_type || '—',
-          target: e.description || '—',
-          tone:   eventStatusToTone(e.status, e.source),
-        }));
-        setAuditLog(mapped);
-      }
-
-      setStatusLoading(false);
-    })();
-  }, []);
-
   const SECTIONS = [
     { id: 'integrations', label: 'Integrations',  icon: Icon.share },
     { id: 'users',        label: 'Users & roles', icon: Icon.user },
@@ -127,15 +55,13 @@ function PageSettings() {
     { id: 'about',        label: 'About',         icon: Icon.dot },
   ];
 
-  const healthyCount = integrations.filter(s => s.status === 'healthy').length;
-
   return (
     <div className="page" data-screen-label="14 Settings">
       <Topbar
         title="Settings"
         sub="System configuration · diagnostics · access control"
         actions={<>
-          <Chip mono tone="ok"><span className="pip pip-ok"/> {healthyCount} of {integrations.length} integrations healthy</Chip>
+          <Chip mono tone="ok"><span className="pip pip-ok"/> 6 of 8 integrations healthy</Chip>
           <button className="btn btn-ghost"><Icon.refresh width="13" height="13"/> Test all</button>
         </>}
       />
@@ -162,10 +88,10 @@ function PageSettings() {
         </aside>
 
         <main className="settings-main">
-          {section === 'integrations' && <SettingsIntegrations integrations={integrations} loading={statusLoading}/>}
+          {section === 'integrations' && <SettingsIntegrations />}
           {section === 'users'        && <SettingsUsers />}
           {section === 'secrets'      && <SettingsSecrets />}
-          {section === 'audit'        && <SettingsAudit auditLog={auditLog} loading={statusLoading}/>}
+          {section === 'audit'        && <SettingsAudit />}
           {section === 'preferences'  && <SettingsPrefs />}
           {section === 'about'        && <SettingsAbout />}
         </main>
@@ -175,7 +101,7 @@ function PageSettings() {
 }
 
 // ============= INTEGRATIONS =============
-function SettingsIntegrations({ integrations, loading }) {
+function SettingsIntegrations() {
   const [testing, setTesting] = useStateSet(null);
   function test(id) {
     setTesting(id);
@@ -187,55 +113,50 @@ function SettingsIntegrations({ integrations, loading }) {
   return (
     <>
       <Card title="External integrations" sub="upstream services this app depends on">
-        {loading
-          ? <div className="loading mono" style={{padding:20}}>Loading…</div>
-          : (
-            <ul className="integrations-list">
-              {integrations.map(s => {
-                const Ic = Icon[s.icon] || Icon.dot;
-                return (
-                  <li key={s.id} className={`integration ${s.status}`}>
-                    <div className="int-icon"><Ic width="16" height="16"/></div>
-                    <div className="int-info">
-                      <div className="int-name">{s.name}</div>
-                      <div className="int-host mono">{s.host}</div>
-                      <div className="int-desc">{s.desc}</div>
-                    </div>
-                    <div className="int-stats">
-                      <div className="int-stat">
-                        <div className="is-lbl mono">LATENCY</div>
-                        <div className="is-val mono">{s.latency === 0 ? '—' : s.latency + 'ms'}</div>
-                      </div>
-                      <div className="int-stat">
-                        <div className="is-lbl mono">UPTIME 30D</div>
-                        <div className="is-val mono">{s.uptime}%</div>
-                      </div>
-                      <div className="int-stat">
-                        <div className="is-lbl mono">LAST EVENT</div>
-                        <div className="is-val mono">{s.lastEvent}</div>
-                      </div>
-                    </div>
-                    <div className="int-status">
-                      <StatusBadge status={s.status}/>
-                    </div>
-                    <div className="int-actions">
-                      <button className="btn btn-ghost btn-sm" onClick={()=>test(s.id)}>
-                        {testing === s.id ? <span className="test-spin"/> : <Icon.refresh width="11" height="11"/>}
-                        Test
-                      </button>
-                      <button className="btn btn-ghost btn-sm">Configure</button>
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          )
-        }
+        <ul className="integrations-list">
+          {INTEGRATIONS.map(s => {
+            const Ic = Icon[s.icon] || Icon.dot;
+            return (
+              <li key={s.id} className={`integration ${s.status}`}>
+                <div className="int-icon"><Ic width="16" height="16"/></div>
+                <div className="int-info">
+                  <div className="int-name">{s.name}</div>
+                  <div className="int-host mono">{s.host}</div>
+                  <div className="int-desc">{s.desc}</div>
+                </div>
+                <div className="int-stats">
+                  <div className="int-stat">
+                    <div className="is-lbl mono">LATENCY</div>
+                    <div className="is-val mono">{s.latency === 0 ? '—' : s.latency + 'ms'}</div>
+                  </div>
+                  <div className="int-stat">
+                    <div className="is-lbl mono">UPTIME 30D</div>
+                    <div className="is-val mono">{s.uptime}%</div>
+                  </div>
+                  <div className="int-stat">
+                    <div className="is-lbl mono">LAST EVENT</div>
+                    <div className="is-val mono">{s.lastEvent}</div>
+                  </div>
+                </div>
+                <div className="int-status">
+                  <StatusBadge status={s.status}/>
+                </div>
+                <div className="int-actions">
+                  <button className="btn btn-ghost btn-sm" onClick={()=>test(s.id)}>
+                    {testing === s.id ? <span className="test-spin"/> : <Icon.refresh width="11" height="11"/>}
+                    Test
+                  </button>
+                  <button className="btn btn-ghost btn-sm">Configure</button>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
       </Card>
 
       <Card title="System health" sub="last 24h">
         <div className="health-grid">
-          {integrations.slice(0, 6).map(s => (
+          {INTEGRATIONS.slice(0, 6).map(s => (
             <div key={s.id} className="health-cell">
               <div className="hc-head">
                 <span className="hc-name">{s.name.split(' · ')[0]}</span>
@@ -367,42 +288,118 @@ function SettingsSecrets() {
 }
 
 // ============= AUDIT LOG =============
-function SettingsAudit({ auditLog, loading }) {
+function auditActionTone(action) {
+  if (!action) return 'dim';
+  if (action.includes('delete') || action.includes('reset')) return 'crit';
+  if (action.includes('create') || action.includes('deploy')) return 'warn';
+  if (action.includes('update') || action.includes('change')) return 'ok';
+  return 'dim';
+}
+
+function SettingsAudit() {
+  const [items, setItems]       = useStateSet([]);
+  const [total, setTotal]       = useStateSet(0);
+  const [page, setPage]         = useStateSet(1);
+  const [actions, setActions]   = useStateSet([]);
+  const [filterUser, setFUser]  = useStateSet('');
+  const [filterAction, setFA]   = useStateSet('');
+  const [filterRes, setFRes]    = useStateSet('');
+  const [filterFrom, setFFrom]  = useStateSet('');
+  const [filterTo, setFTo]      = useStateSet('');
+  const [loading, setLoading]   = useStateSet(true);
+  const pageSize = 50;
+
+  useEffectSet(() => {
+    window.SOC_API.get('/api/audit-log/actions').then(d => {
+      if (d?.actions) setActions(d.actions);
+    });
+  }, []);
+
+  useEffectSet(() => { load(1); }, [filterUser, filterAction, filterRes, filterFrom, filterTo]);
+
+  async function load(p) {
+    setLoading(true);
+    const qs = new URLSearchParams({ page: p, page_size: pageSize });
+    if (filterUser)   qs.set('username',      filterUser);
+    if (filterAction) qs.set('action',         filterAction);
+    if (filterRes)    qs.set('resource_type',  filterRes);
+    if (filterFrom)   qs.set('date_from',      filterFrom);
+    if (filterTo)     qs.set('date_to',        filterTo);
+    const d = await window.SOC_API.get('/api/audit-log?' + qs.toString());
+    if (d?.items) { setItems(d.items); setTotal(d.total || 0); setPage(p); }
+    setLoading(false);
+  }
+
+  function fmtTs(ts) {
+    if (!ts) return '—';
+    const d = new Date(ts);
+    return d.toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'medium' });
+  }
+
   return (
-    <Card title="Audit log" sub="all actions · all users · last 24h"
-      actions={<>
-        <Chip mono>{loading ? '…' : auditLog.length} of 4,128 entries</Chip>
-        <button className="btn btn-ghost btn-sm">Export CSV</button>
-      </>}>
-      {loading
-        ? <div className="loading mono" style={{padding:20}}>Loading…</div>
-        : (
-          <table className="data-table audit-table">
-            <thead><tr>
-              <th style={{width:80}}>TIME</th>
-              <th style={{width:90}}>USER</th>
-              <th style={{width:180}}>ACTION</th>
-              <th>TARGET</th>
-            </tr></thead>
-            <tbody>
-              {auditLog.map((row, i) => (
-                <tr key={i}>
-                  <td className="mono dim">{row.t}</td>
-                  <td className="mono">{row.who === 'system' || row.who === 'darksoc'
-                    ? <Chip mono>{row.who}</Chip>
-                    : <span className="user-cell-sm"><span className="sb-avatar" style={{width:18,height:18,fontSize:8}}>{(row.who || '?')[0].toUpperCase()}</span>{row.who}</span>
-                  }</td>
-                  <td className="mono">
-                    <span className="audit-action" data-tone={row.tone}>{row.action}</span>
-                  </td>
-                  <td className="mono">{row.target}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )
-      }
-    </Card>
+    <>
+      <Card title="Audit log filters" sub="admin view · all users">
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+          <input className="mono" placeholder="Filter by user…" value={filterUser} onChange={e => setFUser(e.target.value)} style={{ width: 150 }} />
+          <select className="select-mini mono" value={filterAction} onChange={e => setFA(e.target.value)} style={{ width: 180 }}>
+            <option value="">All actions</option>
+            {actions.map(a => <option key={a} value={a}>{a}</option>)}
+          </select>
+          <select className="select-mini mono" value={filterRes} onChange={e => setFRes(e.target.value)} style={{ width: 140 }}>
+            <option value="">All resources</option>
+            {['rule','user','playbook','investigation'].map(r => <option key={r} value={r}>{r}</option>)}
+          </select>
+          <input type="date" className="mono" value={filterFrom} onChange={e => setFFrom(e.target.value)} style={{ width: 140 }} />
+          <input type="date" className="mono" value={filterTo} onChange={e => setFTo(e.target.value)} style={{ width: 140 }} />
+          <button className="btn btn-ghost btn-sm" onClick={() => { setFUser(''); setFA(''); setFRes(''); setFFrom(''); setFTo(''); }}>Clear</button>
+        </div>
+      </Card>
+      <Card title="Audit log" sub={`${total.toLocaleString()} entries`}
+        actions={<Chip mono>{total} total</Chip>}>
+        {loading ? (
+          <div className="empty mono">Loading…</div>
+        ) : items.length === 0 ? (
+          <div className="empty mono">No audit entries found</div>
+        ) : (
+          <>
+            <table className="data-table audit-table">
+              <thead><tr>
+                <th style={{ width: 140 }}>TIME</th>
+                <th style={{ width: 110 }}>USER</th>
+                <th style={{ width: 200 }}>ACTION</th>
+                <th style={{ width: 120 }}>RESOURCE</th>
+                <th>DETAILS</th>
+              </tr></thead>
+              <tbody>
+                {items.map((row, i) => (
+                  <tr key={i}>
+                    <td className="mono dim">{fmtTs(row.created_at)}</td>
+                    <td className="mono">{row.username === 'system'
+                      ? <Chip mono>system</Chip>
+                      : <span className="user-cell-sm"><span className="sb-avatar" style={{ width: 18, height: 18, fontSize: 8 }}>{(row.username||'?')[0].toUpperCase()}</span>{row.username}</span>
+                    }</td>
+                    <td className="mono">
+                      <Chip mono tone={auditActionTone(row.action)}>{row.action}</Chip>
+                    </td>
+                    <td className="mono dim">{row.resource_type || '—'}{row.resource_id ? ` #${row.resource_id}` : ''}</td>
+                    <td className="mono dim" style={{ maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {JSON.stringify(row.details || {})}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {total > pageSize && (
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginTop: 12 }}>
+                <button className="btn btn-ghost btn-sm" disabled={page <= 1} onClick={() => load(page - 1)}>← Prev</button>
+                <span className="mono dim" style={{ lineHeight: '28px' }}>Page {page} / {Math.ceil(total / pageSize)}</span>
+                <button className="btn btn-ghost btn-sm" disabled={page * pageSize >= total} onClick={() => load(page + 1)}>Next →</button>
+              </div>
+            )}
+          </>
+        )}
+      </Card>
+    </>
   );
 }
 
@@ -412,17 +409,6 @@ function SettingsPrefs() {
   const [autoAck, setAutoAck] = useStateSet(true);
   const [aiAuto, setAiAuto] = useStateSet(false);
   const [emailDigest, setEmailDigest] = useStateSet(true);
-
-  // Fetch real DarkSOC enabled state from settings
-  useEffectSet(() => {
-    (async () => {
-      const data = await window.SOC_API.get('/api/settings');
-      if (data && data.darksoc_enabled !== undefined) {
-        setAiAuto(data.darksoc_enabled === 'true' || data.darksoc_enabled === true);
-      }
-    })();
-  }, []);
-
   return (
     <>
       <Card title="Workspace preferences" sub="apply to all users in this tenant">

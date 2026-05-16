@@ -4298,6 +4298,8 @@ app.post('/api/users', authMW, requireRole('admin'), async (req, res) => {
     const hash = bcrypt.hashSync(password, 10);
     const user = await db.createUser(username.toLowerCase().trim(), hash, role || 'l1', display_name || username, email || null);
     if (!user) return res.status(409).json({ error: 'username already exists' });
+    db.logAudit(req.user.username, 'user.create', 'user', user.id,
+      { target_username: username, role: role || 'l1' }, req.ip);
     res.json({ user });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -4307,6 +4309,8 @@ app.patch('/api/users/:id', authMW, requireRole('admin'), async (req, res) => {
   try {
     const updated = await db.updateUser(parseInt(req.params.id), { role, display_name, email, active });
     if (!updated) return res.status(404).json({ error: 'user not found' });
+    db.logAudit(req.user.username, 'user.update', 'user', req.params.id,
+      { target_username: updated.username, role, display_name, active }, req.ip);
     res.json({ user: updated });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -4318,6 +4322,8 @@ app.delete('/api/users/:id', authMW, requireRole('admin'), async (req, res) => {
     if (!target) return res.status(404).json({ error: 'user not found' });
     if (target.username === req.user.username) return res.status(400).json({ error: 'cannot delete yourself' });
     await db.deleteUser(parseInt(req.params.id));
+    db.logAudit(req.user.username, 'user.delete', 'user', req.params.id,
+      { target_username: target.username }, req.ip);
     res.json({ ok: true });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -4336,7 +4342,36 @@ app.post('/api/users/:id/password', authMW, async (req, res) => {
     if (!isAdmin && !isSelf) return res.status(403).json({ error: 'Insufficient permissions' });
     const hash = bcrypt.hashSync(password, 10);
     await db.updateUserPassword(targetId, hash);
+    db.logAudit(req.user.username, isSelf ? 'password.self_change' : 'password.admin_reset',
+      'user', targetId, { target_username: target.username }, req.ip);
     res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── GET /api/audit-log ───────────────────────────────────────────
+app.get('/api/audit-log', authMW, async (req, res) => {
+  try {
+    const page          = Math.max(parseInt(req.query.page) || 1, 1);
+    const page_size     = Math.min(parseInt(req.query.page_size) || 50, 200);
+    const isAdmin       = (ROLE_HIERARCHY[req.user.role] || 0) >= ROLE_HIERARCHY.admin;
+    // Non-admins can only see their own activity
+    const filterUser    = isAdmin ? (req.query.username || null) : req.user.username;
+    const action        = isAdmin ? (req.query.action        || null) : null;
+    const resource_type = isAdmin ? (req.query.resource_type || null) : null;
+    const date_from     = req.query.date_from || null;
+    const date_to       = req.query.date_to   || null;
+    const { rows, total } = await db.listAuditLog({
+      page, page_size,
+      username: filterUser, action, resource_type, date_from, date_to
+    });
+    res.json({ items: rows, total, page, page_size, has_more: page * page_size < total });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/audit-log/actions', authMW, requireRole('admin'), async (req, res) => {
+  try {
+    const actions = await db.getAuditActions();
+    res.json({ actions });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -7158,7 +7193,13 @@ async function slaTickerRun() {
 }
 
 // ─── STATIC (must be last — after all /api routes) ──────────────
-app.use(express.static(path.join(__dirname, '../../frontend')));
+// Serve .jsx files as JS so Babel standalone can load them
+app.use(express.static(path.join(__dirname, '../../frontend'), {
+  setHeaders(res, filePath) {
+    if (filePath.endsWith('.jsx')) res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+    if (filePath.endsWith('.css')) res.setHeader('Content-Type', 'text/css; charset=utf-8');
+  },
+}));
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, '../../frontend/index.html')));
 
 // Initialize DB schema on startup (non-blocking)

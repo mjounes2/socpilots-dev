@@ -7,6 +7,7 @@ const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
   "density": "comfortable"
 }/*EDITMODE-END*/;
 
+// Map accent hex → CSS class name
 const ACCENT_MAP = {
   '#22d3ee': 'cyan',
   '#a78bfa': 'violet',
@@ -16,21 +17,9 @@ const ACCENT_MAP = {
 
 function App() {
   const [page, setPage] = useStateA('dashboard');
-  const [openCase, setOpenCase] = useStateA(null);
-  const [runbookCase, setRunbookCase] = useStateA(null);
+  const [openCase, setOpenCase] = useStateA(null);   // case detail sheet
+  const [runbookCase, setRunbookCase] = useStateA(null); // runbook modal (over the sheet)
   const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
-  const [ready, setReady] = useStateA(false);
-
-  // Auth guard — redirect to login if no token
-  useEffectA(() => {
-    const tok = sessionStorage.getItem('soc_token');
-    if (!tok) { location.href = '/login'; return; }
-    // Validate token with a lightweight API call
-    window.SOC_API.get('/api/me').then(r => {
-      if (!r) { location.href = '/login'; }
-      else { setReady(true); }
-    });
-  }, []);
 
   useEffectA(() => {
     const accentClass = ACCENT_MAP[t.accent] || 'cyan';
@@ -38,84 +27,116 @@ function App() {
       `theme-${t.theme} accent-${accentClass} density-${t.density}`;
   }, [t.theme, t.accent, t.density]);
 
-  if (!ready) return (
-    <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:'100vh',background:'var(--bg-0)',color:'var(--fg-2)',fontFamily:'var(--mono)',fontSize:13,letterSpacing:1}}>
-      LOADING SOC PILOTS…
-    </div>
-  );
-
   function renderPage() {
     switch (page) {
-      case 'dashboard':    return <PageDashboard />;
-      case 'alerts':       return <PageAlerts />;
-      case 'copilot':      return <PageCopilot />;
-      case 'cases':        return <PageCases onOpenCase={setOpenCase} />;
-      case 'correlation':  return <PageCorrelation />;
-      case 'hunt':         return <PageHunt />;
-      case 'ioc':          return <PageIOC />;
-      case 'agents':       return <PageAgents />;
-      case 'rules':        return <PageRules />;
-      case 'vulns':        return <PageVulns />;
-      case 'reports':      return <PageReports />;
-      case 'map':          return <PageMap />;
-      case 'sp-alerts':    return <PageSPAlerts />;
-      case 'settings':     return <PageSettings />;
-      // New pages
-      case 'ueba':         return <PageUEBA />;
-      case 'darksoc':      return <PageDarkSOC />;
-      case 'mitre':        return <PageMitre />;
-      case 'assets':       return <PageAssets />;
-      case 'sla':          return <PageSLA />;
-      case 'evidence':     return <PageEvidence />;
-      case 'artifacts':    return <PageArtifacts />;
-      case 'users':        return <PageUsers />;
-      case 'langchain':    return <PageLangChain />;
-      case 'log-sources':  return <PageLogSources />;
-      case 'investigation':return <PageInvestigation />;
-      case 'notifications':return <PageNotifications />;
-      default:             return <PageDashboard />;
+      // Overview
+      case 'dashboard':     return <PageDashboard />;
+      case 'alerts':        return <PageAlerts />;
+      case 'investigation': return <PageInvestigation />;
+      case 'notifications': return <PageNotifications />;
+      // Detect
+      case 'mitre':         return <PageMitre />;
+      case 'rules':         return <PageRules />;
+      case 'hunt':          return <PageHunt />;
+      case 'log-sources':   return <PageLogSources />;
+      // Investigate
+      case 'copilot':       return <PageCopilot />;
+      case 'langchain':     return <PageLangChain />;
+      case 'correlation':   return <PageCorrelation />;
+      case 'ioc':           return <PageIOC />;
+      // Analytics
+      case 'ueba':          return <PageUEBA />;
+      case 'artifacts':     return <PageArtifacts />;
+      case 'evidence':      return <PageEvidence />;
+      case 'map':           return <PageMap />;
+      // Respond
+      case 'cases':         return <PageCases onOpenCase={setOpenCase} />;
+      case 'sp-alerts':     return <PageSPAlerts />;
+      case 'darksoc':       return <PageDarkSOC />;
+      case 'sla':           return <PageSLA />;
+      // System
+      case 'agents':        return <PageAgents />;
+      case 'assets':        return <PageAssets />;
+      case 'vulns':         return <PageVulns />;
+      case 'reports':       return <PageReports />;
+      case 'users':         return <PageUsers />;
+      case 'settings':      return <PageSettings />;
+      case 'profile':       return <PageProfile />;
+      default:              return <PageDashboard />;
     }
   }
 
   return (
     <div className="app">
-      <Sidebar current={page} onNav={setPage} onLogout={() => window.SOC_API.logout()} />
+      <Sidebar current={page} onNav={setPage} />
       <div className="main">
         {renderPage()}
       </div>
       <TweaksPanel title="Tweaks">
         <TweakSection label="Theme" />
-        <TweakRadio label="Tone" value={t.theme}
-          options={[{value:'default',label:'Default'},{value:'midnight',label:'Midnight'},{value:'contrast',label:'High'}]}
-          onChange={v => setTweak('theme', v)} />
-        <TweakColor label="Accent" value={t.accent}
-          options={['#22d3ee','#a78bfa','#fbbf24','#34d399']}
-          onChange={v => setTweak('accent', v)} />
-        <TweakSection label="Layout" />
-        <TweakRadio label="Density" value={t.density}
-          options={[{value:'comfortable',label:'Roomy'},{value:'compact',label:'Compact'}]}
-          onChange={v => setTweak('density', v)} />
-        <TweakSection label="Navigation" />
-        <TweakSelect label="Jump to" value={page}
+        <TweakRadio
+          label="Tone"
+          value={t.theme}
           options={[
-            {value:'dashboard',label:'Dashboard'},{value:'alerts',label:'Alerts'},
-            {value:'copilot',label:'SOCPilots AI'},{value:'cases',label:'SP-CM Cases'},
-            {value:'correlation',label:'Correlation'},{value:'hunt',label:'Threat Hunt'},
-            {value:'ioc',label:'IOC Enrichment'},{value:'agents',label:'Agents'},
-            {value:'rules',label:'Detection Rules'},{value:'mitre',label:'ATT&CK Coverage'},
-            {value:'ueba',label:'UEBA'},{value:'darksoc',label:'Dark SOC'},
-            {value:'assets',label:'Assets'},{value:'evidence',label:'Evidence'},
-            {value:'artifacts',label:'Artifacts'},{value:'sla',label:'SLA'},
-            {value:'users',label:'Users'},{value:'langchain',label:'LangChain'},
-            {value:'log-sources',label:'Log Sources'},{value:'investigation',label:'Investigation'},
-            {value:'vulns',label:'Vulnerabilities'},{value:'reports',label:'Reports'},
-            {value:'map',label:'Live Threat Map'},{value:'sp-alerts',label:'SP-CM Alerts'},
-            {value:'notifications',label:'Notifications'},{value:'settings',label:'Settings'},
+            { value: 'default',  label: 'Default' },
+            { value: 'midnight', label: 'Midnight' },
+            { value: 'contrast', label: 'High' },
           ]}
-          onChange={setPage} />
+          onChange={v => setTweak('theme', v)}
+        />
+        <TweakColor
+          label="Accent"
+          value={t.accent}
+          options={['#22d3ee', '#a78bfa', '#fbbf24', '#34d399']}
+          onChange={v => setTweak('accent', v)}
+        />
+        <TweakSection label="Layout" />
+        <TweakRadio
+          label="Density"
+          value={t.density}
+          options={[
+            { value: 'comfortable', label: 'Roomy' },
+            { value: 'compact',     label: 'Compact' },
+          ]}
+          onChange={v => setTweak('density', v)}
+        />
+        <TweakSection label="Navigation" />
+        <TweakSelect
+          label="Jump to"
+          value={page}
+          options={[
+            { value: 'dashboard',     label: 'Dashboard' },
+            { value: 'alerts',        label: 'Alerts' },
+            { value: 'investigation', label: 'Investigations' },
+            { value: 'notifications', label: 'Notifications' },
+            { value: 'mitre',         label: 'ATT&CK Coverage' },
+            { value: 'rules',         label: 'Detection Rules' },
+            { value: 'hunt',          label: 'Threat Hunt' },
+            { value: 'log-sources',   label: 'Log Sources' },
+            { value: 'copilot',       label: 'SOCPilots AI' },
+            { value: 'langchain',     label: 'LangChain Health' },
+            { value: 'correlation',   label: 'Correlation' },
+            { value: 'ioc',           label: 'IOC Enrichment' },
+            { value: 'ueba',          label: 'UEBA' },
+            { value: 'artifacts',     label: 'IOC Store' },
+            { value: 'evidence',      label: 'Evidence' },
+            { value: 'map',           label: 'Live Threat Map' },
+            { value: 'cases',         label: 'SP-CM Cases' },
+            { value: 'sp-alerts',     label: 'SP-CM Alerts' },
+            { value: 'darksoc',       label: 'Dark SOC' },
+            { value: 'sla',           label: 'SLA Management' },
+            { value: 'agents',        label: 'Agents' },
+            { value: 'assets',        label: 'Assets' },
+            { value: 'vulns',         label: 'Vulnerabilities' },
+            { value: 'reports',       label: 'Reports' },
+            { value: 'users',         label: 'Users' },
+            { value: 'settings',      label: 'Settings' },
+          ]}
+          onChange={setPage}
+        />
       </TweaksPanel>
       <CommandPalette onNav={setPage} page={page} />
-      <CaseDetailSheet openCase={openCase} onClose={() => setOpenCase(null)} onOpenRunbook={c => setRunbookCase(c)} />
+      <CaseDetailSheet openCase={openCase} onClose={() => setOpenCase(null)} onOpenRunbook={(c) => setRunbookCase(c)} />
       <RunbookModal openCase={runbookCase} onClose={() => setRunbookCase(null)} />
       <ToastHost />
     </div>

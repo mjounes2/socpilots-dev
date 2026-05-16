@@ -747,6 +747,22 @@ async function initSchema() {
     `CREATE INDEX IF NOT EXISTS idx_sla_events_type ON sla_events(event_type)`,
     `CREATE INDEX IF NOT EXISTS idx_sla_events_created ON sla_events(created_at DESC)`,
 
+    // ── Audit log ──────────────────────────────────────────────────
+    `CREATE TABLE IF NOT EXISTS audit_log (
+      id            BIGSERIAL PRIMARY KEY,
+      username      VARCHAR(100) NOT NULL,
+      action        VARCHAR(100) NOT NULL,
+      resource_type VARCHAR(100),
+      resource_id   TEXT,
+      details       JSONB DEFAULT '{}',
+      ip_address    TEXT,
+      created_at    TIMESTAMPTZ DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_audit_username   ON audit_log(username)`,
+    `CREATE INDEX IF NOT EXISTS idx_audit_action     ON audit_log(action)`,
+    `CREATE INDEX IF NOT EXISTS idx_audit_resource   ON audit_log(resource_type, resource_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_audit_created_at ON audit_log(created_at DESC)`,
+
     // ── Default SLA policies (idempotent) ─────────────────────────
     `INSERT INTO sla_policies(name,description,entity_type,severity,response_minutes,resolution_minutes,escalation_chain,created_by)
      VALUES
@@ -2482,6 +2498,44 @@ async function getRelatedInvestigations(invId, { srcIp, ruleId, agent } = {}) {
   return r.rows;
 }
 
+// ── Audit Log ─────────────────────────────────────────────────────────
+async function logAudit(username, action, resourceType, resourceId, details = {}, ip = null) {
+  try {
+    await pool.query(
+      `INSERT INTO audit_log(username, action, resource_type, resource_id, details, ip_address)
+       VALUES($1,$2,$3,$4,$5,$6)`,
+      [username || 'system', action, resourceType || null, resourceId ? String(resourceId) : null,
+       JSON.stringify(details), ip || null]
+    );
+  } catch(e) {
+    console.error('[audit] log error:', e.message);
+  }
+}
+
+async function listAuditLog({ page = 1, page_size = 50, username, action, resource_type, date_from, date_to } = {}) {
+  const offset = (page - 1) * page_size;
+  const conds = [];
+  const params = [page_size, offset];
+  if (username)      conds.push(`username = $${params.push(username)}`);
+  if (action)        conds.push(`action = $${params.push(action)}`);
+  if (resource_type) conds.push(`resource_type = $${params.push(resource_type)}`);
+  if (date_from)     conds.push(`created_at >= $${params.push(date_from)}`);
+  if (date_to)       conds.push(`created_at <= $${params.push(date_to)}`);
+  const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
+  const r = await pool.query(
+    `SELECT *, COUNT(*) OVER() AS total_count
+     FROM audit_log ${where}
+     ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
+    params
+  );
+  return { rows: r.rows, total: parseInt(r.rows[0]?.total_count || 0) };
+}
+
+async function getAuditActions() {
+  const r = await pool.query(`SELECT DISTINCT action FROM audit_log ORDER BY action`);
+  return r.rows.map(x => x.action);
+}
+
 module.exports = {
   pool,
   initSchema,
@@ -2656,6 +2710,10 @@ module.exports = {
   // Correlation Persistence
   saveCorrelation,
   getCorrelations,
+  // Audit Log
+  logAudit,
+  listAuditLog,
+  getAuditActions,
   // SLA Management
   listSlaPolicies,
   getSlaPolicy,

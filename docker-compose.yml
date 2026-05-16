@@ -151,6 +151,9 @@ services:
       HUNT_SCHEDULER_ENABLED: ${HUNT_SCHEDULER_ENABLED:-true}
       # OTX AlienVault IOC feed
       OTX_API_KEY:    ${OTX_API_KEY:-}
+      # MISP Threat Intelligence Platform
+      MISP_URL:       ${MISP_URL:-}
+      MISP_API_KEY:   ${MISP_API_KEY:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -172,8 +175,8 @@ services:
     container_name: dev-nginx
     restart: unless-stopped
     ports:
-      - "9080:80"
-      - "9443:443"
+      - "80:80"
+      - "443:443"
     entrypoint: ["/bin/sh", "/entrypoint.sh"]
     environment:
       DOMAIN: ${DOMAIN:-localhost}
@@ -271,7 +274,7 @@ services:
     networks:
       - soc
     ports:
-      - "9088:8080"
+      - "8080:8080"
     environment:
       THEHIVE_URL: ${THEHIVE_URL}
       THEHIVE_API_KEY: ${THEHIVE_API_KEY}
@@ -293,8 +296,8 @@ services:
     networks:
       - soc
     ports:
-      - "9474:7474"
-      - "9687:7687"
+      - "7474:7474"
+      - "7687:7687"
     environment:
       NEO4J_AUTH: neo4j/${NEO4J_PASSWORD}
       NEO4J_PLUGINS: '["apoc"]'
@@ -342,7 +345,7 @@ services:
     networks:
       - soc
     ports:
-      - "9001:8001"
+      - "8001:8001"
     environment:
       OPENAI_API_KEY:   ${OPENAI_API_KEY}
       MISTRAL_API_KEY:  ${MISTRAL_API_KEY:-}
@@ -474,7 +477,7 @@ services:
     networks:
       - soc
     ports:
-      - "9678:5678"
+      - "5678:5678"
     environment:
       - N8N_HOST=0.0.0.0
       - N8N_PORT=5678

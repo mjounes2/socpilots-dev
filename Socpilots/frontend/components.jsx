@@ -110,6 +110,7 @@ function Sidebar({ current, onNav }) {
       { id: 'reports',      label: 'Reports',             icon: Icon.file, badge: null },
       { id: 'users',        label: 'Users',               icon: Icon.user, badge: null },
       { id: 'settings',     label: 'Settings',            icon: Icon.cog, badge: null },
+      { id: 'profile',      label: 'My Profile',          icon: Icon.user, badge: null },
     ]},
   ];
 
@@ -161,7 +162,7 @@ function Sidebar({ current, onNav }) {
             <div className="sb-status-sub">all systems nominal · 41ms</div>
           </div>
         </div>
-        <div className="sb-user">
+        <div className="sb-user" onClick={() => onNav('profile')} title="My Profile" style={{ cursor: 'pointer' }}>
           <div className="sb-avatar">YJ</div>
           <div className="sb-user-text">
             <div className="sb-user-name">younes</div>

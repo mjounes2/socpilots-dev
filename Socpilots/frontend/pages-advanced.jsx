@@ -1014,4 +1014,137 @@ function PageNotifications() {
   );
 }
 
-Object.assign(window, { PageSLA, PageEvidence, PageArtifacts, PageUsers, PageLangChain, PageLogSources, PageInvestigation, PageNotifications });
+// ============= PROFILE PAGE =============
+function PageProfile() {
+  const [user, setUser]       = useStateADV(null);
+  const [activity, setAct]    = useStateADV([]);
+  const [actTotal, setActTot] = useStateADV(0);
+  const [actPage, setActPage] = useStateADV(1);
+  const [pw1, setPw1]         = useStateADV('');
+  const [pw2, setPw2]         = useStateADV('');
+  const [pwMsg, setPwMsg]     = useStateADV(null);
+  const pageSize = 20;
+
+  useEffectADV(() => {
+    window.SOC_API.get('/api/me').then(d => { if (d?.user) setUser(d.user); });
+    loadActivity(1);
+  }, []);
+
+  async function loadActivity(p) {
+    const d = await window.SOC_API.get(`/api/audit-log?page=${p}&page_size=${pageSize}`);
+    if (d?.items) { setAct(d.items); setActTot(d.total || 0); setActPage(p); }
+  }
+
+  async function changePassword() {
+    if (!pw1 || pw1.length < 6) { setPwMsg({ ok: false, text: 'Min 6 characters' }); return; }
+    if (pw1 !== pw2) { setPwMsg({ ok: false, text: 'Passwords do not match' }); return; }
+    if (!user?.id) return;
+    const r = await window.SOC_API.post(`/api/users/${user.id}/password`, { password: pw1 });
+    if (r?.ok) { setPwMsg({ ok: true, text: 'Password changed' }); setPw1(''); setPw2(''); }
+    else setPwMsg({ ok: false, text: r?.error || 'Failed' });
+  }
+
+  function fmtTs(ts) {
+    if (!ts) return '—';
+    return new Date(ts).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'medium' });
+  }
+
+  const roleColors = { admin: 'crit', l3: 'warn', l2: 'ok', l1: 'dim' };
+
+  return (
+    <div className="page">
+      <Topbar title="My Profile" sub="Account details · activity history · security" />
+      <div className="page-body" style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: 14, alignItems: 'start' }}>
+
+        {/* Left column */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <Card title="Account info" sub="your SOC identity">
+            {!user ? (
+              <div className="empty mono">Loading…</div>
+            ) : (
+              <>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+                  <div className="sb-avatar" style={{ width: 48, height: 48, fontSize: 20, flexShrink: 0 }}>
+                    {(user.display_name || user.username || '?')[0].toUpperCase()}
+                  </div>
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: 15 }}>{user.display_name || user.username}</div>
+                    <div className="mono dim" style={{ fontSize: 11 }}>@{user.username}</div>
+                  </div>
+                </div>
+                <table className="data-table" style={{ fontSize: 11 }}>
+                  <tbody>
+                    <tr><td className="dim">Role</td><td><Chip mono tone={roleColors[user.role] || 'dim'}>{(user.role||'').toUpperCase()}</Chip></td></tr>
+                    <tr><td className="dim">Email</td><td className="mono">{user.email || '—'}</td></tr>
+                    <tr><td className="dim">Last login</td><td className="mono">{fmtTs(user.last_login)}</td></tr>
+                    <tr><td className="dim">Status</td><td><Chip mono tone={user.active !== false ? 'ok' : 'crit'}>{user.active !== false ? 'Active' : 'Inactive'}</Chip></td></tr>
+                    <tr><td className="dim">Member since</td><td className="mono">{fmtTs(user.created_at)}</td></tr>
+                  </tbody>
+                </table>
+              </>
+            )}
+          </Card>
+
+          <Card title="Change password" sub="min 6 characters">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div>
+                <div className="card-sub" style={{ marginBottom: 4 }}>New password</div>
+                <input type="password" className="mono" placeholder="Min 6 characters" value={pw1} onChange={e => setPw1(e.target.value)} style={{ width: '100%' }} />
+              </div>
+              <div>
+                <div className="card-sub" style={{ marginBottom: 4 }}>Confirm password</div>
+                <input type="password" className="mono" placeholder="Repeat password" value={pw2} onChange={e => setPw2(e.target.value)} style={{ width: '100%' }} />
+              </div>
+              <button className="btn btn-primary" onClick={changePassword}>Change Password</button>
+              {pwMsg && (
+                <div className="mono" style={{ fontSize: 10, color: pwMsg.ok ? 'var(--green)' : 'var(--red)', textAlign: 'center' }}>
+                  {pwMsg.text}
+                </div>
+              )}
+            </div>
+          </Card>
+        </div>
+
+        {/* Right column — activity log */}
+        <Card title="My activity" sub="audit log · your actions only"
+          actions={<button className="btn btn-ghost btn-sm" onClick={() => loadActivity(1)}>↻ Refresh</button>}>
+          {activity.length === 0 ? (
+            <div className="empty mono">No activity recorded yet</div>
+          ) : (
+            <>
+              <table className="data-table">
+                <thead><tr>
+                  <th style={{ width: 140 }}>TIME</th>
+                  <th style={{ width: 200 }}>ACTION</th>
+                  <th style={{ width: 120 }}>RESOURCE</th>
+                  <th>DETAILS</th>
+                </tr></thead>
+                <tbody>
+                  {activity.map((a, i) => (
+                    <tr key={i}>
+                      <td className="mono dim">{fmtTs(a.created_at)}</td>
+                      <td className="mono"><Chip mono tone={auditActionTone ? auditActionTone(a.action) : 'dim'}>{a.action}</Chip></td>
+                      <td className="mono dim">{a.resource_type || '—'}{a.resource_id ? ` #${a.resource_id}` : ''}</td>
+                      <td className="mono dim" style={{ maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {JSON.stringify(a.details || {})}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {actTotal > pageSize && (
+                <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginTop: 12 }}>
+                  <button className="btn btn-ghost btn-sm" disabled={actPage <= 1} onClick={() => loadActivity(actPage - 1)}>← Prev</button>
+                  <span className="mono dim" style={{ lineHeight: '28px' }}>Page {actPage} / {Math.ceil(actTotal / pageSize)}</span>
+                  <button className="btn btn-ghost btn-sm" disabled={actPage * pageSize >= actTotal} onClick={() => loadActivity(actPage + 1)}>Next →</button>
+                </div>
+              )}
+            </>
+          )}
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+Object.assign(window, { PageSLA, PageEvidence, PageArtifacts, PageUsers, PageLangChain, PageLogSources, PageInvestigation, PageNotifications, PageProfile });
