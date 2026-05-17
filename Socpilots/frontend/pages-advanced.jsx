@@ -1459,38 +1459,54 @@ function PageLogSources() {
       />
       <div className="page-body">
 
-        {/* AI Analysis result */}
+        {/* AI Investigation Report */}
         {aiResult && (
-          <Card title="AI Analysis" sub={`${aiResult.sources_analyzed || sources.length} sources · ${new Date().toLocaleTimeString()}`}
-            actions={<button className="btn-icon" onClick={() => setAiResult(null)}><Icon.x width="13" height="13"/></button>}>
-            {aiResult.insights?.length > 0 && (
-              <ul style={{ paddingLeft: 18, margin: '0 0 10px', fontSize: '0.83rem', lineHeight: 1.7 }}>
-                {aiResult.insights.map((ins, i) => <li key={i}>{ins}</li>)}
-              </ul>
+          <Card
+            title="Log Source Intelligence Report"
+            sub={`${aiResult.total_sources} sources analysed · ${new Date().toLocaleTimeString()}`}
+            actions={<button className="btn-icon" title="Close" onClick={() => setAiResult(null)}><Icon.x width="13" height="13"/></button>}
+          >
+            {/* Full narrative */}
+            {aiResult.full_report ? (
+              <pre style={{
+                whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                fontFamily: 'var(--fm)', fontSize: '0.82rem',
+                color: 'var(--fg-1)', lineHeight: 1.7, margin: '0 0 16px',
+                maxHeight: 540, overflowY: 'auto',
+                background: 'var(--bg-1)', border: '1px solid var(--ln)',
+                borderRadius: 6, padding: 16,
+              }}>{aiResult.full_report}</pre>
+            ) : (
+              <div className="empty mono" style={{ padding: '20px 0', textAlign: 'center', marginBottom: 12 }}>
+                Narrative report unavailable — LangChain agent unreachable.
+              </div>
             )}
-            {aiResult.recommendations?.length > 0 && (
-              <div style={{ marginTop: 6 }}>
-                <div className="card-sub" style={{ marginBottom: 4 }}>Recommendations</div>
-                <ul style={{ paddingLeft: 18, margin: 0, fontSize: '0.83rem', lineHeight: 1.7 }}>
-                  {aiResult.recommendations.map((r, i) => <li key={i}>{r}</li>)}
+
+            {/* Flagged sources */}
+            {aiResult.anomalies?.length > 0 && (
+              <div style={{ marginBottom: 14 }}>
+                <div className="card-sub" style={{ marginBottom: 6 }}>Flagged Sources ({aiResult.anomalies.length})</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {aiResult.anomalies.map((a, i) => (
+                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 8px', background: 'var(--bg-1)', borderRadius: 5 }}>
+                      <Chip mono tone="warn">{a.source_name}</Chip>
+                      <span style={{ fontSize: '0.81rem', color: 'var(--fg-2)', flex: 1 }}>{a.reason}</span>
+                      <Chip mono tone={srcTone(a.status || 'warning')}>{a.status || 'warning'}</Chip>
+                      {a.eps > 0 && <span className="mono dim" style={{ fontSize: '0.78rem' }}>{a.eps} EPS</span>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Pipeline insights */}
+            {aiResult.insights?.length > 0 && (
+              <div>
+                <div className="card-sub" style={{ marginBottom: 6 }}>Pipeline Insights</div>
+                <ul style={{ paddingLeft: 18, margin: 0, fontSize: '0.82rem', lineHeight: 1.75, color: 'var(--fg-2)' }}>
+                  {aiResult.insights.map((ins, i) => <li key={i}>{ins}</li>)}
                 </ul>
               </div>
-            )}
-            {aiResult.anomalies?.length > 0 && (
-              <div style={{ marginTop: 8 }}>
-                <div className="card-sub" style={{ marginBottom: 4 }}>Anomalies detected</div>
-                {aiResult.anomalies.map((a, i) => (
-                  <div key={i} style={{ fontSize: '0.82rem', padding: '4px 0', borderBottom: '1px solid var(--ln)', display:'flex', gap:8 }}>
-                    <Chip mono tone="warn">{a.source_name || a.source_id}</Chip>
-                    <span style={{ color: 'var(--fg-2)' }}>{a.reason || a.anomaly_type}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-            {!aiResult.insights?.length && !aiResult.recommendations?.length && (
-              <p style={{ fontFamily: 'var(--fm)', fontSize: '0.83rem', margin: 0 }}>
-                {aiResult.summary || aiResult.text || 'All log sources nominal.'}
-              </p>
             )}
           </Card>
         )}

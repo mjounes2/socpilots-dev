@@ -5808,7 +5808,124 @@ app.post('/api/log-sources/analyze', authMW, async (req, res) => {
     const { sources } = req.body;
     if (!Array.isArray(sources) || !sources.length) return res.status(400).json({ error: 'sources array required' });
 
-    const result = await _runLogSourcesAnalysis(sources);
+    // Step 1 — vendor classification pipeline (best-effort, non-blocking)
+    let pipeline = null;
+    try { pipeline = await _runLogSourcesAnalysis(sources); } catch (e) {
+      console.warn('[log-sources/analyze] pipeline:', e.message);
+    }
+
+    // Step 2 — build comprehensive investigation prompt
+    const now       = Date.now();
+    const ageMin    = s => s.last_seen ? (now - new Date(s.last_seen).getTime()) / 60000 : Infinity;
+    const isCloud   = s => s.type === 'cloud_api' || s.protocol === 'api' || s.source_ip === 'cloud';
+    const getStatus = s => {
+      const age = ageMin(s); const cloud = isCloud(s);
+      if (age < (cloud ? 1440 : 60))   return 'active';
+      if (age < (cloud ? 4320 : 1440)) return 'warning';
+      return 'inactive';
+    };
+
+    const activeN   = sources.filter(s => getStatus(s) === 'active').length;
+    const warnN     = sources.filter(s => getStatus(s) === 'warning').length;
+    const inactiveN = sources.filter(s => getStatus(s) === 'inactive').length;
+    const anomN     = sources.filter(s => s.anomaly).length;
+    const newN      = sources.filter(s => s.is_new).length;
+    const totalEps  = sources.reduce((t, s) => t + (s.eps || 0), 0).toFixed(2);
+
+    const sourceLines = sources.map(s =>
+      `  • ${s.source_name} | vendor=${s.vendor||'?'} type=${s.type||'?'} protocol=${s.protocol||'?'} ` +
+      `status=${getStatus(s)} eps=${s.eps||0} events_24h=${s.event_count_24h||0}` +
+      (s.anomaly ? ' [ANOMALY]' : '') + (s.is_new ? ' [NEW]' : '')
+    ).join('\n');
+
+    const pipelineInsights = (pipeline?.ai_insights || []).map(i => `  - ${i}`).join('\n');
+
+    const prompt =
+`You are a senior SOC analyst performing a full log source health investigation. Produce a complete, professional report.
+
+═══════════════════════════════════════════════════════
+ENVIRONMENT SNAPSHOT
+═══════════════════════════════════════════════════════
+Total sources    : ${sources.length}
+Active           : ${activeN}
+Degraded/Warning : ${warnN}
+Inactive         : ${inactiveN}
+Anomalous        : ${anomN}
+New (<24h)       : ${newN}
+Combined EPS     : ${totalEps}
+
+SOURCE INVENTORY:
+${sourceLines}
+
+PIPELINE INSIGHTS (pre-analysis):
+${pipelineInsights || '  None'}
+═══════════════════════════════════════════════════════
+
+Write a full investigation report using this exact structure:
+
+## Executive Summary
+2-3 sentences: overall health score (0–100), single most critical finding, overall posture.
+
+## Source Coverage Assessment
+Which critical log source categories are present and which are missing:
+- Endpoint/EDR
+- Network (firewall, IDS/IPS)
+- Web proxy / WAF
+- Cloud platforms (AWS, Azure, GCP, O365)
+- Authentication / IAM
+- Database
+- Email security
+For each: ✓ Covered / ✗ Missing / ⚠ Partial — with specific source names.
+
+## Anomaly & Status Analysis
+For each anomalous, warning, or new source: explain what the anomaly means, possible causes, and urgency.
+
+## MITRE ATT&CK Blind Spots
+Based on the source types present, which ATT&CK tactics have detection gaps (e.g. no proxy → limited T1071 visibility).
+
+## Recommendations
+Numbered priority list. Include: what to add, what to investigate, what to tune. Reference specific source names.
+
+Be specific, technical, and actionable. Use markdown. Do not add filler text.`;
+
+    // Step 3 — LangChain full investigation
+    let fullReport = null;
+    try {
+      const lc = await axios.post(`${LANGCHAIN_URL}/chat`, {
+        message:  prompt,
+        history:  [],
+        username: req.user?.username || 'system',
+        role:     req.user?.role || 'analyst',
+      }, { timeout: 120_000, headers: { Authorization: `Bearer ${LANGCHAIN_TOKEN}` } });
+      fullReport = lc.data?.response || lc.data?.output || lc.data?.text || null;
+    } catch (e) { console.warn('[log-sources/analyze] narrative:', e.message); }
+
+    // Step 4 — build anomaly list
+    const enriched = pipeline?.enriched_sources || sources;
+    const anomalies = enriched
+      .filter(s => s.anomaly || s.is_new || s.ai_assessment === 'anomalous' || s.ai_assessment === 'suspicious')
+      .map(s => ({
+        source_id:   s.source_id,
+        source_name: s.source_name,
+        reason:      s.is_new           ? 'New source — first seen in last 24 h' :
+                     s.ai_assessment === 'anomalous'  ? 'AI assessment: anomalous behaviour' :
+                     s.ai_assessment === 'suspicious' ? 'AI assessment: suspicious pattern'  :
+                     s.anomaly         ? 'EPS spike — 5× above average'          : 'Flagged',
+        eps:    s.eps,
+        vendor: s.vendor,
+        status: getStatus(s),
+      }));
+
+    const result = {
+      full_report:      fullReport,
+      insights:         pipeline?.ai_insights || [],
+      anomalies,
+      enriched_sources: pipeline?.enriched_sources || null,
+      sources_analyzed: pipeline?.sources_analyzed || sources.length,
+      total_sources:    sources.length,
+      models_used:      pipeline?.models_used || null,
+    };
+
     _logSourcesAutoAnalysis = { result, last_analyzed_at: Date.now(), source: 'manual' };
     _logSourcesCache = null;
     res.json(result);
