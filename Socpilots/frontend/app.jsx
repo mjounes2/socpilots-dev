@@ -21,6 +21,9 @@ function App() {
   const [runbookCase, setRunbookCase] = useStateA(null); // runbook modal (over the sheet)
   const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
 
+  // Signal splash screen to complete after first render
+  useEffectA(() => { window._spDone && window._spDone(); }, []);
+
   useEffectA(() => {
     const accentClass = ACCENT_MAP[t.accent] || 'cyan';
     document.documentElement.className =
