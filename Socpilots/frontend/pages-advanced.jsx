@@ -1380,8 +1380,14 @@ function PageLangChain() {
 function srcStatus(s) {
   if (!s.last_seen) return 'inactive';
   const ageMin = (Date.now() - new Date(s.last_seen).getTime()) / 60000;
-  if (ageMin < 60)   return 'active';
-  if (ageMin < 1440) return 'warning';
+  // Cloud API sources (CloudTrail, Office 365, Azure, etc.) are event-driven —
+  // gaps of many hours are normal when there's no cloud activity.
+  // Use much wider thresholds so a quiet period doesn't falsely flag them.
+  const isCloud = s.type === 'cloud_api' || s.protocol === 'api' || s.source_ip === 'cloud';
+  const warnMin    = isCloud ? 1440 : 60;   // cloud: 24h  agent: 1h
+  const inactiveMin= isCloud ? 4320 : 1440; // cloud: 3d   agent: 24h
+  if (ageMin < warnMin)     return 'active';
+  if (ageMin < inactiveMin) return 'warning';
   return 'inactive';
 }
 function srcTone(s) {
