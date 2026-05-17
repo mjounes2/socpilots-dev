@@ -731,6 +731,7 @@ function adaptAlert(a) {
   const mitre = Array.isArray(a.mitre) ? (a.mitre[0] || '—') : (a.mitre || '—');
   return {
     id:      a.id || a._id,
+    shortId: a.short_id || a.shortId || '',
     sev,
     rule:    a.description || a.rule || '—',
     mitre,
@@ -835,6 +836,7 @@ function PageAlerts() {
                     <thead>
                       <tr>
                         <th className="th-sev"></th>
+                        <th>ALERT ID</th>
                         <th>TIME</th>
                         <th>RULE ID</th>
                         <th>DESCRIPTION</th>
@@ -849,9 +851,11 @@ function PageAlerts() {
                           className={selected?.id === a.id ? 'sel' : ''}
                           onClick={() => { setSelected(a); setEnrichData(null); }}>
                           <td><span className="sev-bar" data-sev={a.sev} /></td>
+                          <td className="mono" style={{ fontSize: 10, color: 'var(--acc)', letterSpacing: '.04em', whiteSpace: 'nowrap' }}
+                            title={`Full ID: ${a.id}`}>{a.shortId || '—'}</td>
                           <td className="mono dim">{relTime(a.time)}</td>
                           <td className="mono">{a.ruleId || '—'}</td>
-                          <td style={{ maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                          <td style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
                             title={a.rule}>{a.rule}</td>
                           <td className="mono">{a.mitre !== '—' ? <span className="link">{a.mitre}</span> : <span className="dim">—</span>}</td>
                           <td className="mono">{a.agent}</td>
@@ -900,8 +904,28 @@ function AlertDetail({ alert, enrichData, setEnrichData, enriching, setEnriching
     }
   };
 
+  const [copied, setCopied] = useState1(false);
+  function copyAlertId() {
+    if (!alert.shortId) return;
+    navigator.clipboard.writeText(alert.shortId).then(() => {
+      setCopied(true); setTimeout(() => setCopied(false), 1500);
+    });
+  }
+
   return (
     <div className="detail">
+      {/* Alert ID badge — primary reference for analysts */}
+      {alert.shortId && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, padding: '6px 10px',
+                      background: 'var(--acc-bg)', border: '1px solid rgba(0,229,255,.25)', borderRadius: 5 }}>
+          <span style={{ fontSize: 9, color: 'var(--acc)', letterSpacing: '.1em', fontWeight: 700 }}>ALERT ID</span>
+          <span className="mono" style={{ fontSize: 13, color: 'var(--acc)', fontWeight: 700, letterSpacing: '.06em', flex: 1 }}>{alert.shortId}</span>
+          <button onClick={copyAlertId} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2,
+                  color: copied ? 'var(--low)' : 'var(--fg-3)', fontSize: 11, fontFamily: 'var(--mono)' }}>
+            {copied ? '✓ copied' : '⎘ copy'}
+          </button>
+        </div>
+      )}
       <div className="detail-head">
         <SevChip sev={alert.sev} />
         <span className="mono dim" style={{ fontSize: 11 }}>{alert.ruleId}</span>

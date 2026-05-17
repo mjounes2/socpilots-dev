@@ -417,6 +417,11 @@ function sevFromLevel(lvl) {
   if (n >= 5)  return 'medium';
   return 'low';
 }
+// Deterministic short ID for every alert — SOC-XXXXXXXX from OpenSearch _id
+function alertShortId(opensearchId) {
+  return 'SOC-' + crypto.createHash('md5').update(String(opensearchId)).digest('hex').slice(0, 8).toUpperCase();
+}
+
 function hiveSevLabel(n) {
   return { 1: 'low', 2: 'medium', 3: 'high', 4: 'critical' }[n] || 'medium';
 }
@@ -679,9 +684,9 @@ app.get('/api/alerts', authMW, async (req, res) => {
         must.push({ bool: { should: sevList.map(s => ({ range: { 'rule.level': ranges[s] } })), minimum_should_match: 1 } });
       }
     }
-    if (search) must.push({ multi_match: { query: search, fields: ['rule.description', 'full_log', 'agent.name', 'data.srcip'] } });
+    if (search) must.push({ multi_match: { query: search, fields: ['rule.description', 'full_log', 'agent.name', 'data.srcip', 'rule.id'] } });
 
-    const body = {
+    let body = {
       from: cappedFrom,
       size: cappedSize,
       track_total_hits: true,
@@ -690,12 +695,29 @@ app.get('/api/alerts', authMW, async (req, res) => {
       _source: ['@timestamp', 'rule', 'agent', 'data', 'srcip', 'full_log', 'location', 'manager'],
     };
 
-    const r = await osSearch(body);
-    const total = typeof r.hits.total === 'object' ? r.hits.total.value : (r.hits.total || 0);
+    let r = await osSearch(body);
+    let total = typeof r.hits.total === 'object' ? r.hits.total.value : (r.hits.total || 0);
+
+    // If searching by SOC-XXXXXXXX short ID, fall back to scanning for _id match
+    if (search && /^SOC-[0-9A-F]{8}$/i.test(search.trim()) && r.hits.hits.length === 0) {
+      const scanBody = {
+        size: 500,
+        track_total_hits: true,
+        sort: [{ '@timestamp': 'desc' }],
+        query: must.length > (search ? 1 : 0) ? { bool: { must: must.filter(m => !m.multi_match) } } : { match_all: {} },
+        _source: ['@timestamp', 'rule', 'agent', 'data', 'srcip', 'full_log', 'location', 'manager'],
+      };
+      const scanR = await osSearch(scanBody);
+      const target = search.trim().toUpperCase();
+      const matched = scanR.hits.hits.filter(h => alertShortId(h._id) === target);
+      if (matched.length) { r = { hits: { hits: matched, total: { value: matched.length } } }; total = matched.length; }
+    }
+
     const alerts = r.hits.hits.map(h => {
       const s = h._source;
       return {
         id:          h._id,
+        short_id:    alertShortId(h._id),
         timestamp:   s['@timestamp'],
         ruleId:      s.rule?.id || 'N/A',
         level:       s.rule?.level || 0,
@@ -2089,10 +2111,14 @@ app.get('/api/investigations', authMW, async (req, res) => {
     const { severity, agent, ruleId, q, sort_by, sort_dir, time_from, time_to } = req.query;
     const page      = parseInt(req.query.page)      || 1;
     const page_size = Math.min(parseInt(req.query.page_size) || parseInt(req.query.limit) || 50, 500);
-    const [{ rows: items, total }, stats] = await Promise.all([
+    const [{ rows: rawItems, total }, stats] = await Promise.all([
       db.listInvestigations({ severity, agent, ruleId, q, sort_by, sort_dir, time_from, time_to, page, page_size }),
       db.getInvestigationStats(),
     ]);
+    const items = rawItems.map(inv => ({
+      ...inv,
+      alert_short_id: inv.alert_id ? alertShortId(inv.alert_id) : null,
+    }));
     res.json({ items, stats, total, page, page_size, has_more: page * page_size < total });
   } catch(e) {
     res.status(503).json({ error: 'DB unavailable: ' + e.message });
@@ -2108,7 +2134,8 @@ app.get('/api/investigations/:id', authMW, async (req, res) => {
       db.getRelatedInvestigations(inv.id, { srcIp: inv.src_ip, ruleId: inv.rule_id, agent: inv.agent }),
       db.getInvComments(inv.id),
     ]);
-    res.json({ ...inv, related, comments });
+    const alert_short_id = inv.alert_id ? alertShortId(inv.alert_id) : null;
+    res.json({ ...inv, alert_short_id, related, comments });
   } catch(e) {
     res.status(503).json({ error: 'DB unavailable: ' + e.message });
   }
@@ -7324,7 +7351,7 @@ app.get('/api/sla/alerts', authMW, async (req, res) => {
 
     // Filter to high/medium/critical only
     const alerts = hits
-      .map(h => ({ _id: h._id, ...h._source }))
+      .map(h => ({ _id: h._id, short_id: alertShortId(h._id), ...h._source }))
       .filter(a => sevList.includes(severityOf(a.rule?.level)));
 
     if (!alerts.length) return res.json({ alerts: [], total: 0 });

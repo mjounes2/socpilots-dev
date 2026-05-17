@@ -1505,11 +1505,14 @@ function PageInvestigation() {
           {past.length === 0
             ? <div className="empty mono" style={{ padding: 20 }}>No investigations yet. Launch one above.</div>
             : <table className="data-table">
-                <thead><tr><th>ID</th><th>TARGET</th><th>SEVERITY</th><th>STATUS</th><th>CREATED</th></tr></thead>
+                <thead><tr><th>ID</th><th>ALERT ID</th><th>TARGET</th><th>SEVERITY</th><th>STATUS</th><th>CREATED</th></tr></thead>
                 <tbody>
                   {past.map((inv, i) => (
                     <tr key={inv.id || i}>
                       <td className="mono dim">#{inv.id || i + 1}</td>
+                      <td className="mono" style={{ fontSize: 10, color: 'var(--acc)', letterSpacing: '.04em', whiteSpace: 'nowrap' }}>
+                        {inv.alert_short_id || '—'}
+                      </td>
                       <td className="mono">{inv.agent || inv.target || '—'}</td>
                       <td><SevChip sev={inv.severity || 'medium'} /></td>
                       <td><Chip mono tone={inv.status === 'closed' ? 'dim' : 'ok'}>{inv.status || 'open'}</Chip></td>
