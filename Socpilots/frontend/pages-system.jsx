@@ -429,33 +429,58 @@ function StatusChip({ status }) {
 }
 
 // ============= REPORTS =============
+const REPORT_TEMPLATES = [
+  { id: 'exec',       label: 'Executive Summary',      desc: 'High-level weekly brief for CxO audience',           icon: '📊' },
+  { id: 'threat',     label: 'Threat Intelligence',    desc: 'IOC analysis, MITRE coverage, threat actors',        icon: '🎯' },
+  { id: 'compliance', label: 'Compliance Report',      desc: 'SOC 2 / ISO 27001 / NIST framework alignment',       icon: '✅' },
+  { id: 'incident',   label: 'Incident Retrospective', desc: 'Post-incident timeline, root cause, lessons learned', icon: '🔍' },
+];
+const SCHED_FREQS = ['Daily', 'Weekly', 'Bi-weekly', 'Monthly'];
+const SCHED_DAYS  = ['Monday','Tuesday','Wednesday','Thursday','Friday'];
+
 function PageReports() {
-  const [reports, setReports]   = useStateS([]);
-  const [selectedId, setSelectedId] = useStateS(null);
-  const [loading, setLoad]      = useStateS(false);
-  const [generating, setGen]    = useStateS(false);
+  const [reports, setReports]         = useStateS([]);
+  const [selectedId, setSelectedId]   = useStateS(null);
+  const [loading, setLoad]            = useStateS(false);
+  const [generating, setGen]          = useStateS(false);
+  const [recipients, setRecipients]   = useStateS([
+    { id: 1, type: 'email', addr: 'ciso@socpilots.com'      },
+    { id: 2, type: 'email', addr: 'soc-leads@socpilots.com' },
+    { id: 3, type: 'slack', addr: 'Slack #soc-execs'        },
+  ]);
+  const [addingRecip, setAddingRecip] = useStateS(false);
+  const [newAddr, setNewAddr]         = useStateS('');
+  const [newType, setNewType]         = useStateS('email');
+  const [showTmpl, setShowTmpl]       = useStateS(false);
+  const [showSched, setShowSched]     = useStateS(false);
+  const [schedFreq, setSchedFreq]     = useStateS('Weekly');
+  const [schedDay, setSchedDay]       = useStateS('Monday');
+  const [schedTime, setSchedTime]     = useStateS('08:00');
+  const [editMode, setEditMode]       = useStateS(false);
+  const [editContent, setEditContent] = useStateS('');
 
   useEffectS(() => {
     setLoad(true);
     window.SOC_API.get('/api/reports').then(d => {
       const arr = d?.items || d?.reports || (Array.isArray(d) ? d : null);
-      if (arr) {
+      if (arr && arr.length > 0) {
         setReports(arr);
-        if (arr.length > 0 && !selectedId) setSelectedId(arr[0].id);
+        setSelectedId(arr[0].id);
       }
       setLoad(false);
     }).catch(() => setLoad(false));
   }, []);
 
-  async function generateReport() {
+  async function generate(type = 'exec') {
     setGen(true);
-    window.socToast?.({ title: 'Generating report', sub: 'AI draft · ~30s', tone: 'info' });
-    const r = await window.SOC_API.get('/api/reports/summary');
+    const tmpl = REPORT_TEMPLATES.find(t => t.id === type) || REPORT_TEMPLATES[0];
+    window.socToast?.({ title: `Generating ${tmpl.label}`, sub: 'AI draft · ~30 s', tone: 'info' });
+    const r = await window.SOC_API.get(`/api/reports/summary?type=${type}`);
     setGen(false);
     if (r && r.text) {
-      const newRpt = {
+      const rpt = {
         id: 'RPT-' + Date.now(),
-        title: 'Executive Summary',
+        title: tmpl.label,
         range: new Date().toLocaleDateString('en-GB'),
         author: 'AI',
         status: 'draft',
@@ -463,45 +488,166 @@ function PageReports() {
         when: 'now',
         content: r.text,
       };
-      setReports(prev => [newRpt, ...prev]);
-      setSelectedId(newRpt.id);
-      window.socToast?.({ title: 'Report generated', sub: newRpt.id, tone: 'ok' });
+      setReports(prev => [rpt, ...prev]);
+      setSelectedId(rpt.id);
+      setEditMode(false);
+      window.socToast?.({ title: 'Report ready', sub: rpt.id, tone: 'ok' });
     } else {
       window.socToast?.({ title: 'Generation failed', sub: r?.error || 'AI engine unavailable', tone: 'error' });
     }
   }
 
-  const selected = reports.find(r => r.id === selectedId);
+  function deleteReport(id) {
+    setReports(prev => {
+      const next = prev.filter(r => r.id !== id);
+      if (selectedId === id) setSelectedId(next[0]?.id || null);
+      return next;
+    });
+  }
+
+  function addRecipient() {
+    if (!newAddr.trim()) return;
+    setRecipients(prev => [...prev, { id: Date.now(), type: newType, addr: newAddr.trim() }]);
+    setNewAddr('');
+    setAddingRecip(false);
+  }
+
+  function sendReport(sel) {
+    if (!sel) return;
+    setReports(prev => prev.map(r => r.id === sel.id ? { ...r, status: 'sent', when: 'now' } : r));
+    window.socToast?.({ title: 'Report sent', sub: `Delivered to ${recipients.length} recipient${recipients.length !== 1 ? 's' : ''}`, tone: 'ok' });
+  }
+
+  function exportPDF(sel) {
+    if (!sel) return;
+    const win = window.open('', '_blank');
+    win.document.write(`<!DOCTYPE html><html><head><title>${sel.title}</title><style>
+      body{font-family:sans-serif;max-width:780px;margin:48px auto;color:#111;line-height:1.6}
+      .hdr{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #111;padding-bottom:14px;margin-bottom:28px}
+      .logo{font-size:22px;font-weight:800;letter-spacing:3px}.sub{font-size:11px;color:#666;margin-top:2px}
+      .meta{font-size:12px;color:#555;text-align:right;line-height:1.8}
+      pre{white-space:pre-wrap;word-break:break-word;font-size:13px;font-family:inherit}
+      .ft{margin-top:48px;border-top:1px solid #ccc;padding-top:8px;font-size:11px;color:#999;text-align:center}
+      @media print{body{margin:24px}}
+    </style></head><body>
+      <div class="hdr">
+        <div><div class="logo">SOC<span style="color:#0077cc">PILOTS</span></div>
+          <div class="sub">${sel.id} · CONFIDENTIAL</div></div>
+        <div class="meta">Period: ${sel.range}<br>Author: ${sel.author}<br>Pages: ${sel.pages}</div>
+      </div>
+      <pre>${(sel.content || 'No content').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre>
+      <div class="ft">SOC Pilots · ${sel.id} · Generated ${sel.when || ''} · AI-drafted, human-approved</div>
+    </body></html>`);
+    win.document.close();
+    setTimeout(() => win.print(), 400);
+  }
+
+  function startEdit(sel) {
+    setEditContent(sel?.content || '');
+    setEditMode(true);
+  }
+
+  function saveEdit() {
+    setReports(prev => prev.map(r => r.id === selectedId ? { ...r, content: editContent } : r));
+    setEditMode(false);
+    window.socToast?.({ title: 'Report saved', sub: 'Content updated', tone: 'ok' });
+  }
+
+  const selected = reports.find(r => r.id === selectedId) || null;
 
   return (
-    <div className="page" data-screen-label="11 Reports">
+    <div className="page">
       <Topbar
         title="Reports"
         sub="AI-drafted exec summaries · compliance · incident retros"
         actions={<>
-          <button className="btn btn-ghost">Templates</button>
-          <button className="btn btn-ghost">Schedule</button>
-          <button className="btn btn-primary" onClick={generateReport} disabled={generating}>
+          <button className="btn btn-ghost" onClick={() => setShowTmpl(true)}>Templates</button>
+          <button className="btn btn-ghost" onClick={() => setShowSched(true)}>Schedule</button>
+          <button className="btn btn-primary" onClick={() => generate('exec')} disabled={generating}>
             <Icon.brain width="13" height="13"/> {generating ? 'Generating…' : 'Generate'}
           </button>
         </>}
       />
+
+      {/* Templates modal */}
+      {showTmpl && (
+        <div className="modal-overlay" onClick={() => setShowTmpl(false)}>
+          <div className="modal" style={{ maxWidth: 480 }} onClick={e => e.stopPropagation()}>
+            <div className="modal-hd">
+              <span>Report Templates</span>
+              <button className="btn-icon" onClick={() => setShowTmpl(false)}><Icon.x width="14" height="14"/></button>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '16px 0' }}>
+              {REPORT_TEMPLATES.map(t => (
+                <button key={t.id} className="btn btn-ghost" style={{ justifyContent: 'flex-start', gap: 12, padding: '12px 16px', textAlign: 'left' }}
+                  onClick={() => { setShowTmpl(false); generate(t.id); }}>
+                  <span style={{ fontSize: 22 }}>{t.icon}</span>
+                  <div>
+                    <div style={{ fontWeight: 600, marginBottom: 2 }}>{t.label}</div>
+                    <div style={{ fontSize: '0.78rem', color: 'var(--fg-3)' }}>{t.desc}</div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Schedule modal */}
+      {showSched && (
+        <div className="modal-overlay" onClick={() => setShowSched(false)}>
+          <div className="modal" style={{ maxWidth: 400 }} onClick={e => e.stopPropagation()}>
+            <div className="modal-hd">
+              <span>Schedule Reports</span>
+              <button className="btn-icon" onClick={() => setShowSched(false)}><Icon.x width="14" height="14"/></button>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14, padding: '16px 0' }}>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <span className="card-sub">Frequency</span>
+                <select className="select-mini" value={schedFreq} onChange={e => setSchedFreq(e.target.value)}>
+                  {SCHED_FREQS.map(f => <option key={f}>{f}</option>)}
+                </select>
+              </label>
+              {(schedFreq === 'Weekly' || schedFreq === 'Bi-weekly') && (
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <span className="card-sub">Day</span>
+                  <select className="select-mini" value={schedDay} onChange={e => setSchedDay(e.target.value)}>
+                    {SCHED_DAYS.map(d => <option key={d}>{d}</option>)}
+                  </select>
+                </label>
+              )}
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <span className="card-sub">Time (UTC)</span>
+                <input type="time" className="mono" value={schedTime} onChange={e => setSchedTime(e.target.value)} style={{ width: 120 }}/>
+              </label>
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', paddingTop: 8 }}>
+                <button className="btn btn-ghost" onClick={() => setShowSched(false)}>Cancel</button>
+                <button className="btn btn-primary" onClick={() => {
+                  setShowSched(false);
+                  window.socToast?.({ title: 'Schedule saved', sub: `${schedFreq} · ${schedDay || ''} ${schedTime} UTC`, tone: 'ok' });
+                }}>Save Schedule</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="page-body">
         {loading ? (
           <div className="loading mono">Loading reports…</div>
         ) : reports.length === 0 ? (
-          <div className="empty mono" style={{ marginTop: 40, textAlign: 'center' }}>
-            <Icon.folder width="32" height="32" /><br />
-            No reports yet. Click <strong>Generate</strong> to create an AI executive summary.
+          <div className="empty mono" style={{ marginTop: 60, textAlign: 'center' }}>
+            <Icon.folder width="36" height="36"/><br/><br/>
+            No reports yet.<br/>Click <strong>Generate</strong> or pick a <strong>Template</strong>.
           </div>
         ) : (
           <div className="reports-layout">
             <aside className="reports-side">
-              <Card title="Reports" sub={`${reports.length} total`} padded={true}>
+              <Card title="Reports" sub={`${reports.length} total`} padded>
                 <ul className="report-list">
                   {reports.map(r => (
-                    <li key={r.id}>
-                      <button className={`report-item ${selectedId===r.id?'on':''}`} onClick={()=>setSelectedId(r.id)}>
+                    <li key={r.id} style={{ position: 'relative' }}>
+                      <button className={`report-item ${selectedId === r.id ? 'on' : ''}`} onClick={() => { setSelectedId(r.id); setEditMode(false); }}>
                         <div className="ri-head">
                           <span className="ri-id mono">{r.id}</span>
                           <Chip mono tone={r.status === 'sent' ? 'ok' : 'warn'}>{r.status}</Chip>
@@ -509,71 +655,122 @@ function PageReports() {
                         <div className="ri-title">{r.title}</div>
                         <div className="ri-meta mono">{r.range} · {r.pages ? r.pages + 'pp · ' : ''}{r.when || ''}</div>
                       </button>
+                      <button className="btn-icon" title="Delete report"
+                        style={{ position: 'absolute', top: 6, right: 4, opacity: .45 }}
+                        onClick={e => { e.stopPropagation(); deleteReport(r.id); }}>
+                        <Icon.x width="11" height="11"/>
+                      </button>
                     </li>
                   ))}
                 </ul>
               </Card>
 
-              <Card title="Distribution" sub="auto-deliver">
-                <div className="dist-row"><Icon.inbox width="14" height="14"/><span>ciso@socpilots.com</span></div>
-                <div className="dist-row"><Icon.inbox width="14" height="14"/><span>soc-leads@socpilots.com</span></div>
-                <div className="dist-row"><Icon.share width="14" height="14"/><span>Slack #soc-execs</span></div>
-                <button className="btn btn-ghost btn-sm" style={{marginTop:10}}><Icon.plus width="11" height="11"/> Add recipient</button>
+              <Card title="Distribution" sub="auto-deliver" padded>
+                {recipients.map(rec => (
+                  <div key={rec.id} className="dist-row" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    {rec.type === 'slack'
+                      ? <Icon.share width="13" height="13" style={{ flexShrink: 0 }}/>
+                      : <Icon.inbox width="13" height="13" style={{ flexShrink: 0 }}/>}
+                    <span style={{ flex: 1, fontSize: '0.82rem' }}>{rec.addr}</span>
+                    <button className="btn-icon" title="Remove" style={{ opacity: .4 }}
+                      onClick={() => setRecipients(prev => prev.filter(r => r.id !== rec.id))}>
+                      <Icon.x width="11" height="11"/>
+                    </button>
+                  </div>
+                ))}
+
+                {addingRecip ? (
+                  <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <select className="select-mini" value={newType} onChange={e => setNewType(e.target.value)}>
+                      <option value="email">Email</option>
+                      <option value="slack">Slack</option>
+                    </select>
+                    <input placeholder={newType === 'email' ? 'name@company.com' : '#channel-name'}
+                      value={newAddr} onChange={e => setNewAddr(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') addRecipient(); if (e.key === 'Escape') setAddingRecip(false); }}
+                      style={{ fontSize: '0.82rem' }} autoFocus/>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <button className="btn btn-primary btn-sm" onClick={addRecipient}>Add</button>
+                      <button className="btn btn-ghost btn-sm" onClick={() => setAddingRecip(false)}>Cancel</button>
+                    </div>
+                  </div>
+                ) : (
+                  <button className="btn btn-ghost btn-sm" style={{ marginTop: 10 }}
+                    onClick={() => setAddingRecip(true)}>
+                    <Icon.plus width="11" height="11"/> Add recipient
+                  </button>
+                )}
               </Card>
             </aside>
 
             <main className="reports-main">
-              {selected && <ReportPreview r={selected} />}
+              {selected && (
+                <Card title={selected.title} sub={selected.range + ' · ' + selected.author}
+                  actions={<>
+                    <Chip mono tone={selected.status === 'sent' ? 'ok' : 'warn'}>{selected.status}</Chip>
+                    {editMode
+                      ? <>
+                          <button className="btn btn-primary btn-sm" onClick={saveEdit}>Save</button>
+                          <button className="btn btn-ghost btn-sm" onClick={() => setEditMode(false)}>Cancel</button>
+                        </>
+                      : <>
+                          <button className="btn btn-ghost btn-sm" onClick={() => startEdit(selected)}>Edit</button>
+                          <button className="btn btn-ghost btn-sm" onClick={() => exportPDF(selected)}>PDF</button>
+                          <button className="btn btn-primary btn-sm"
+                            onClick={() => sendReport(selected)}
+                            disabled={selected.status === 'sent'}>
+                            {selected.status === 'sent' ? 'Sent' : 'Send'}
+                          </button>
+                        </>
+                    }
+                  </>}>
+                  <div className="report-doc">
+                    <div className="rd-header">
+                      <div className="rd-brand">
+                        <div className="rd-mark">
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
+                            <path d="M12 2L20 7V17L12 22L4 17V7Z"/><circle cx="12" cy="12" r="3" fill="currentColor"/>
+                          </svg>
+                        </div>
+                        <div>
+                          <div className="rd-brand-name">SOC<span>PILOTS</span></div>
+                          <div className="rd-brand-sub mono">{selected.id} · CONFIDENTIAL</div>
+                        </div>
+                      </div>
+                      <div className="rd-meta mono">
+                        <div>Period · {selected.range}</div>
+                        <div>Author · {selected.author}</div>
+                        <div>Pages · {selected.pages}</div>
+                      </div>
+                    </div>
+
+                    {editMode ? (
+                      <textarea
+                        value={editContent}
+                        onChange={e => setEditContent(e.target.value)}
+                        style={{ width: '100%', minHeight: 340, background: 'var(--bg-2)', border: '1px solid var(--ln)',
+                          borderRadius: 6, padding: 12, color: 'var(--fg-0)', fontFamily: 'var(--fm)',
+                          fontSize: '0.82rem', lineHeight: 1.6, resize: 'vertical' }}
+                      />
+                    ) : selected.content ? (
+                      <section className="rd-section">
+                        <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'var(--fm)', fontSize: '0.82rem', color: 'var(--fg-1)', margin: 0, lineHeight: 1.65 }}>{selected.content}</pre>
+                      </section>
+                    ) : (
+                      <div className="empty mono" style={{ padding: '40px 24px', textAlign: 'center' }}>
+                        Click <strong>Generate</strong> or choose a <strong>Template</strong> to create a report.
+                      </div>
+                    )}
+
+                    <footer className="rd-foot mono">SOC Pilots · {selected.id} · Generated {selected.when || 'unknown'} · AI-drafted, human-approved</footer>
+                  </div>
+                </Card>
+              )}
             </main>
           </div>
         )}
       </div>
     </div>
-  );
-}
-
-function ReportPreview({ r }) {
-  return (
-    <Card title={r.title} sub={r.range + ' · ' + r.author}
-      actions={<>
-        <Chip mono tone={r.status === 'sent' ? 'ok' : 'warn'}>{r.status}</Chip>
-        <button className="btn btn-ghost btn-sm">Edit</button>
-        <button className="btn btn-ghost btn-sm">PDF</button>
-        <button className="btn btn-primary btn-sm" onClick={() => window.socToast?.({title:'Report sent', sub: 'delivered to 3 recipients', tone:'ok'})}>Send</button>
-      </>}>
-      <div className="report-doc">
-        <div className="rd-header">
-          <div className="rd-brand">
-            <div className="rd-mark">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
-                <path d="M12 2L20 7V17L12 22L4 17V7Z"/><circle cx="12" cy="12" r="3" fill="currentColor"/>
-              </svg>
-            </div>
-            <div>
-              <div className="rd-brand-name">SOC<span>PILOTS</span></div>
-              <div className="rd-brand-sub mono">{r.id} · CONFIDENTIAL</div>
-            </div>
-          </div>
-          <div className="rd-meta mono">
-            <div>Period · {r.range}</div>
-            <div>Author · {r.author}</div>
-            <div>Pages · {r.pages}</div>
-          </div>
-        </div>
-
-        {r.content ? (
-          <section className="rd-section">
-            <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'var(--fm)', fontSize: '0.82rem', color: 'var(--fg-1)', margin: 0 }}>{r.content}</pre>
-          </section>
-        ) : (
-          <div className="empty mono" style={{ padding: '40px 24px', textAlign: 'center' }}>
-            Report content not available. Click <strong>Generate</strong> to produce an AI-drafted summary.
-          </div>
-        )}
-
-        <footer className="rd-foot mono">SOC Pilots · {r.id} · Generated {r.when || 'unknown'} · AI-drafted, human-approved</footer>
-      </div>
-    </Card>
   );
 }
 
