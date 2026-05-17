@@ -4029,29 +4029,29 @@ app.get('/api/vulns', authMW, async (req, res) => {
 
 app.get('/api/reports/summary', authMW, async (req, res) => {
   const TYPE_PROMPTS = {
-    exec:       'Generate a professional SOC executive summary for today. Include: 1) Alert volume and severity breakdown, 2) Top threats and MITRE techniques observed, 3) Critical incidents requiring attention, 4) Case management status, 5) Recommended immediate actions. Use markdown headers. Be concise and professional.',
+    exec:       'Generate a professional SOC executive summary report for today. Include: 1) Alert volume and severity breakdown, 2) Top threats and MITRE ATT&CK techniques observed, 3) Critical incidents requiring immediate attention, 4) Case management status, 5) Recommended immediate actions. Use markdown headers and bullet points. Be concise and professional.',
     threat:     'Generate a threat intelligence report. Include: 1) Top IOC categories observed, 2) MITRE ATT&CK techniques detected, 3) Most active threat actors or campaigns, 4) High-risk source IPs and domains, 5) Recommended detection improvements. Use markdown.',
-    compliance: 'Generate a compliance status report. Include: 1) SOC 2 / ISO 27001 control coverage summary, 2) Log source coverage and gaps, 3) Unanswered alerts SLA breach risk, 4) User access anomalies, 5) Recommended remediation steps. Use markdown.',
+    compliance: 'Generate a compliance status report. Include: 1) SOC 2 / ISO 27001 control coverage summary, 2) Log source coverage and gaps, 3) SLA breach risk for unanswered alerts, 4) User access anomalies, 5) Recommended remediation steps. Use markdown.',
     incident:   'Generate an incident retrospective report. Include: 1) Incident timeline summary, 2) Root cause analysis, 3) Affected systems and blast radius, 4) Response actions taken, 5) Lessons learned and prevention recommendations. Use markdown.',
   };
   const prompt = TYPE_PROMPTS[req.query.type] || TYPE_PROMPTS.exec;
 
-  // Try n8n first
-  const r = await n8nAsk(prompt, 'soc-report', req.user);
-  if (r.ok && r.text) return res.json({ text: r.text, ok: true });
-
-  // n8n unavailable — fall back to LangChain /chat directly
+  // Call LangChain /chat directly — n8n is not used here because its webhook
+  // may not be registered and it returns ambiguous 404 responses.
   try {
     const lc = await axios.post(`${LANGCHAIN_URL}/chat`, {
-      message: prompt, history: [],
+      message:  prompt,
+      history:  [],
       username: req.user?.username || 'system',
       role:     req.user?.role     || 'analyst',
     }, { timeout: 120_000, headers: { Authorization: `Bearer ${LANGCHAIN_TOKEN}` } });
-    const text = lc.data?.response || lc.data?.output || lc.data?.text || '';
+    const text = lc.data?.response || lc.data?.output || lc.data?.text || lc.data?.message || '';
     if (text) return res.json({ text, ok: true });
-  } catch (e) { console.error('[reports/summary]', e.message); }
-
-  res.status(502).json({ ok: false, error: 'AI engine unavailable — n8n and LangChain unreachable' });
+    return res.status(502).json({ ok: false, error: 'LangChain returned an empty response' });
+  } catch (e) {
+    console.error('[reports/summary]', e.message);
+    res.status(502).json({ ok: false, error: 'AI engine unavailable — check langchain-agent container' });
+  }
 });
 
 // ── Wazuh agent helpers used by scanner enrichment ─────────────
