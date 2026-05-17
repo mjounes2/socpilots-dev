@@ -1293,23 +1293,22 @@ function PageLangChain() {
   async function checkHealth() {
     setChecking(true);
     const r = await window.SOC_API.get('/api/langchain/health');
-    setHealth(r || { status: 'healthy', model: 'gpt-4', tools: 6, redis: true, openai: true });
+    setHealth(r || { status: 'healthy', tools: 6, redis: true, openai: true });
     setChecking(false);
   }
 
-  function investigate() {
+  async function investigate() {
     if (!target.trim()) return;
     setOutput('');
     setStream(true);
-    window.SOC_API.stream(
-      '/api/ai/investigate',
-      { target: target.trim(), type: itype, context },
-      (text) => setOutput(text),
-      (text) => { setOutput(text); setStream(false); }
-    ).catch(() => {
-      setStream(false);
-      window.socToast?.({ title: 'Investigation failed', sub: 'Could not reach AI engine', tone: 'error' });
-    });
+    const prompt = `Investigate ${itype}: ${target.trim()}${context ? '\n\nContext: ' + context : ''}`;
+    const r = await window.SOC_API.post('/api/ai/investigate', { prompt });
+    setStream(false);
+    if (!r || r.error) {
+      window.socToast?.({ title: 'Investigation failed', sub: r?.error || 'Could not reach AI engine', tone: 'error' });
+      return;
+    }
+    setOutput(r.response || r.output || r.text || '(No response)');
   }
 
   const healthTone = h => h?.status === 'healthy' ? 'ok' : h?.status === 'degraded' ? 'warn' : 'crit';
@@ -1318,7 +1317,7 @@ function PageLangChain() {
     <div className="page">
       <Topbar
         title="LangChain Agent"
-        sub="ReAct investigation engine · GPT-4 · 6 tools"
+        sub="ReAct investigation engine · LLM Engine · 6 tools"
         actions={<>
           {health && <Chip mono tone={healthTone(health)}><span className={`pip pip-${healthTone(health)}`}/> {health.status}</Chip>}
           <button className="btn btn-ghost" onClick={checkHealth} disabled={checking}>
@@ -1330,7 +1329,7 @@ function PageLangChain() {
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 16 }}>
           <Card title="Agent Config" sub="model · tools · integrations">
             <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <li><span className="card-sub">Model</span><div className="mono">gpt-4</div></li>
+              <li><span className="card-sub">Model</span><div className="mono">LLM</div></li>
               <li><span className="card-sub">Tools</span>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
                   {TOOLS.map(t => <Chip key={t} mono>{t}</Chip>)}
@@ -1339,7 +1338,7 @@ function PageLangChain() {
               <li><span className="card-sub">Redis cache</span>
                 <div><Chip mono tone={health?.redis !== false ? 'ok' : 'crit'}>{health?.redis !== false ? 'connected' : 'unavailable'}</Chip></div>
               </li>
-              <li><span className="card-sub">OpenAI</span>
+              <li><span className="card-sub">LLM Engine</span>
                 <div><Chip mono tone={health?.openai !== false ? 'ok' : 'crit'}>{health?.openai !== false ? 'connected' : 'unavailable'}</Chip></div>
               </li>
             </ul>
@@ -1359,10 +1358,15 @@ function PageLangChain() {
               </select>
             </div>
             <textarea rows="3" value={context} onChange={e => setContext(e.target.value)} placeholder="Optional context: what do you suspect? (e.g. possible C2 beacon, lateral movement…)" style={{ width: '100%', background: 'var(--bg2)', border: '1px solid var(--b2)', borderRadius: 6, padding: 10, color: 'var(--txt)', fontFamily: 'var(--fm)', fontSize: '0.82rem', marginBottom: 10 }} />
-            {(output || streaming) && (
+            {streaming && !output && (
+              <div style={{ padding: '18px 12px', display: 'flex', alignItems: 'center', gap: 10, color: 'var(--fg-2)', fontFamily: 'var(--fm)', fontSize: '0.82rem', background: 'var(--bg)', border: '1px solid var(--b1)', borderRadius: 6 }}>
+                <span style={{ animation: 'spin 1s linear infinite', display: 'inline-block' }}>⟳</span>
+                Running ReAct agent — this may take up to 60 s…
+              </div>
+            )}
+            {output && (
               <pre style={{ background: 'var(--bg)', border: '1px solid var(--b1)', borderRadius: 6, padding: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'var(--fm)', fontSize: '0.8rem', color: 'var(--txt)', maxHeight: 320, overflowY: 'auto' }}>
-                {output || ''}
-                {streaming && <span className="mono dim"> ▋</span>}
+                {output}
               </pre>
             )}
           </Card>
