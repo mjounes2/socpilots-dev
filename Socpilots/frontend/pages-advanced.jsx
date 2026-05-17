@@ -2,135 +2,757 @@
 const { useState: useStateADV, useEffect: useEffectADV, useRef: useRefADV, useMemo: useMemoADV } = React;
 
 // ============= PAGE SLA =============
-const FALLBACK_SLA_DASH = { active: 12, breached: 2, at_risk: 3, resolved_today: 7 };
-const FALLBACK_SLA_POLICIES = [
-  { id: 1, name: 'Critical Response', severity: 'critical', response_hours: 1,  resolution_hours: 4   },
-  { id: 2, name: 'High Priority',     severity: 'high',     response_hours: 4,  resolution_hours: 24  },
-  { id: 3, name: 'Standard',          severity: 'medium',   response_hours: 8,  resolution_hours: 72  },
-  { id: 4, name: 'Low Priority',      severity: 'low',      response_hours: 24, resolution_hours: 168 },
-];
-const FALLBACK_SLA_INSTANCES = [
-  { id: 'SLA-001', case_id: 'SP-2341', severity: 'critical', policy: 'Critical Response', time_remaining_pct: 23, status: 'at-risk',  assigned_to: 'jdoe'  },
-  { id: 'SLA-002', case_id: 'SP-2338', severity: 'high',     policy: 'High Priority',    time_remaining_pct: 68, status: 'on-track', assigned_to: 'admin' },
-  { id: 'SLA-003', case_id: 'SP-2336', severity: 'critical', policy: 'Critical Response', time_remaining_pct: 0,  status: 'breached', assigned_to: 'jdoe'  },
-];
-
 function PageSLA() {
-  const [tab, setTab]         = useStateADV('active');
-  const [dash, setDash]       = useStateADV(FALLBACK_SLA_DASH);
-  const [instances, setInst]  = useStateADV(FALLBACK_SLA_INSTANCES);
-  const [policies, setPol]    = useStateADV(FALLBACK_SLA_POLICIES);
-  const [showForm, setForm]   = useStateADV(false);
-  const [newCaseId, setNCI]   = useStateADV('');
-  const [newPol, setNPol]     = useStateADV('1');
+  const [tab, setTab]               = useStateADV('alerts');
+  const [dash, setDash]             = useStateADV(null);
+  const [policyMap, setPolicyMap]   = useStateADV(null);
 
-  useEffectADV(() => {
-    window.SOC_API.get('/api/sla/dashboard').then(d => { if (d && !d.error) setDash(d); });
-    window.SOC_API.get('/api/sla/policies').then(d => { if (d && Array.isArray(d.policies)) setPol(d.policies); else if (Array.isArray(d)) setPol(d); });
-    window.SOC_API.get('/api/sla/instances?status=active').then(d => { if (d && Array.isArray(d.instances)) setInst(d.instances); else if (Array.isArray(d)) setInst(d); });
-  }, []);
+  // Tab data
+  const [alertHrs, setAlertHrs]     = useStateADV('24');
+  const [alertData, setAlertData]   = useStateADV(null);
+  const [alertLoading, setAL]       = useStateADV(false);
+  const [alertErr, setAlertErr]     = useStateADV(null);
 
-  async function startSLA() {
-    if (!newCaseId.trim()) return;
-    const r = await window.SOC_API.post('/api/sla/instances', { case_id: newCaseId.trim(), policy_id: parseInt(newPol) });
-    if (r && !r.error) {
-      window.socToast?.({ title: 'SLA started', sub: newCaseId + ' · ' + (policies.find(p => String(p.id) === newPol)?.name || ''), tone: 'ok' });
-      setForm(false); setNCI('');
-    } else {
-      window.socToast?.({ title: 'SLA error', sub: r?.error || 'Failed to start SLA', tone: 'error' });
-    }
+  const [activeData, setActiveData] = useStateADV(null);
+  const [activePage, setActivePage] = useStateADV(1);
+  const [activeLoading, setActL]    = useStateADV(false);
+
+  const [breachedData, setBData]    = useStateADV(null);
+  const [breachedPage, setBPage]    = useStateADV(1);
+  const [breachLoading, setBL]      = useStateADV(false);
+
+  const [allData, setAllData]       = useStateADV(null);
+  const [allPage, setAllPage]       = useStateADV(1);
+  const [allStatus, setAllStatus]   = useStateADV('');
+  const [allType, setAllType]       = useStateADV('');
+  const [allLoading, setAllL]       = useStateADV(false);
+
+  const [polData, setPolData]       = useStateADV(null);
+  const [polLoading, setPolL]       = useStateADV(false);
+
+  // Detail modal
+  const [showDetail, setShowDetail] = useStateADV(false);
+  const [detailInst, setDetailInst] = useStateADV(null);
+  const [detailEvts, setDetailEvts] = useStateADV([]);
+  const [detailLoad, setDetailLoad] = useStateADV(false);
+
+  // Start SLA modal
+  const [showStart, setShowStart]   = useStateADV(false);
+  const [startType, setStartType]   = useStateADV('alert');
+  const [startId, setStartId]       = useStateADV('');
+  const [startLabel, setStartLabel] = useStateADV('');
+  const [startSev, setStartSev]     = useStateADV('high');
+
+  // Policy modal
+  const [showPolModal, setShowPol]  = useStateADV(false);
+  const [polEditId, setPolEditId]   = useStateADV(null);
+  const [polName, setPolName]       = useStateADV('');
+  const [polDesc, setPolDesc]       = useStateADV('');
+  const [polEntity, setPolEntity]   = useStateADV('all');
+  const [polSev, setPolSev]         = useStateADV('all');
+  const [polResp, setPolResp]       = useStateADV('60');
+  const [polResol, setPolResol]     = useStateADV('480');
+
+  const user = window.SOC_API.user();
+  const isAdmin = user?.role === 'admin';
+
+  function fmtTs(ts) {
+    if (!ts) return '—';
+    return new Date(ts).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'medium' });
   }
 
-  const statusColor = s => s === 'breached' ? 'critical' : s === 'at-risk' ? 'high' : 'low';
+  // ── Helpers ──────────────────────────────────────────────────────
+  function slaIcon(elapsedMs, responseMinutes, status) {
+    if (status === 'completed') return '✅';
+    if (status === 'cancelled') return '⊘';
+    const pct = (elapsedMs / (responseMinutes * 60000)) * 100;
+    if (status === 'breached' || pct >= 100) return '🔴';
+    if (pct >= 70) return '⚠️';
+    return '✅';
+  }
 
-  const filtered = tab === 'policies' ? [] : instances.filter(i => {
-    if (tab === 'active')   return i.status !== 'breached';
-    if (tab === 'breached') return i.status === 'breached';
-    return true;
-  });
+  function RiskBar({ pct, status }) {
+    let color = 'var(--low)';
+    if (status === 'breached' || pct >= 100) color = 'var(--crit)';
+    else if (pct >= 90) color = 'var(--high)';
+    else if (pct >= 70) color = 'var(--med)';
+    const w = Math.min(pct, 100);
+    return (
+      <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+        <div style={{ background: 'var(--ln)', borderRadius: 3, height: 7, width: 80, overflow: 'hidden', flexShrink: 0 }}>
+          <div style={{ background: color, height: '100%', width: `${w}%` }} />
+        </div>
+        <span className="mono" style={{ fontSize: 11, color }}>{pct}%</span>
+      </div>
+    );
+  }
+
+  function StatusBadge({ status }) {
+    const map = { running: 'var(--acc)', paused: 'var(--med)', breached: 'var(--crit)', completed: 'var(--low)', cancelled: 'var(--fg-3)' };
+    return <span className="mono" style={{ color: map[status] || 'var(--fg-3)', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em' }}>{status}</span>;
+  }
+
+  function EntityLabel({ inst }) {
+    const icons = { investigation: '🔍', case: '📁', alert: '⚡' };
+    const icon  = icons[inst.entity_type] || '•';
+    const label = inst.entity_label || inst.entity_id;
+    return <span title={`${inst.entity_type}: ${inst.entity_id}`}>{icon} {label}</span>;
+  }
+
+  // ── Data loaders ─────────────────────────────────────────────────
+  async function loadDash() {
+    const d = await window.SOC_API.get('/api/sla/dashboard');
+    if (d && !d.error) setDash(d);
+  }
+
+  async function loadPolicyMapOnce() {
+    if (policyMap) return policyMap;
+    const d = await window.SOC_API.get('/api/sla/policy-map');
+    if (d && !d.error) { setPolicyMap(d); return d; }
+    return null;
+  }
+
+  async function loadAlerts(hrs) {
+    const h = hrs ?? alertHrs;
+    setAL(true); setAlertErr(null);
+    const d = await window.SOC_API.get(`/api/sla/alerts?hours=${h}`);
+    setAL(false);
+    if (!d || d.error) { setAlertErr(d?.error || 'Failed to load SLA alerts'); return; }
+    setAlertData(d);
+  }
+
+  async function loadActive(page) {
+    const p = page ?? activePage;
+    setActivePage(p); setActL(true);
+    const d = await window.SOC_API.get(`/api/sla/active?page=${p}&page_size=50`);
+    setActL(false); setActiveData(d);
+  }
+
+  async function loadBreached(page) {
+    const p = page ?? breachedPage;
+    setBPage(p); setBL(true);
+    const d = await window.SOC_API.get(`/api/sla/breached?page=${p}&page_size=50`);
+    setBL(false); setBData(d);
+  }
+
+  async function loadAll(page, status, etype) {
+    const p  = page   ?? allPage;
+    const st = status ?? allStatus;
+    const et = etype  ?? allType;
+    setAllPage(p); setAllL(true);
+    const params = new URLSearchParams({ page: p, page_size: 50 });
+    if (st) params.set('status', st);
+    if (et) params.set('entity_type', et);
+    const d = await window.SOC_API.get(`/api/sla/instances?${params}`);
+    setAllL(false); setAllData(d);
+  }
+
+  async function loadPolicies() {
+    setPolL(true);
+    const d = await window.SOC_API.get('/api/sla/policies');
+    setPolL(false);
+    if (d && !d.error) setPolData(d);
+  }
+
+  function refresh() {
+    loadDash();
+    if (tab === 'alerts')        loadAlerts();
+    else if (tab === 'active')   loadActive();
+    else if (tab === 'breached') loadBreached();
+    else if (tab === 'all')      loadAll();
+    else if (tab === 'policies') loadPolicies();
+  }
+
+  // Initial load
+  useEffectADV(() => {
+    loadDash();
+    loadPolicyMapOnce();
+    loadAlerts();
+  }, []);
+
+  // Tab switch loads
+  useEffectADV(() => {
+    if (tab === 'alerts')        loadAlerts();
+    else if (tab === 'active')   loadActive(1);
+    else if (tab === 'breached') loadBreached(1);
+    else if (tab === 'all')      loadAll(1);
+    else if (tab === 'policies') loadPolicies();
+  }, [tab]);
+
+  // ── Actions ──────────────────────────────────────────────────────
+  async function openDetail(id) {
+    setDetailInst(null); setDetailEvts([]);
+    setDetailLoad(true); setShowDetail(true);
+    const [inst, evtData] = await Promise.all([
+      window.SOC_API.get(`/api/sla/instances/${id}`),
+      window.SOC_API.get(`/api/sla/instances/${id}/events`),
+    ]);
+    setDetailLoad(false);
+    if (inst && !inst.error) setDetailInst(inst);
+    if (evtData?.events) setDetailEvts(evtData.events);
+  }
+
+  async function doPause(id, fromDetail) {
+    const r = await window.SOC_API.post(`/api/sla/instances/${id}/pause`, { reason: 'Manual pause' });
+    if (!r || r.error) { alert(r?.error || 'Failed to pause'); return; }
+    if (fromDetail) setShowDetail(false);
+    refresh();
+  }
+
+  async function doResume(id, fromDetail) {
+    const r = await window.SOC_API.post(`/api/sla/instances/${id}/resume`, { reason: 'Manual resume' });
+    if (!r || r.error) { alert(r?.error || 'Failed to resume'); return; }
+    if (fromDetail) setShowDetail(false);
+    refresh();
+  }
+
+  async function doStop(id, fromDetail) {
+    const r = await window.SOC_API.post(`/api/sla/instances/${id}/stop`, { reason: 'Resolved by analyst' });
+    if (!r || r.error) { alert(r?.error || 'Failed to complete SLA'); return; }
+    if (fromDetail) setShowDetail(false);
+    refresh();
+  }
+
+  async function doCancel(id, fromDetail) {
+    if (!confirm('Cancel this SLA timer?')) return;
+    const r = await window.SOC_API.post(`/api/sla/instances/${id}/cancel`, { reason: 'Cancelled by analyst' });
+    if (!r || r.error) { alert(r?.error || 'Failed to cancel SLA'); return; }
+    if (fromDetail) setShowDetail(false);
+    refresh();
+  }
+
+  async function doStartManual() {
+    if (!startId.trim()) { alert('Entity ID is required'); return; }
+    const r = await window.SOC_API.post('/api/sla/start', {
+      entity_type: startType, entity_id: startId.trim(),
+      entity_label: startLabel.trim() || null, severity: startSev,
+    });
+    if (!r || r.error) { alert(r?.error || 'Failed to start SLA'); return; }
+    setShowStart(false); setStartId(''); setStartLabel('');
+    window.socToast?.({ title: 'SLA started', sub: startId, tone: 'ok' });
+    refresh();
+  }
+
+  async function doSavePolicy() {
+    const body = {
+      name: polName.trim(), description: polDesc.trim(),
+      entity_type: polEntity, severity: polSev,
+      response_minutes: parseInt(polResp), resolution_minutes: parseInt(polResol),
+      escalation_chain: [], active: true,
+    };
+    if (!body.name || !body.response_minutes || !body.resolution_minutes) {
+      alert('Name, Response Minutes, and Resolution Minutes are required'); return;
+    }
+    const r = polEditId
+      ? await window.SOC_API.put(`/api/sla/policies/${polEditId}`, body)
+      : await window.SOC_API.post('/api/sla/policies', body);
+    if (!r || r.error) { alert(r?.error || 'Failed to save policy'); return; }
+    setShowPol(false); loadPolicies();
+  }
+
+  async function doDeletePolicy(id) {
+    if (!confirm('Delete this SLA policy? Active SLA instances will keep their current timers.')) return;
+    const r = await window.SOC_API.del(`/api/sla/policies/${id}`);
+    if (!r || r.error) { alert(r?.error || 'Failed to delete policy'); return; }
+    loadPolicies();
+  }
+
+  function openNewPolicy() {
+    setPolEditId(null); setPolName(''); setPolDesc('');
+    setPolEntity('all'); setPolSev('all'); setPolResp('60'); setPolResol('480');
+    setShowPol(true);
+  }
+
+  function openEditPolicy(p) {
+    setPolEditId(p.id); setPolName(p.name); setPolDesc(p.description || '');
+    setPolEntity(p.entity_type); setPolSev(p.severity);
+    setPolResp(String(p.response_minutes)); setPolResol(String(p.resolution_minutes));
+    setShowPol(true);
+  }
+
+  // ── Tab content renderers ────────────────────────────────────────
+  const TABS = ['alerts', 'active', 'breached', 'all', 'policies'];
+  const TAB_LABELS = { alerts: '⚡ SIEM Alerts', active: 'Active', breached: 'Breached', all: 'All SLAs', policies: 'Policies' };
+
+  function TabAlerts() {
+    if (alertLoading) return <div className="empty mono" style={{ padding: 32 }}>Loading SIEM alerts &amp; syncing SLA timers…</div>;
+    if (alertErr)     return <div className="empty mono" style={{ color: 'var(--crit)', padding: 20 }}>{alertErr}</div>;
+    if (!alertData)   return null;
+    const alerts = alertData.alerts || [];
+    if (!alerts.length) return <div className="empty mono">No high/medium/critical alerts in this time window</div>;
+    return (
+      <>
+        <div style={{ fontSize: 10, color: 'var(--fg-3)', padding: '6px 0 10px', display: 'flex', gap: 16, alignItems: 'center' }}>
+          <span>🔴 = SLA Breached &nbsp;⚠️ = At Risk (&gt;70%) &nbsp;✅ = On Track</span>
+          <span style={{ marginLeft: 'auto' }}>SLA timers auto-started from alert detection time · {alertData.total} alerts</span>
+        </div>
+        <div style={{ overflowX: 'auto' }}>
+          <table className="data-table">
+            <thead><tr>
+              <th style={{ textAlign: 'center' }}>SLA</th>
+              <th>Severity</th><th>Alert</th><th>Rule</th><th>Agent</th>
+              <th>Src IP</th><th>Detected</th><th>Elapsed</th><th>Remaining</th>
+              <th>Risk</th><th>Actions</th>
+            </tr></thead>
+            <tbody>
+              {alerts.map(({ alert, sla }, idx) => {
+                const sev       = sla?.severity || alert?.rule?.level >= 12 ? 'critical' : 'medium';
+                const status    = sla?.status || 'running';
+                const elapsedMs = sla ? (Date.now() - new Date(sla.started_at).getTime() - parseInt(sla.total_paused_ms || 0)) : 0;
+                const pct       = sla ? (sla.breach_pct ?? Math.round(elapsedMs / (sla.response_minutes * 60000) * 100)) : 0;
+                const icon      = sla ? slaIcon(elapsedMs, sla.response_minutes, status) : '—';
+                const remain    = sla?.remaining_human || '—';
+                const elapsed   = sla?.elapsed_human || '—';
+                const rule      = alert?.rule || {};
+                const desc      = (rule.description || '').slice(0, 70);
+                const agent     = alert?.agent?.name || '—';
+                const srcIp     = alert?.data?.srcip || '—';
+                const ts        = alert?.['@timestamp'] || '';
+                const activeSla = sla && ['running','paused','breached'].includes(status);
+                return (
+                  <tr key={idx}>
+                    <td style={{ textAlign: 'center', fontSize: 15 }}>{icon}</td>
+                    <td><SevChip sev={sev} /></td>
+                    <td className="mono" style={{ fontSize: 11, maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={desc}>{desc || '—'}</td>
+                    <td className="mono" style={{ fontSize: 11, color: 'var(--acc)' }}>{rule.id || '—'}</td>
+                    <td style={{ fontSize: 11, color: 'var(--fg-2)' }}>{agent}</td>
+                    <td className="mono" style={{ fontSize: 10, color: 'var(--fg-3)' }}>{srcIp}</td>
+                    <td className="mono" style={{ fontSize: 10, whiteSpace: 'nowrap' }}>{fmtTs(ts)}</td>
+                    <td className="mono" style={{ fontSize: 11 }}>{elapsed}</td>
+                    <td className="mono" style={{ fontSize: 11, color: pct >= 90 ? 'var(--crit)' : pct >= 70 ? 'var(--med)' : 'var(--fg-0)' }}>{remain}</td>
+                    <td>{sla ? <RiskBar pct={pct} status={status} /> : <span style={{ color: 'var(--fg-3)', fontSize: 10 }}>No policy</span>}</td>
+                    <td style={{ whiteSpace: 'nowrap' }}>
+                      {activeSla && <button className="btn btn-ghost btn-sm" style={{ color: 'var(--low)', marginRight: 4 }} onClick={() => doStop(sla.id)}>✓ Resolve</button>}
+                      {sla && <button className="btn btn-ghost btn-sm" onClick={() => openDetail(sla.id)}>Detail</button>}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </>
+    );
+  }
+
+  function TabActive() {
+    if (activeLoading) return <div className="empty mono" style={{ padding: 32 }}>Loading…</div>;
+    const items = activeData?.items;
+    if (!items) return null;
+    if (!items.length) return <div className="empty mono">No active SLAs running</div>;
+    return (
+      <div style={{ overflowX: 'auto' }}>
+        <table className="data-table">
+          <thead><tr>
+            <th>Entity</th><th>Type</th><th>Severity</th><th>Policy</th>
+            <th>Elapsed</th><th>Remaining</th><th>Risk</th><th>Owner</th><th>Actions</th>
+          </tr></thead>
+          <tbody>
+            {items.map(i => (
+              <tr key={i.id} style={{ cursor: 'pointer' }} onClick={() => openDetail(i.id)}>
+                <td><EntityLabel inst={i} /></td>
+                <td style={{ fontSize: 12, color: 'var(--fg-2)' }}>{i.entity_type}</td>
+                <td><SevChip sev={i.severity} /></td>
+                <td style={{ fontSize: 12, color: 'var(--acc)' }}>{i.policy_name || '—'}</td>
+                <td className="mono" style={{ fontSize: 12 }}>{i.elapsed_human}</td>
+                <td className="mono" style={{ fontSize: 12, color: i.breach_pct >= 90 ? 'var(--crit)' : i.breach_pct >= 70 ? 'var(--med)' : 'var(--fg-0)' }}>{i.remaining_human}</td>
+                <td onClick={e => e.stopPropagation()}><RiskBar pct={i.breach_pct} status={i.status} /></td>
+                <td style={{ fontSize: 12, color: 'var(--fg-2)' }}>{i.owner || '—'}</td>
+                <td onClick={e => e.stopPropagation()} style={{ whiteSpace: 'nowrap' }}>
+                  {i.status === 'running'
+                    ? <button className="btn btn-ghost btn-sm" style={{ marginRight: 4 }} onClick={() => doPause(i.id)}>Pause</button>
+                    : <button className="btn btn-ghost btn-sm" style={{ marginRight: 4 }} onClick={() => doResume(i.id)}>Resume</button>}
+                  <button className="btn btn-ghost btn-sm" style={{ color: 'var(--low)' }} onClick={() => doStop(i.id)}>Done</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {activeData?.total > 50 && (
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginTop: 12 }}>
+            <button className="btn btn-ghost btn-sm" disabled={activePage <= 1} onClick={() => loadActive(activePage - 1)}>← Prev</button>
+            <span className="mono dim" style={{ lineHeight: '28px', fontSize: 11 }}>Page {activePage}</span>
+            <button className="btn btn-ghost btn-sm" disabled={activePage * 50 >= activeData.total} onClick={() => loadActive(activePage + 1)}>Next →</button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  function TabBreached() {
+    if (breachLoading) return <div className="empty mono" style={{ padding: 32 }}>Loading…</div>;
+    const items = breachedData?.items;
+    if (!items) return null;
+    if (!items.length) return <div className="empty mono" style={{ color: 'var(--low)' }}>No breached SLAs — compliance is on track!</div>;
+    return (
+      <div style={{ overflowX: 'auto' }}>
+        <table className="data-table">
+          <thead><tr>
+            <th>Entity</th><th>Type</th><th>Severity</th><th>Policy</th>
+            <th>Elapsed</th><th>Over SLA By</th><th>Owner</th><th>Actions</th>
+          </tr></thead>
+          <tbody>
+            {items.map(i => {
+              const overMins = Math.round(Math.max(0, (i.elapsed_ms || 0) - i.response_minutes * 60000) / 60000);
+              return (
+                <tr key={i.id} style={{ cursor: 'pointer' }} onClick={() => openDetail(i.id)}>
+                  <td><EntityLabel inst={i} /></td>
+                  <td style={{ fontSize: 12, color: 'var(--fg-2)' }}>{i.entity_type}</td>
+                  <td><SevChip sev={i.severity} /></td>
+                  <td style={{ fontSize: 12, color: 'var(--acc)' }}>{i.policy_name || '—'}</td>
+                  <td className="mono" style={{ fontSize: 12 }}>{i.elapsed_human}</td>
+                  <td className="mono" style={{ fontSize: 12, color: 'var(--crit)', fontWeight: 600 }}>+{overMins}m</td>
+                  <td style={{ fontSize: 12, color: 'var(--fg-2)' }}>{i.owner || '—'}</td>
+                  <td onClick={e => e.stopPropagation()}>
+                    <button className="btn btn-ghost btn-sm" style={{ color: 'var(--low)' }} onClick={() => doStop(i.id)}>Resolve</button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        {breachedData?.total > 50 && (
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginTop: 12 }}>
+            <button className="btn btn-ghost btn-sm" disabled={breachedPage <= 1} onClick={() => loadBreached(breachedPage - 1)}>← Prev</button>
+            <span className="mono dim" style={{ lineHeight: '28px', fontSize: 11 }}>Page {breachedPage}</span>
+            <button className="btn btn-ghost btn-sm" disabled={breachedPage * 50 >= breachedData.total} onClick={() => loadBreached(breachedPage + 1)}>Next →</button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  function TabAll() {
+    if (allLoading) return <div className="empty mono" style={{ padding: 32 }}>Loading…</div>;
+    const items = allData?.items;
+    if (!items) return null;
+    if (!items.length) return <div className="empty mono">No SLAs found</div>;
+    return (
+      <div style={{ overflowX: 'auto' }}>
+        <table className="data-table">
+          <thead><tr>
+            <th>Entity</th><th>Type</th><th>Severity</th><th>Policy</th>
+            <th>Status</th><th>Elapsed</th><th>Risk</th><th>Owner</th><th>Started</th>
+          </tr></thead>
+          <tbody>
+            {items.map(i => (
+              <tr key={i.id} style={{ cursor: 'pointer' }} onClick={() => openDetail(i.id)}>
+                <td><EntityLabel inst={i} /></td>
+                <td style={{ fontSize: 12, color: 'var(--fg-2)' }}>{i.entity_type}</td>
+                <td><SevChip sev={i.severity} /></td>
+                <td style={{ fontSize: 12, color: 'var(--acc)' }}>{i.policy_name || '—'}</td>
+                <td><StatusBadge status={i.status} /></td>
+                <td className="mono" style={{ fontSize: 12 }}>{i.elapsed_human}</td>
+                <td>{['running','paused','breached'].includes(i.status) ? <RiskBar pct={i.breach_pct} status={i.status} /> : <span style={{ color: 'var(--fg-3)' }}>—</span>}</td>
+                <td style={{ fontSize: 12, color: 'var(--fg-2)' }}>{i.owner || '—'}</td>
+                <td className="mono" style={{ fontSize: 11, color: 'var(--fg-3)' }}>{fmtTs(i.started_at)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {allData?.total > 50 && (
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginTop: 12 }}>
+            <button className="btn btn-ghost btn-sm" disabled={allPage <= 1} onClick={() => loadAll(allPage - 1)}>← Prev</button>
+            <span className="mono dim" style={{ lineHeight: '28px', fontSize: 11 }}>Page {allPage} · {allData.total} total</span>
+            <button className="btn btn-ghost btn-sm" disabled={allPage * 50 >= allData.total} onClick={() => loadAll(allPage + 1)}>Next →</button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  function TabPolicies() {
+    if (polLoading) return <div className="empty mono" style={{ padding: 32 }}>Loading…</div>;
+    const policies = polData?.policies || [];
+    return (
+      <>
+        {isAdmin && (
+          <div style={{ marginBottom: 14 }}>
+            <button className="btn btn-primary btn-sm" onClick={openNewPolicy}>+ New Policy</button>
+          </div>
+        )}
+        <table className="data-table">
+          <thead><tr>
+            <th>Name</th><th>Entity Type</th><th>Severity</th>
+            <th>Response</th><th>Resolution</th><th>Escalation Chain</th><th>Status</th>
+            {isAdmin && <th></th>}
+          </tr></thead>
+          <tbody>
+            {policies.map(p => {
+              const chain = Array.isArray(p.escalation_chain) ? p.escalation_chain : [];
+              const chainStr = chain.map(e => `${e.at_pct}% → ${e.action}`).join(', ') || '—';
+              return (
+                <tr key={p.id}>
+                  <td style={{ fontWeight: 600, color: 'var(--acc)' }}>{p.name}</td>
+                  <td style={{ fontSize: 12, color: 'var(--fg-2)' }}>{p.entity_type}</td>
+                  <td>{p.severity !== 'all' ? <SevChip sev={p.severity} /> : <span style={{ color: 'var(--fg-3)' }}>all</span>}</td>
+                  <td className="mono" style={{ fontSize: 12 }}>{p.response_minutes}m</td>
+                  <td className="mono" style={{ fontSize: 12 }}>{p.resolution_minutes >= 60 ? Math.round(p.resolution_minutes / 60) + 'h' : p.resolution_minutes + 'm'}</td>
+                  <td style={{ fontSize: 11, color: 'var(--fg-2)' }}>{chainStr}</td>
+                  <td>{p.active ? <span style={{ color: 'var(--low)', fontSize: 11, fontWeight: 700 }}>ACTIVE</span> : <span style={{ color: 'var(--fg-3)', fontSize: 11 }}>OFF</span>}</td>
+                  {isAdmin && (
+                    <td style={{ whiteSpace: 'nowrap' }}>
+                      <button className="btn btn-ghost btn-sm" style={{ marginRight: 4 }} onClick={() => openEditPolicy(p)}>Edit</button>
+                      <button className="btn btn-ghost btn-sm" style={{ color: 'var(--crit)' }} onClick={() => doDeletePolicy(p.id)}>Del</button>
+                    </td>
+                  )}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </>
+    );
+  }
+
+  // ── Detail modal content ─────────────────────────────────────────
+  function DetailModal() {
+    if (!showDetail) return null;
+    const inst = detailInst;
+    const isActive = inst && ['running','paused','breached'].includes(inst.status);
+    return (
+      <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.65)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+           onClick={() => setShowDetail(false)}>
+        <div style={{ background: 'var(--bg-2)', border: '1px solid var(--ln)', borderRadius: 8, width: '90%', maxWidth: 680, maxHeight: '85vh', display: 'flex', flexDirection: 'column' }}
+             onClick={e => e.stopPropagation()}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', borderBottom: '1px solid var(--ln)' }}>
+            <span style={{ fontWeight: 700, fontSize: 15 }}>SLA Detail &amp; Audit Log</span>
+            <button className="btn btn-ghost btn-sm" onClick={() => setShowDetail(false)}>✕</button>
+          </div>
+          <div style={{ overflowY: 'auto', padding: 20, flex: 1 }}>
+            {detailLoad && <div className="empty mono">Loading…</div>}
+            {!detailLoad && !inst && <div className="empty mono" style={{ color: 'var(--crit)' }}>Failed to load SLA instance</div>}
+            {inst && (
+              <>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20, paddingBottom: 16, borderBottom: '1px solid var(--ln)' }}>
+                  {[
+                    ['Entity',           <span style={{ color: 'var(--acc)' }}>{inst.entity_type}: {inst.entity_id}{inst.entity_label && <span style={{ color: 'var(--fg-2)', fontSize: 12, display: 'block', marginTop: 2 }}>{inst.entity_label}</span>}</span>],
+                    ['Policy',           inst.policy_name || 'Custom'],
+                    ['Status',           <StatusBadge status={inst.status} />],
+                    ['Severity',         <SevChip sev={inst.severity} />],
+                    ['Elapsed / Window', <span className="mono">{inst.elapsed_human} / {inst.response_minutes}m</span>],
+                    ['Remaining',        <span className="mono">{isActive ? inst.remaining_human : '—'}</span>],
+                    ['Breach Risk',      (isActive || inst.status === 'breached') ? <RiskBar pct={inst.breach_pct} status={inst.status} /> : <span style={{ color: 'var(--fg-3)' }}>—</span>],
+                    ['Owner',            <span style={{ color: 'var(--fg-2)' }}>{inst.owner || '—'}</span>],
+                  ].map(([label, val]) => (
+                    <div key={label}>
+                      <div style={{ color: 'var(--fg-3)', fontSize: 10, textTransform: 'uppercase', letterSpacing: '.08em', marginBottom: 3 }}>{label}</div>
+                      <div>{val}</div>
+                    </div>
+                  ))}
+                </div>
+                {isActive && (
+                  <div style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap' }}>
+                    {inst.status === 'running' && <button className="btn btn-ghost btn-sm" onClick={() => doPause(inst.id, true)}>Pause Timer</button>}
+                    {inst.status === 'paused'  && <button className="btn btn-ghost btn-sm" onClick={() => doResume(inst.id, true)}>Resume Timer</button>}
+                    <button className="btn btn-ghost btn-sm" style={{ color: 'var(--low)' }} onClick={() => doStop(inst.id, true)}>Mark Resolved</button>
+                    <button className="btn btn-ghost btn-sm" style={{ color: 'var(--crit)' }} onClick={() => doCancel(inst.id, true)}>Cancel SLA</button>
+                  </div>
+                )}
+                <div style={{ color: 'var(--fg-3)', fontSize: 10, textTransform: 'uppercase', letterSpacing: '.08em', marginBottom: 10 }}>Audit Log</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                  {detailEvts.length === 0
+                    ? <div className="mono dim" style={{ fontSize: 12 }}>No events recorded yet</div>
+                    : detailEvts.map((e, i) => (
+                      <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'baseline', fontSize: 12, padding: '6px 10px', background: 'var(--bg-3)', borderRadius: 4, borderLeft: `2px solid ${e.event_type.includes('breach') ? 'var(--crit)' : e.event_type.includes('thresh') ? 'var(--med)' : 'var(--ln)'}` }}>
+                        <span className="mono dim" style={{ whiteSpace: 'nowrap', flexShrink: 0 }}>{fmtTs(e.created_at)}</span>
+                        <span className="mono" style={{ color: 'var(--acc)', fontWeight: 700, textTransform: 'uppercase', fontSize: 10, whiteSpace: 'nowrap' }}>{e.event_type}</span>
+                        {e.actor  && <span style={{ color: 'var(--fg-2)' }}>{e.actor}</span>}
+                        {e.reason && <span style={{ color: 'var(--fg-3)' }}>{e.reason}</span>}
+                      </div>
+                    ))
+                  }
+                </div>
+              </>
+            )}
+          </div>
+          <div style={{ padding: '12px 20px', borderTop: '1px solid var(--ln)' }}>
+            <button className="btn btn-ghost btn-sm" onClick={() => setShowDetail(false)}>Close</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  function StartModal() {
+    if (!showStart) return null;
+    return (
+      <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.65)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+           onClick={() => setShowStart(false)}>
+        <div style={{ background: 'var(--bg-2)', border: '1px solid var(--ln)', borderRadius: 8, width: '90%', maxWidth: 480 }}
+             onClick={e => e.stopPropagation()}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', borderBottom: '1px solid var(--ln)' }}>
+            <span style={{ fontWeight: 700 }}>Start SLA Timer</span>
+            <button className="btn btn-ghost btn-sm" onClick={() => setShowStart(false)}>✕</button>
+          </div>
+          <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div>
+              <div className="mono dim" style={{ fontSize: 11, marginBottom: 4 }}>Entity Type</div>
+              <select className="select-mini mono" value={startType} onChange={e => setStartType(e.target.value)} style={{ width: '100%' }}>
+                <option value="alert">SIEM Alert</option>
+                <option value="investigation">Investigation</option>
+                <option value="case">Case</option>
+              </select>
+            </div>
+            <div>
+              <div className="mono dim" style={{ fontSize: 11, marginBottom: 4 }}>Entity ID</div>
+              <input className="mono" placeholder="e.g. 42, case-1234, or OpenSearch alert ID" value={startId} onChange={e => setStartId(e.target.value)} style={{ width: '100%' }} />
+            </div>
+            <div>
+              <div className="mono dim" style={{ fontSize: 11, marginBottom: 4 }}>Label (optional)</div>
+              <input className="mono" placeholder="e.g. Brute force attack on DC01" value={startLabel} onChange={e => setStartLabel(e.target.value)} style={{ width: '100%' }} />
+            </div>
+            <div>
+              <div className="mono dim" style={{ fontSize: 11, marginBottom: 4 }}>Severity</div>
+              <select className="select-mini mono" value={startSev} onChange={e => setStartSev(e.target.value)} style={{ width: '100%' }}>
+                <option value="critical">Critical</option>
+                <option value="high">High</option>
+                <option value="medium">Medium</option>
+                <option value="low">Low</option>
+              </select>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8, padding: '12px 20px', borderTop: '1px solid var(--ln)' }}>
+            <button className="btn btn-ghost" onClick={() => setShowStart(false)}>Cancel</button>
+            <button className="btn btn-primary" onClick={doStartManual}>Start SLA</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  function PolicyModal() {
+    if (!showPolModal) return null;
+    return (
+      <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.65)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+           onClick={() => setShowPol(false)}>
+        <div style={{ background: 'var(--bg-2)', border: '1px solid var(--ln)', borderRadius: 8, width: '90%', maxWidth: 520 }}
+             onClick={e => e.stopPropagation()}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', borderBottom: '1px solid var(--ln)' }}>
+            <span style={{ fontWeight: 700 }}>{polEditId ? 'Edit SLA Policy' : 'New SLA Policy'}</span>
+            <button className="btn btn-ghost btn-sm" onClick={() => setShowPol(false)}>✕</button>
+          </div>
+          <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div>
+              <div className="mono dim" style={{ fontSize: 11, marginBottom: 4 }}>Policy Name *</div>
+              <input className="mono" placeholder="e.g. Critical Incident SLA" value={polName} onChange={e => setPolName(e.target.value)} style={{ width: '100%' }} />
+            </div>
+            <div>
+              <div className="mono dim" style={{ fontSize: 11, marginBottom: 4 }}>Description</div>
+              <input className="mono" placeholder="Optional description" value={polDesc} onChange={e => setPolDesc(e.target.value)} style={{ width: '100%' }} />
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <div>
+                <div className="mono dim" style={{ fontSize: 11, marginBottom: 4 }}>Entity Type</div>
+                <select className="select-mini mono" value={polEntity} onChange={e => setPolEntity(e.target.value)} style={{ width: '100%' }}>
+                  <option value="all">All</option>
+                  <option value="alert">Alert</option>
+                  <option value="investigation">Investigation</option>
+                  <option value="case">Case</option>
+                </select>
+              </div>
+              <div>
+                <div className="mono dim" style={{ fontSize: 11, marginBottom: 4 }}>Severity</div>
+                <select className="select-mini mono" value={polSev} onChange={e => setPolSev(e.target.value)} style={{ width: '100%' }}>
+                  <option value="all">All</option>
+                  <option value="critical">Critical</option>
+                  <option value="high">High</option>
+                  <option value="medium">Medium</option>
+                  <option value="low">Low</option>
+                </select>
+              </div>
+              <div>
+                <div className="mono dim" style={{ fontSize: 11, marginBottom: 4 }}>Response Window (minutes) *</div>
+                <input type="number" min="1" className="mono" value={polResp} onChange={e => setPolResp(e.target.value)} style={{ width: '100%' }} />
+              </div>
+              <div>
+                <div className="mono dim" style={{ fontSize: 11, marginBottom: 4 }}>Resolution Window (minutes) *</div>
+                <input type="number" min="1" className="mono" value={polResol} onChange={e => setPolResol(e.target.value)} style={{ width: '100%' }} />
+              </div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8, padding: '12px 20px', borderTop: '1px solid var(--ln)' }}>
+            <button className="btn btn-ghost" onClick={() => setShowPol(false)}>Cancel</button>
+            <button className="btn btn-primary" onClick={doSavePolicy}>Save Policy</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Render ───────────────────────────────────────────────────────
+  const mttrStr  = dash?.mttr_minutes != null ? dash.mttr_minutes + 'm' : '—';
+  const complStr = dash?.compliance_rate != null ? dash.compliance_rate + '%' : '—';
 
   return (
     <div className="page">
+      <DetailModal />
+      <StartModal />
+      <PolicyModal />
       <Topbar
         title="SLA Management"
-        sub="Service Level Agreements · response &amp; resolution tracking"
+        sub="Track response &amp; resolution SLAs across investigations, cases, and SIEM alerts"
         actions={<>
-          <button className="btn btn-primary" onClick={() => setForm(f => !f)}>
-            <Icon.plus width="13" height="13"/> Start SLA
+          <button className="btn btn-ghost btn-sm" onClick={refresh}><Icon.refresh width="13" height="13" /></button>
+          <button className="btn btn-primary" onClick={() => setShowStart(true)}>
+            <Icon.plus width="13" height="13" /> Start SLA
           </button>
         </>}
       />
       <div className="page-body">
-        {showForm && (
-          <Card title="Start SLA" sub="attach an SLA policy to a case">
-            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
-              <div>
-                <div className="card-sub" style={{ marginBottom: 4 }}>Case ID</div>
-                <input className="mono" placeholder="SP-2341" value={newCaseId} onChange={e => setNCI(e.target.value)} style={{ width: 140 }} />
-              </div>
-              <div>
-                <div className="card-sub" style={{ marginBottom: 4 }}>Policy</div>
-                <select className="select-mini mono" value={newPol} onChange={e => setNPol(e.target.value)}>
-                  {policies.map(p => <option key={p.id} value={String(p.id)}>{p.name}</option>)}
-                </select>
-              </div>
-              <button className="btn btn-primary" onClick={startSLA}>Create</button>
-              <button className="btn btn-ghost" onClick={() => setForm(false)}>Cancel</button>
-            </div>
-          </Card>
-        )}
-
-        <div className="kpi-grid" style={{ gridTemplateColumns: 'repeat(4,1fr)' }}>
-          <KpiCard label="Active SLAs"     value={dash.active}         sub="in progress" />
-          <KpiCard label="Breached"        value={dash.breached}       sub="past deadline" sev={dash.breached > 0 ? 'critical' : undefined} />
-          <KpiCard label="At Risk"         value={dash.at_risk}        sub="< 25% time left" sev={dash.at_risk > 0 ? 'high' : undefined} />
-          <KpiCard label="Resolved Today"  value={dash.resolved_today} sub="closed within SLA" />
+        {/* KPI strip */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: 12, marginBottom: 16 }}>
+          {[
+            { label: 'Active SLAs',      value: dash?.active ?? '…',   sub: 'running timers',        sev: undefined },
+            { label: 'Breached',         value: dash?.breached ?? '…', sub: 'past deadline',          sev: dash?.breached > 0 ? 'critical' : undefined },
+            { label: 'Paused',           value: dash?.paused ?? '…',   sub: 'suspended timers',       sev: undefined },
+            { label: 'Compliance (30d)', value: complStr,               sub: '% resolved on time',    sev: undefined },
+            { label: 'Avg MTTR (30d)',   value: mttrStr,                sub: 'mean time to resolve',  sev: undefined },
+          ].map(k => <KpiCard key={k.label} label={k.label} value={k.value} sub={k.sub} sev={k.sev} />)}
         </div>
 
-        <Card title="SLA Tracker"
+        {/* Tabs */}
+        <Card
+          title="SLA Tracker"
           actions={<>
-            {['active','breached','all','policies'].map(t => (
-              <button key={t} className={`seg-btn ${tab === t ? 'on' : ''}`} onClick={() => setTab(t)}>{t}</button>
+            {tab === 'alerts' && (
+              <select className="select-mini mono" value={alertHrs} onChange={e => { setAlertHrs(e.target.value); loadAlerts(e.target.value); }}
+                style={{ marginRight: 8 }}>
+                <option value="1">Last 1h</option>
+                <option value="6">Last 6h</option>
+                <option value="24">Last 24h</option>
+                <option value="48">Last 48h</option>
+                <option value="168">Last 7d</option>
+              </select>
+            )}
+            {tab === 'all' && (
+              <>
+                <select className="select-mini mono" value={allStatus} onChange={e => { setAllStatus(e.target.value); loadAll(1, e.target.value); }} style={{ marginRight: 6 }}>
+                  <option value="">All statuses</option>
+                  <option value="running">Running</option>
+                  <option value="paused">Paused</option>
+                  <option value="breached">Breached</option>
+                  <option value="completed">Completed</option>
+                  <option value="cancelled">Cancelled</option>
+                </select>
+                <select className="select-mini mono" value={allType} onChange={e => { setAllType(e.target.value); loadAll(1, allStatus, e.target.value); }} style={{ marginRight: 8 }}>
+                  <option value="">All types</option>
+                  <option value="alert">Alert</option>
+                  <option value="investigation">Investigation</option>
+                  <option value="case">Case</option>
+                </select>
+              </>
+            )}
+            {TABS.map(t => (
+              <button key={t} className={`seg-btn ${tab === t ? 'on' : ''}`} onClick={() => setTab(t)}>{TAB_LABELS[t]}</button>
             ))}
-          </>}>
-
-          {tab === 'policies' ? (
-            <table className="data-table">
-              <thead><tr><th>POLICY NAME</th><th>SEVERITY</th><th>RESPONSE TIME (h)</th><th>RESOLUTION TIME (h)</th><th></th></tr></thead>
-              <tbody>
-                {policies.map(p => (
-                  <tr key={p.id}>
-                    <td>{p.name}</td>
-                    <td><SevChip sev={p.severity} /></td>
-                    <td className="mono">{p.response_hours}h</td>
-                    <td className="mono">{p.resolution_hours}h</td>
-                    <td><button className="btn btn-ghost btn-sm">Edit</button></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          ) : (
-            <table className="data-table">
-              <thead><tr><th>CASE ID</th><th>SEVERITY</th><th>POLICY</th><th style={{ width: 180 }}>TIME REMAINING</th><th>STATUS</th><th>ASSIGNED TO</th></tr></thead>
-              <tbody>
-                {filtered.map(i => (
-                  <tr key={i.id}>
-                    <td className="mono">{i.case_id}</td>
-                    <td><SevChip sev={i.severity} /></td>
-                    <td>{i.policy}</td>
-                    <td>
-                      <div className="bar-wrap">
-                        <div className="bar" data-sev={statusColor(i.status)} style={{ width: `${i.time_remaining_pct}%` }} />
-                        <span className="bar-val mono">{i.time_remaining_pct}%</span>
-                      </div>
-                    </td>
-                    <td><Chip mono tone={i.status === 'breached' ? 'crit' : i.status === 'at-risk' ? 'warn' : 'ok'}>{i.status}</Chip></td>
-                    <td className="mono">{i.assigned_to}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+          </>}
+        >
+          {tab === 'alerts'   && <TabAlerts />}
+          {tab === 'active'   && <TabActive />}
+          {tab === 'breached' && <TabBreached />}
+          {tab === 'all'      && <TabAll />}
+          {tab === 'policies' && <TabPolicies />}
         </Card>
       </div>
     </div>
