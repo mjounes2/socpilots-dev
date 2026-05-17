@@ -1,44 +1,6 @@
 // UEBA (User & Entity Behavior Analytics) page
 const { useState: useStateU, useEffect: useEffectU, useMemo: useMemoU } = React;
 
-// ============= FALLBACK DATA =============
-const FALLBACK_UEBA_STATS = { users: 47, hosts: 23, processes: 312, edges: 1847, avgRisk: 23, highRisk: 4 };
-
-const FALLBACK_LEADERBOARD = [
-  { name: 'svc_backup',   type: 'User', risk: 88, anomalies: 7, lastActive: '2m ago' },
-  { name: 'admin',        type: 'User', risk: 76, anomalies: 5, lastActive: '14m ago' },
-  { name: 'win-dc-01',    type: 'Host', risk: 71, anomalies: 4, lastActive: '4s ago' },
-  { name: 'jdoe',         type: 'User', risk: 54, anomalies: 2, lastActive: '1h ago' },
-  { name: 'db-primary',   type: 'Host', risk: 48, anomalies: 3, lastActive: '12s ago' },
-  { name: 'svc_deploy',   type: 'User', risk: 42, anomalies: 1, lastActive: '3h ago' },
-  { name: 'k8s-worker-1', type: 'Host', risk: 31, anomalies: 1, lastActive: '3s ago' },
-  { name: 'bjones',       type: 'User', risk: 18, anomalies: 0, lastActive: '2d ago' },
-];
-
-const FALLBACK_ANOMALIES = {
-  lateral_movement: [
-    { entity: 'svc_backup', detail: 'Accessed 6 hosts in 4min via SMB', time: '2m ago', score: 85 },
-    { entity: 'admin',      detail: 'RDP from jump-host to win-dc-01 after hours', time: '18m ago', score: 72 },
-  ],
-  impossible_travel: [
-    { entity: 'jdoe', detail: 'Login from US then EU within 12min', time: '47m ago', score: 95 },
-  ],
-  privilege_escalation: [
-    { entity: 'svc_backup', detail: 'Token impersonation on db-primary', time: '5m ago', score: 81 },
-  ],
-  after_hours_access: [
-    { entity: 'admin',  detail: 'Login at 03:22 UTC from 10.0.4.45', time: '3h ago', score: 55 },
-    { entity: 'bjones', detail: 'VPN access Saturday 01:15 UTC', time: '2d ago', score: 42 },
-  ],
-  high_freq_logins: [
-    { entity: 'svc_deploy', detail: '147 auth events in 10min', time: '1h ago', score: 50 },
-  ],
-  rare_processes: [
-    { entity: 'win-dc-01',  detail: 'mshta.exe spawned from winlogon.exe', time: '22m ago', score: 78 },
-    { entity: 'db-primary', detail: 'certutil.exe with -urlcache flag', time: '1h ago', score: 65 },
-  ],
-};
-
 const ANOMALY_PANELS = [
   { key: 'lateral_movement',   label: 'Lateral Movement',     weight: 85, sev: 'high' },
   { key: 'impossible_travel',  label: 'Impossible Travel',    weight: 95, sev: 'critical' },
@@ -112,9 +74,9 @@ function AnomalyPanel({ panel, items }) {
 // ============= MAIN PAGE =============
 function PageUEBA() {
   const [tf, setTf]                   = useStateU('24h');
-  const [stats, setStats]             = useStateU(FALLBACK_UEBA_STATS);
-  const [leaderboard, setLeaderboard] = useStateU(FALLBACK_LEADERBOARD);
-  const [anomalies, setAnomalies]     = useStateU(FALLBACK_ANOMALIES);
+  const [stats, setStats]             = useStateU(null);
+  const [leaderboard, setLeaderboard] = useStateU([]);
+  const [anomalies, setAnomalies]     = useStateU({});
   const [digest, setDigest]           = useStateU(null);
   const [digestLoading, setDigestLoading] = useStateU(false);
   const [loading, setLoading]         = useStateU(false);
@@ -146,7 +108,7 @@ function PageUEBA() {
         if (cancelled) return;
         if (statsRes && !statsRes.error) setStats(statsRes);
         if (lbRes && !lbRes.error) {
-          setLeaderboard(lbRes.items || lbRes.users || FALLBACK_LEADERBOARD);
+          setLeaderboard(lbRes.items || lbRes.users || []);
         }
 
         // Fetch anomaly panels in parallel
@@ -156,7 +118,7 @@ function PageUEBA() {
         );
         const anomalyResults = await Promise.all(anomalyFetches);
         if (cancelled) return;
-        const merged = { ...FALLBACK_ANOMALIES };
+        const merged = {};
         anomalyResults.forEach(([key, res]) => {
           if (res && !res.error && Array.isArray(res.items || res)) {
             merged[key] = res.items || res;
@@ -164,7 +126,7 @@ function PageUEBA() {
         });
         setAnomalies(merged);
       } catch {
-        // keep fallback data
+        // leave state as empty
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -230,7 +192,7 @@ function PageUEBA() {
     setDigestLoading(false);
   }
 
-  const s = stats || FALLBACK_UEBA_STATS;
+  const s = stats || { users: 0, hosts: 0, processes: 0, edges: 0, avgRisk: 0, highRisk: 0 };
 
   return (
     <div className="page" data-screen-label="UEBA">

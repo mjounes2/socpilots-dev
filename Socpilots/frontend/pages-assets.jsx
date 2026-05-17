@@ -1,29 +1,6 @@
 // Assets page — network asset inventory, subnet management, scan controls
 const { useState: useStateAS, useEffect: useEffectAS, useMemo: useMemoAS } = React;
 
-// ============= FALLBACK DATA =============
-const FALLBACK_SUBNETS = [
-  { id: 1, cidr: '10.0.4.0/24', description: 'Server VLAN',        hosts: 18, last_scan: '2026-05-13T10:00:00Z' },
-  { id: 2, cidr: '10.0.5.0/24', description: 'Kubernetes cluster', hosts: 6,  last_scan: '2026-05-13T10:00:00Z' },
-  { id: 3, cidr: '10.0.8.0/24', description: 'Endpoint VLAN',      hosts: 34, last_scan: '2026-05-12T22:00:00Z' },
-  { id: 4, cidr: '10.0.9.0/24', description: 'Lab network',        hosts: 3,  last_scan: '2026-05-11T08:00:00Z' },
-];
-
-const FALLBACK_ASSETS = [
-  { id: 1,  ip: '10.0.4.122', hostname: 'web-prod-01',  os_type: 'Ubuntu 22.04', status: 'online',  criticality: 'high',     agent_id: '003', last_seen: new Date(Date.now()-5000).toISOString(),      alerts: 412 },
-  { id: 2,  ip: '10.0.4.123', hostname: 'web-prod-02',  os_type: 'Ubuntu 22.04', status: 'online',  criticality: 'high',     agent_id: '004', last_seen: new Date(Date.now()-10000).toISOString(),     alerts: 87  },
-  { id: 3,  ip: '10.0.4.18',  hostname: 'db-primary',   os_type: 'Debian 12',    status: 'online',  criticality: 'critical', agent_id: '007', last_seen: new Date(Date.now()-15000).toISOString(),     alerts: 287 },
-  { id: 4,  ip: '10.0.4.19',  hostname: 'db-replica',   os_type: 'Debian 12',    status: 'online',  criticality: 'high',     agent_id: '008', last_seen: new Date(Date.now()-20000).toISOString(),     alerts: 4   },
-  { id: 5,  ip: '10.0.4.45',  hostname: 'win-dc-01',    os_type: 'Windows Srv',  status: 'online',  criticality: 'critical', agent_id: '011', last_seen: new Date(Date.now()-8000).toISOString(),      alerts: 198 },
-  { id: 6,  ip: '10.0.4.46',  hostname: 'win-dc-02',    os_type: 'Windows Srv',  status: 'online',  criticality: 'critical', agent_id: '012', last_seen: new Date(Date.now()-12000).toISOString(),     alerts: 12  },
-  { id: 7,  ip: '10.0.4.7',   hostname: 'mail-gw-01',   os_type: 'Rocky Linux',  status: 'online',  criticality: 'high',     agent_id: '015', last_seen: new Date(Date.now()-60000).toISOString(),     alerts: 154 },
-  { id: 8,  ip: '10.0.4.99',  hostname: 'jump-host',    os_type: 'Ubuntu 22.04', status: 'online',  criticality: 'medium',   agent_id: '022', last_seen: new Date(Date.now()-3000).toISOString(),      alerts: 89  },
-  { id: 9,  ip: '10.0.5.11',  hostname: 'k8s-worker-1', os_type: 'Talos 1.6',    status: 'online',  criticality: 'medium',   agent_id: '029', last_seen: new Date(Date.now()-4000).toISOString(),      alerts: 18  },
-  { id: 10, ip: '10.0.5.13',  hostname: 'k8s-worker-3', os_type: 'Talos 1.6',    status: 'offline', criticality: 'medium',   agent_id: null,  last_seen: new Date(Date.now()-14400000).toISOString(),  alerts: 0   },
-  { id: 11, ip: '10.0.8.41',  hostname: 'macbook-yj',   os_type: 'macOS 14.4',   status: 'online',  criticality: 'low',      agent_id: '034', last_seen: new Date(Date.now()-120000).toISOString(),    alerts: 2   },
-  { id: 12, ip: '10.0.9.5',   hostname: 'lab-vm-01',    os_type: 'Kali 2024',    status: 'offline', criticality: 'low',      agent_id: '041', last_seen: new Date(Date.now()-86400000).toISOString(),  alerts: 0   },
-];
-
 // ============= HELPERS =============
 const CRIT_STYLE = {
   critical: { color: '#ff1744', bg: 'rgba(255,23,68,.15)' },
@@ -227,7 +204,7 @@ function PageAssets() {
       } else if (data && Array.isArray(data.assets) && data.assets.length > 0) {
         setAssets(data.assets);
       } else {
-        setAssets(FALLBACK_ASSETS);
+        setAssets([]);
       }
       setAssetsLoading(false);
     })();
@@ -242,14 +219,14 @@ function PageAssets() {
       } else if (data && Array.isArray(data.items) && data.items.length > 0) {
         setSubnets(data.items);
       } else {
-        setSubnets(FALLBACK_SUBNETS);
+        setSubnets([]);
       }
       setSubnetsLoading(false);
     })();
   }, []);
 
-  const allAssets  = assets  || FALLBACK_ASSETS;
-  const allSubnets = subnets || FALLBACK_SUBNETS;
+  const allAssets  = assets  || [];
+  const allSubnets = subnets || [];
 
   // --- KPI stats ---
   const now = Date.now();
@@ -317,13 +294,13 @@ function PageAssets() {
   }
 
   function handleAddSubnet(newSubnet) {
-    setSubnets(prev => [...(prev || FALLBACK_SUBNETS), newSubnet]);
+    setSubnets(prev => [...(prev || []), newSubnet]);
     setShowAddSubnet(false);
   }
 
   async function handleDeleteSubnet(id) {
     // Optimistic remove — update UI immediately, then send delete request
-    setSubnets(prev => (prev || FALLBACK_SUBNETS).filter(s => s.id !== id));
+    setSubnets(prev => (prev || []).filter(s => s.id !== id));
     await window.SOC_API.post(`/api/subnets/${id}/delete`, {}).catch(() => null);
     if (window.socToast) window.socToast({ title: 'Subnet removed', sub: `ID ${id} deleted`, tone: 'info' });
   }

@@ -329,26 +329,25 @@ function LevelChip({ level }) {
 }
 
 // ============= VULNERABILITIES =============
-const VULNS = [
-  { cve: 'CVE-2026-1142', cvss: 9.8, sev: 'critical', pkg: 'openssh-server', ver: '8.9p1-3', fix: '8.9p1-5', hosts: 12, status: 'open',     age: '4d', published: '2026-05-09' },
-  { cve: 'CVE-2026-0934', cvss: 9.1, sev: 'critical', pkg: 'log4j',          ver: '2.17.0',  fix: '2.22.1',  hosts: 3,  status: 'open',     age: '6d', published: '2026-05-07' },
-  { cve: 'CVE-2025-9847', cvss: 8.4, sev: 'high',     pkg: 'nginx',          ver: '1.24.0',  fix: '1.26.2',  hosts: 8,  status: 'in-progress', age: '11d', published: '2025-05-02' },
-  { cve: 'CVE-2026-0815', cvss: 8.1, sev: 'high',     pkg: 'curl',           ver: '7.88.1',  fix: '8.7.1',   hosts: 28, status: 'open',     age: '7d', published: '2026-05-06' },
-  { cve: 'CVE-2026-0719', cvss: 7.5, sev: 'high',     pkg: 'glibc',          ver: '2.36-1',  fix: '2.36-3',  hosts: 32, status: 'open',     age: '9d', published: '2026-05-04' },
-  { cve: 'CVE-2026-0623', cvss: 7.2, sev: 'high',     pkg: 'postgresql',     ver: '15.4',    fix: '15.7',    hosts: 4,  status: 'in-progress', age: '12d', published: '2026-05-01' },
-  { cve: 'CVE-2025-9712', cvss: 6.8, sev: 'medium',   pkg: 'redis',          ver: '7.0.11',  fix: '7.2.4',   hosts: 6,  status: 'open',     age: '15d', published: '2025-04-28' },
-  { cve: 'CVE-2025-9645', cvss: 6.1, sev: 'medium',   pkg: 'nodejs',         ver: '18.19.0', fix: '18.20.2', hosts: 18, status: 'in-progress', age: '18d', published: '2025-04-25' },
-  { cve: 'CVE-2025-9512', cvss: 5.3, sev: 'medium',   pkg: 'samba',          ver: '4.17.7',  fix: '4.19.5',  hosts: 2,  status: 'patched',  age: '22d', published: '2025-04-21' },
-  { cve: 'CVE-2025-9201', cvss: 3.7, sev: 'low',      pkg: 'sudo',           ver: '1.9.13',  fix: '1.9.15',  hosts: 4,  status: 'wont-fix', age: '28d', published: '2025-04-15' },
-];
-
 function PageVulns() {
-  const [sev, setSev] = useStateS('all');
-  const filtered = sev === 'all' ? VULNS : VULNS.filter(v => v.sev === sev);
-  const crit = VULNS.filter(v => v.sev === 'critical').length;
-  const high = VULNS.filter(v => v.sev === 'high').length;
-  const patched = VULNS.filter(v => v.status === 'patched').length;
-  const patchedPct = Math.round(patched / VULNS.length * 100);
+  const [vulns, setVulns]   = useStateS([]);
+  const [sev, setSev]       = useStateS('all');
+  const [loading, setLoad]  = useStateS(false);
+
+  useEffectS(() => {
+    setLoad(true);
+    window.SOC_API.get('/api/vulns').then(d => {
+      const arr = d?.items || d?.vulns || (Array.isArray(d) ? d : null);
+      if (arr) setVulns(arr);
+      setLoad(false);
+    }).catch(() => setLoad(false));
+  }, []);
+
+  const filtered = sev === 'all' ? vulns : vulns.filter(v => v.sev === sev);
+  const crit    = vulns.filter(v => v.sev === 'critical').length;
+  const high    = vulns.filter(v => v.sev === 'high').length;
+  const patched = vulns.filter(v => v.status === 'patched').length;
+  const patchedPct = vulns.length > 0 ? Math.round(patched / vulns.length * 100) : 0;
 
   return (
     <div className="page" data-screen-label="10 Vulnerabilities">
@@ -356,20 +355,20 @@ function PageVulns() {
         title="Vulnerabilities"
         sub="CVE feed · SOCPilots AI enriched"
         actions={<>
-          <button className="btn btn-ghost"><Icon.refresh width="13" height="13"/> Re-scan</button>
+          <button className="btn btn-ghost" onClick={() => { setLoad(true); window.SOC_API.get('/api/vulns').then(d => { const a = d?.items || d?.vulns || (Array.isArray(d) ? d : null); if (a) setVulns(a); setLoad(false); }); }}><Icon.refresh width="13" height="13"/> Re-scan</button>
           <button className="btn btn-ghost">Export SBOM</button>
           <button className="btn btn-primary">Patch plan</button>
         </>}
       />
       <div className="page-body">
         <div className="kpi-grid" style={{gridTemplateColumns:'repeat(4,1fr)'}}>
-          <KpiCard label="Open CVEs" value={VULNS.filter(v=>v.status==='open').length} sub="across 156 agents" />
+          <KpiCard label="Open CVEs" value={vulns.filter(v=>v.status==='open').length} sub="across all agents" />
           <KpiCard label="Critical" value={crit} sub="CVSS ≥ 9.0" sev="critical" />
           <KpiCard label="High" value={high} sub="CVSS 7.0–8.9" />
-          <KpiCard label="Patched (30d)" value={`${patchedPct}%`} sub={`${patched} of ${VULNS.length}`} />
+          <KpiCard label="Patched (30d)" value={`${patchedPct}%`} sub={`${patched} of ${vulns.length}`} />
         </div>
 
-        <Card title="CVE feed" sub={`${filtered.length} vulnerabilities`}
+        <Card title="CVE feed" sub={loading ? 'Loading…' : `${filtered.length} vulnerabilities`}
           actions={<>
             <div className="seg">
               {['all','critical','high','medium','low'].map(s => (
@@ -380,34 +379,40 @@ function PageVulns() {
               ))}
             </div>
           </>}>
-          <table className="data-table">
-            <thead><tr>
-              <th>CVE</th>
-              <th style={{width:70}}>CVSS</th>
-              <th style={{width:80}}>SEVERITY</th>
-              <th>PACKAGE</th>
-              <th>INSTALLED</th>
-              <th>FIX</th>
-              <th style={{width:110}}>HOSTS</th>
-              <th style={{width:100}}>STATUS</th>
-              <th style={{width:60}}>AGE</th>
-            </tr></thead>
-            <tbody>
-              {filtered.map(v => (
-                <tr key={v.cve}>
-                  <td className="mono"><a href="#" className="link">{v.cve}</a></td>
-                  <td><CvssChip score={v.cvss}/></td>
-                  <td><SevChip sev={v.sev}/></td>
-                  <td className="mono">{v.pkg}</td>
-                  <td className="mono dim">{v.ver}</td>
-                  <td className="mono">{v.fix}</td>
-                  <td><div className="bar-wrap"><div className="bar" data-sev={v.sev} style={{width:`${Math.min(100,v.hosts*3)}%`}}/><span className="bar-val mono">{v.hosts}</span></div></td>
-                  <td><StatusChip status={v.status}/></td>
-                  <td className="mono dim">{v.age}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          {loading ? (
+            <div className="loading mono">Loading vulnerability data…</div>
+          ) : vulns.length === 0 ? (
+            <div className="empty mono">No vulnerability data available. Configure the vulnerability scanner to populate this feed.</div>
+          ) : (
+            <table className="data-table">
+              <thead><tr>
+                <th>CVE</th>
+                <th style={{width:70}}>CVSS</th>
+                <th style={{width:80}}>SEVERITY</th>
+                <th>PACKAGE</th>
+                <th>INSTALLED</th>
+                <th>FIX</th>
+                <th style={{width:110}}>HOSTS</th>
+                <th style={{width:100}}>STATUS</th>
+                <th style={{width:60}}>AGE</th>
+              </tr></thead>
+              <tbody>
+                {filtered.map(v => (
+                  <tr key={v.cve}>
+                    <td className="mono"><a href="#" className="link">{v.cve}</a></td>
+                    <td><CvssChip score={v.cvss}/></td>
+                    <td><SevChip sev={v.sev}/></td>
+                    <td className="mono">{v.pkg}</td>
+                    <td className="mono dim">{v.ver}</td>
+                    <td className="mono">{v.fix}</td>
+                    <td><div className="bar-wrap"><div className="bar" data-sev={v.sev} style={{width:`${Math.min(100,v.hosts*3)}%`}}/><span className="bar-val mono">{v.hosts}</span></div></td>
+                    <td><StatusChip status={v.status}/></td>
+                    <td className="mono dim">{v.age}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </Card>
       </div>
     </div>
@@ -424,16 +429,49 @@ function StatusChip({ status }) {
 }
 
 // ============= REPORTS =============
-const REPORTS = [
-  { id: 'RPT-2026-019', title: 'Executive · Week 19', range: 'May 6 – May 13', author: 'AI · younes', status: 'draft', pages: 6, when: 'now' },
-  { id: 'RPT-2026-018', title: 'Executive · Week 18', range: 'Apr 29 – May 6', author: 'AI · younes', status: 'sent', pages: 6, when: '7d ago' },
-  { id: 'RPT-2026-017', title: 'Compliance · ISO 27001', range: 'Apr 1 – Apr 30', author: 'AI · sara', status: 'sent', pages: 14, when: '13d ago' },
-  { id: 'RPT-2026-016', title: 'Incident · CASE-4438 retro', range: 'Apr 22', author: 'younes', status: 'sent', pages: 9, when: '21d ago' },
-];
-
 function PageReports() {
-  const [selectedId, setSelectedId] = useStateS('RPT-2026-019');
-  const selected = REPORTS.find(r => r.id === selectedId);
+  const [reports, setReports]   = useStateS([]);
+  const [selectedId, setSelectedId] = useStateS(null);
+  const [loading, setLoad]      = useStateS(false);
+  const [generating, setGen]    = useStateS(false);
+
+  useEffectS(() => {
+    setLoad(true);
+    window.SOC_API.get('/api/reports').then(d => {
+      const arr = d?.items || d?.reports || (Array.isArray(d) ? d : null);
+      if (arr) {
+        setReports(arr);
+        if (arr.length > 0 && !selectedId) setSelectedId(arr[0].id);
+      }
+      setLoad(false);
+    }).catch(() => setLoad(false));
+  }, []);
+
+  async function generateReport() {
+    setGen(true);
+    window.socToast?.({ title: 'Generating report', sub: 'AI draft · ~30s', tone: 'info' });
+    const r = await window.SOC_API.get('/api/reports/summary');
+    setGen(false);
+    if (r && r.text) {
+      const newRpt = {
+        id: 'RPT-' + Date.now(),
+        title: 'Executive Summary',
+        range: new Date().toLocaleDateString('en-GB'),
+        author: 'AI',
+        status: 'draft',
+        pages: 1,
+        when: 'now',
+        content: r.text,
+      };
+      setReports(prev => [newRpt, ...prev]);
+      setSelectedId(newRpt.id);
+      window.socToast?.({ title: 'Report generated', sub: newRpt.id, tone: 'ok' });
+    } else {
+      window.socToast?.({ title: 'Generation failed', sub: r?.error || 'AI engine unavailable', tone: 'error' });
+    }
+  }
+
+  const selected = reports.find(r => r.id === selectedId);
 
   return (
     <div className="page" data-screen-label="11 Reports">
@@ -443,50 +481,52 @@ function PageReports() {
         actions={<>
           <button className="btn btn-ghost">Templates</button>
           <button className="btn btn-ghost">Schedule</button>
-          <button className="btn btn-primary" onClick={() => window.socToast?.({title:'Generating report', sub:'AI draft · 6 pages · ~30s', tone:'info'})}><Icon.brain width="13" height="13"/> Generate</button>
+          <button className="btn btn-primary" onClick={generateReport} disabled={generating}>
+            <Icon.brain width="13" height="13"/> {generating ? 'Generating…' : 'Generate'}
+          </button>
         </>}
       />
       <div className="page-body">
-        <div className="reports-layout">
-          <aside className="reports-side">
-            <Card title="Reports" sub={`${REPORTS.length} total`} padded={true}>
-              <ul className="report-list">
-                {REPORTS.map(r => (
-                  <li key={r.id}>
-                    <button className={`report-item ${selectedId===r.id?'on':''}`} onClick={()=>setSelectedId(r.id)}>
-                      <div className="ri-head">
-                        <span className="ri-id mono">{r.id}</span>
-                        <Chip mono tone={r.status === 'sent' ? 'ok' : 'warn'}>{r.status}</Chip>
-                      </div>
-                      <div className="ri-title">{r.title}</div>
-                      <div className="ri-meta mono">{r.range} · {r.pages}pp · {r.when}</div>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </Card>
+        {loading ? (
+          <div className="loading mono">Loading reports…</div>
+        ) : reports.length === 0 ? (
+          <div className="empty mono" style={{ marginTop: 40, textAlign: 'center' }}>
+            <Icon.folder width="32" height="32" /><br />
+            No reports yet. Click <strong>Generate</strong> to create an AI executive summary.
+          </div>
+        ) : (
+          <div className="reports-layout">
+            <aside className="reports-side">
+              <Card title="Reports" sub={`${reports.length} total`} padded={true}>
+                <ul className="report-list">
+                  {reports.map(r => (
+                    <li key={r.id}>
+                      <button className={`report-item ${selectedId===r.id?'on':''}`} onClick={()=>setSelectedId(r.id)}>
+                        <div className="ri-head">
+                          <span className="ri-id mono">{r.id}</span>
+                          <Chip mono tone={r.status === 'sent' ? 'ok' : 'warn'}>{r.status}</Chip>
+                        </div>
+                        <div className="ri-title">{r.title}</div>
+                        <div className="ri-meta mono">{r.range} · {r.pages ? r.pages + 'pp · ' : ''}{r.when || ''}</div>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </Card>
 
-            <Card title="Distribution" sub="auto-deliver">
-              <div className="dist-row">
-                <Icon.inbox width="14" height="14"/>
-                <span>ciso@socpilots.com</span>
-              </div>
-              <div className="dist-row">
-                <Icon.inbox width="14" height="14"/>
-                <span>soc-leads@socpilots.com</span>
-              </div>
-              <div className="dist-row">
-                <Icon.share width="14" height="14"/>
-                <span>Slack #soc-execs</span>
-              </div>
-              <button className="btn btn-ghost btn-sm" style={{marginTop:10}}><Icon.plus width="11" height="11"/> Add recipient</button>
-            </Card>
-          </aside>
+              <Card title="Distribution" sub="auto-deliver">
+                <div className="dist-row"><Icon.inbox width="14" height="14"/><span>ciso@socpilots.com</span></div>
+                <div className="dist-row"><Icon.inbox width="14" height="14"/><span>soc-leads@socpilots.com</span></div>
+                <div className="dist-row"><Icon.share width="14" height="14"/><span>Slack #soc-execs</span></div>
+                <button className="btn btn-ghost btn-sm" style={{marginTop:10}}><Icon.plus width="11" height="11"/> Add recipient</button>
+              </Card>
+            </aside>
 
-          <main className="reports-main">
-            {selected && <ReportPreview r={selected} />}
-          </main>
-        </div>
+            <main className="reports-main">
+              {selected && <ReportPreview r={selected} />}
+            </main>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -521,54 +561,17 @@ function ReportPreview({ r }) {
           </div>
         </div>
 
-        <section className="rd-section">
-          <h3 className="rd-h3"><span className="rd-num">01</span> Executive summary</h3>
-          <p>This week the SOC processed <strong>1,847 alerts</strong> across <strong>156 endpoints</strong>, opening <strong>23 cases</strong> of which 7 remain active. Mean time to detect improved 18% week-over-week to <strong>4m 12s</strong>; mean time to respond held at <strong>38m</strong>. The single most significant event was an <strong>active intrusion on web-prod-01</strong> (CASE-4471) traced to Tor exit <span className="mono">185.220.101.42</span>; contained in 12 minutes with no data exfiltration confirmed.</p>
-        </section>
-
-        <section className="rd-section">
-          <h3 className="rd-h3"><span className="rd-num">02</span> Top threats</h3>
-          <ol className="rd-list">
-            <li><strong>PowerShell-based intrusions</strong> — 4 incidents, all from Tor or known-bad IPs. T1059.001 dominant.</li>
-            <li><strong>Credential brute-force</strong> — 284 rule-5710 hits, mostly noise but 1 promoted to case.</li>
-            <li><strong>Kerberoasting probing</strong> — first time observed in 30d. Likely targeted reconnaissance.</li>
-          </ol>
-        </section>
-
-        <section className="rd-section rd-grid">
-          <div>
-            <div className="rd-stat-label">Alerts this week</div>
-            <div className="rd-stat-value">12,847</div>
-            <div className="rd-stat-trend up">↑ 8.4% vs last week</div>
+        {r.content ? (
+          <section className="rd-section">
+            <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'var(--fm)', fontSize: '0.82rem', color: 'var(--fg-1)', margin: 0 }}>{r.content}</pre>
+          </section>
+        ) : (
+          <div className="empty mono" style={{ padding: '40px 24px', textAlign: 'center' }}>
+            Report content not available. Click <strong>Generate</strong> to produce an AI-drafted summary.
           </div>
-          <div>
-            <div className="rd-stat-label">Cases opened</div>
-            <div className="rd-stat-value">23</div>
-            <div className="rd-stat-trend down">↓ 12% vs last week</div>
-          </div>
-          <div>
-            <div className="rd-stat-label">MTTD</div>
-            <div className="rd-stat-value">4m 12s</div>
-            <div className="rd-stat-trend down">↓ 18% (improving)</div>
-          </div>
-          <div>
-            <div className="rd-stat-label">MTTR</div>
-            <div className="rd-stat-value">38m 04s</div>
-            <div className="rd-stat-trend flat">stable</div>
-          </div>
-        </section>
+        )}
 
-        <section className="rd-section">
-          <h3 className="rd-h3"><span className="rd-num">03</span> Recommendations</h3>
-          <ul className="rd-list">
-            <li>Prioritize patching CVE-2026-1142 (openssh) — affects 12 hosts, including web-prod-01.</li>
-            <li>Tighten egress filtering at the perimeter; 31 outbound Tor connections this week.</li>
-            <li>Add detection for service-account → PowerShell launches; currently relies on level-13 fallback.</li>
-            <li>Schedule quarterly purple-team exercise focused on lateral movement (T1021).</li>
-          </ul>
-        </section>
-
-        <footer className="rd-foot mono">SOC Pilots · {r.id} · Generated {r.when} · AI-drafted, human-approved</footer>
+        <footer className="rd-foot mono">SOC Pilots · {r.id} · Generated {r.when || 'unknown'} · AI-drafted, human-approved</footer>
       </div>
     </Card>
   );

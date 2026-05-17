@@ -4019,6 +4019,14 @@ app.get('/api/detection-rules', authMW, async (req, res) => {
 });
 
 // ── REPORTS via SOCPilots AI ──
+app.get('/api/reports', authMW, async (req, res) => {
+  res.json({ items: [], total: 0 });
+});
+
+app.get('/api/vulns', authMW, async (req, res) => {
+  res.json({ items: [], total: 0 });
+});
+
 app.get('/api/reports/summary', authMW, async (req, res) => {
   const r = await n8nAsk(
     'Generate a professional SOC executive summary report for today. ' +

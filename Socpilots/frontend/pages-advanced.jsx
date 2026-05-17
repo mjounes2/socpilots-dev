@@ -860,12 +860,6 @@ function PageSLA() {
 }
 
 // ============= PAGE EVIDENCE =============
-const FALLBACK_EVIDENCE = [
-  { id: 1, filename: 'incident_report_2026-05-12.pdf', type: 'pdf',  size: 284210,   uploaded_at: new Date(Date.now()-3600000).toISOString(),  uploaded_by: 'admin', hash: 'sha256:a1b2c3d4e5f6...', url: '#' },
-  { id: 2, filename: 'network_capture.pcap',            type: 'pcap', size: 15728640, uploaded_at: new Date(Date.now()-7200000).toISOString(),  uploaded_by: 'jdoe',  hash: 'sha256:f6e5d4c3b2a1...', url: '#' },
-  { id: 3, filename: 'malware_sample.bin',              type: 'bin',  size: 45056,    uploaded_at: new Date(Date.now()-10800000).toISOString(), uploaded_by: 'admin', hash: 'sha256:aabbccdd...',    url: '#' },
-];
-
 function formatBytes(b) {
   if (b >= 1048576) return (b / 1048576).toFixed(1) + ' MB';
   if (b >= 1024)    return (b / 1024).toFixed(1) + ' KB';
@@ -873,7 +867,7 @@ function formatBytes(b) {
 }
 
 function PageEvidence() {
-  const [files, setFiles]   = useStateADV(FALLBACK_EVIDENCE);
+  const [files, setFiles]   = useStateADV([]);
   const [search, setSearch] = useStateADV('');
   const [loading, setLoad]  = useStateADV(false);
   const fileRef             = useRefADV(null);
@@ -881,7 +875,7 @@ function PageEvidence() {
   useEffectADV(() => {
     window.SOC_API.get('/api/evidence').then(d => {
       const arr = d?.files || d?.items || (Array.isArray(d) ? d : null);
-      if (arr && arr.length > 0) setFiles(arr);
+      if (arr) setFiles(arr);
     });
   }, []);
 
@@ -986,17 +980,10 @@ function PageEvidence() {
 }
 
 // ============= PAGE ARTIFACTS =============
-const FALLBACK_IOC_STATS = { total: 1247, malicious: 89, auto_ingest: false, auto_enrich: false };
-const FALLBACK_IOCS = [
-  { id: 1, indicator: '185.220.101.45',              type: 'ip',     threat_score: 95, sources: ['OTX','VT'], first_seen: new Date(Date.now()-86400000).toISOString(),  last_seen: new Date().toISOString() },
-  { id: 2, indicator: 'malware.example.com',          type: 'domain', threat_score: 87, sources: ['OTX'],      first_seen: new Date(Date.now()-172800000).toISOString(), last_seen: new Date(Date.now()-3600000).toISOString() },
-  { id: 3, indicator: 'd41d8cd98f00b204e9800998ecf8427e', type: 'md5', threat_score: 72, sources: ['VT'],       first_seen: new Date(Date.now()-259200000).toISOString(), last_seen: new Date(Date.now()-7200000).toISOString() },
-];
-
 function PageArtifacts() {
   const [tab, setTab]       = useStateADV('overview');
-  const [stats, setStats]   = useStateADV(FALLBACK_IOC_STATS);
-  const [iocs, setIocs]     = useStateADV(FALLBACK_IOCS);
+  const [stats, setStats]   = useStateADV({ total: 0, malicious: 0, auto_ingest: false, auto_enrich: false });
+  const [iocs, setIocs]     = useStateADV([]);
   const [iocSearch, setIocSearch] = useStateADV('');
   const [newIoc, setNewIoc] = useStateADV('');
   const [newType, setNewType] = useStateADV('ip');
@@ -1009,7 +996,7 @@ function PageArtifacts() {
   useEffectADV(() => {
     window.SOC_API.get('/api/ioc-store').then(d => {
       if (d && !d.error) {
-        setStats({ total: d.total || FALLBACK_IOC_STATS.total, malicious: d.malicious || FALLBACK_IOC_STATS.malicious, auto_ingest: d.auto_ingest || false, auto_enrich: d.auto_enrich || false });
+        setStats({ total: d.total || 0, malicious: d.malicious || 0, auto_ingest: d.auto_ingest || false, auto_enrich: d.auto_enrich || false });
         setAI(!!d.auto_ingest);
         setAE(!!d.auto_enrich);
         if (Array.isArray(d.iocs)) setIocs(d.iocs);
@@ -1188,18 +1175,11 @@ function PageArtifacts() {
 }
 
 // ============= PAGE USERS =============
-const FALLBACK_USERS = [
-  { id: 1, username: 'admin',  role: 'admin', created_at: '2026-01-01T00:00:00Z', last_login: new Date(Date.now()-60000).toISOString(),    status: 'active' },
-  { id: 2, username: 'jdoe',   role: 'l2',    created_at: '2026-02-15T09:00:00Z', last_login: new Date(Date.now()-3600000).toISOString(),  status: 'active' },
-  { id: 3, username: 'bjones', role: 'l1',    created_at: '2026-03-01T09:00:00Z', last_login: new Date(Date.now()-86400000).toISOString(), status: 'active' },
-  { id: 4, username: 'msmith', role: 'l3',    created_at: '2026-03-10T09:00:00Z', last_login: new Date(Date.now()-172800000).toISOString(),status: 'active' },
-];
-
 const ROLE_LABEL = { admin: 'Administrator', l3: 'Senior Analyst', l2: 'Analyst L2', l1: 'Analyst L1' };
 const ROLE_TONE  = { admin: 'crit', l3: 'ok', l2: 'info', l1: 'dim' };
 
 function PageUsers() {
-  const [users, setUsers]     = useStateADV(FALLBACK_USERS);
+  const [users, setUsers]     = useStateADV([]);
   const [showForm, setForm]   = useStateADV(false);
   const [newUser, setNewUser] = useStateADV('');
   const [newPass, setNewPass] = useStateADV('');
@@ -1210,7 +1190,7 @@ function PageUsers() {
   useEffectADV(() => {
     window.SOC_API.get('/api/users').then(d => {
       const arr = d?.users || d?.items || (Array.isArray(d) ? d : null);
-      if (arr && arr.length > 0) setUsers(arr);
+      if (arr) setUsers(arr);
     });
   }, []);
 
@@ -1393,29 +1373,17 @@ function PageLangChain() {
 }
 
 // ============= PAGE LOG SOURCES =============
-const FALLBACK_LOG_SOURCES = [
-  { id: 1, name: 'Wazuh Manager',    type: 'SIEM',       status: 'active',  eps: 847, last_event: new Date(Date.now()-1000).toISOString(),  agent: 'all' },
-  { id: 2, name: 'Windows DC Auth',  type: 'Syslog',     status: 'active',  eps: 234, last_event: new Date(Date.now()-2000).toISOString(),  agent: 'win-dc-01' },
-  { id: 3, name: 'Web Server Access',type: 'Apache',     status: 'active',  eps: 156, last_event: new Date(Date.now()-500).toISOString(),   agent: 'web-prod-01' },
-  { id: 4, name: 'Mail Gateway',     type: 'Postfix',    status: 'warning', eps: 12,  last_event: new Date(Date.now()-30000).toISOString(), agent: 'mail-gw-01' },
-  { id: 5, name: 'DB Audit Log',     type: 'PostgreSQL', status: 'active',  eps: 89,  last_event: new Date(Date.now()-800).toISOString(),   agent: 'db-primary' },
-];
-const FALLBACK_ONBOARDING = [
-  { source: 'Wazuh Manager',   added_by: 'admin', date: '2026-01-01', method: 'Docker', status: 'active' },
-  { source: 'Windows DC Auth', added_by: 'admin', date: '2026-02-01', method: 'Agent',  status: 'active' },
-];
-
 function PageLogSources() {
   const [tab, setTab]       = useStateADV('inventory');
-  const [sources, setSrc]   = useStateADV(FALLBACK_LOG_SOURCES);
-  const [onboard, setOnb]   = useStateADV(FALLBACK_ONBOARDING);
+  const [sources, setSrc]   = useStateADV([]);
+  const [onboard, setOnb]   = useStateADV([]);
   const [aiText, setAiText] = useStateADV(null);
   const [loading, setLoad]  = useStateADV(false);
 
   useEffectADV(() => {
     window.SOC_API.get('/api/log-sources').then(d => {
       const arr = d?.sources || d?.items || (Array.isArray(d) ? d : null);
-      if (arr && arr.length > 0) setSrc(arr);
+      if (arr) setSrc(arr);
     });
   }, []);
 
@@ -1423,7 +1391,7 @@ function PageLogSources() {
     setLoad(true);
     const d = await window.SOC_API.get('/api/log-sources');
     const arr = d?.sources || d?.items || (Array.isArray(d) ? d : null);
-    if (arr && arr.length > 0) setSrc(arr);
+    if (arr) setSrc(arr);
     setLoad(false);
   }
 
@@ -1629,13 +1597,6 @@ function PageInvestigation() {
 }
 
 // ============= PAGE NOTIFICATIONS =============
-const FALLBACK_NOTIFS = [
-  { id: 1, type: 'investigation', title: 'New Investigation',   message: 'High severity alert triggered investigation #1247',        severity: 'high',     created_at: new Date(Date.now()-120000).toISOString(), read: false, username: 'system' },
-  { id: 2, type: 'case_created',  title: 'Case Created',        message: 'SP-2341 created from critical alert cluster',              severity: 'critical', created_at: new Date(Date.now()-300000).toISOString(), read: false, username: 'system' },
-  { id: 3, type: 'playbook',      title: 'Playbook Executed',   message: 'block_ip action executed on 185.220.101.45',               severity: 'medium',   created_at: new Date(Date.now()-600000).toISOString(), read: true,  username: 'darksoc' },
-  { id: 4, type: 'correlation',   title: 'Correlation Match',   message: 'Multi-stage attack pattern detected across 3 agents',     severity: 'high',     created_at: new Date(Date.now()-900000).toISOString(), read: true,  username: 'system' },
-];
-
 const NOTIF_ICON = {
   investigation: <Icon.brain width="16" height="16" />,
   case_created:  <Icon.folder width="16" height="16" />,
@@ -1645,10 +1606,10 @@ const NOTIF_ICON = {
 };
 
 function PageNotifications() {
-  const [notifs, setNotifs]  = useStateADV(FALLBACK_NOTIFS);
+  const [notifs, setNotifs]  = useStateADV([]);
   const [tab, setTab]        = useStateADV('all');
   const [page, setPage]      = useStateADV(1);
-  const [total, setTotal]    = useStateADV(FALLBACK_NOTIFS.length);
+  const [total, setTotal]    = useStateADV(0);
   const PAGE_SIZE = 20;
 
   useEffectADV(() => {
