@@ -7141,6 +7141,15 @@ function computeSlaStatus(inst) {
     breach_pct: pct, risk_level: riskLevel };
 }
 
+// Annotate SLA instances where entity_type === 'alert' with a human-readable short ID
+function withSlaShortId(inst) {
+  if (inst && inst.entity_type === 'alert' && inst.entity_id) {
+    return { ...inst, entity_short_id: alertShortId(inst.entity_id) };
+  }
+  return inst;
+}
+const computeSla = inst => withSlaShortId(computeSlaStatus(inst));
+
 // ── SLA Policy CRUD ──────────────────────────────────────────────
 app.get('/api/sla/policies', authMW, async (req, res) => {
   try {
@@ -7247,7 +7256,7 @@ app.get('/api/sla/instances/:id', authMW, async (req, res) => {
   try {
     const inst = await db.getSlaInstance(parseInt(req.params.id));
     if (!inst) return res.status(404).json({ error: 'not found' });
-    res.json(computeSlaStatus(inst));
+    res.json(computeSla(inst));
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -7267,7 +7276,7 @@ app.get('/api/sla/instances', authMW, async (req, res) => {
       status: req.query.status || undefined,
       entityType: req.query.entity_type || undefined,
     });
-    res.json({ items: rows.map(computeSlaStatus), total, page, page_size, has_more: page * page_size < total });
+    res.json({ items: rows.map(computeSla), total, page, page_size, has_more: page * page_size < total });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -7294,7 +7303,7 @@ app.get('/api/sla/active', authMW, async (req, res) => {
     const page      = Math.max(parseInt(req.query.page) || 1, 1);
     const page_size = Math.min(parseInt(req.query.page_size) || 50, 200);
     const { rows, total } = await db.listSlaInstances({ page, pageSize: page_size, status: 'running', entityType: req.query.entity_type || undefined });
-    res.json({ items: rows.map(computeSlaStatus), total, page, page_size, has_more: page * page_size < total });
+    res.json({ items: rows.map(computeSla), total, page, page_size, has_more: page * page_size < total });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -7303,7 +7312,7 @@ app.get('/api/sla/breached', authMW, async (req, res) => {
     const page      = Math.max(parseInt(req.query.page) || 1, 1);
     const page_size = Math.min(parseInt(req.query.page_size) || 50, 200);
     const { rows, total } = await db.listSlaInstances({ page, pageSize: page_size, status: 'breached', entityType: req.query.entity_type || undefined });
-    res.json({ items: rows.map(computeSlaStatus), total, page, page_size, has_more: page * page_size < total });
+    res.json({ items: rows.map(computeSla), total, page, page_size, has_more: page * page_size < total });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -7380,8 +7389,7 @@ app.get('/api/sla/alerts', authMW, async (req, res) => {
       .filter(Boolean)
       .map(({ alert, sla }) => {
         if (!sla) return { alert, sla: null, sla_status: 'no_policy' };
-        const status = computeSlaStatus(sla);
-        return { alert, sla: status };
+        return { alert, sla: computeSla(sla) };
       });
 
     res.json({ alerts: result, total: result.length });

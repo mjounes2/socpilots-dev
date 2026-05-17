@@ -30,6 +30,12 @@ function PageSLA() {
   const [polData, setPolData]       = useStateADV(null);
   const [polLoading, setPolL]       = useStateADV(false);
 
+  // SIEM Alerts tab — search / filter / sort
+  const [alertQ, setAlertQ]               = useStateADV('');
+  const [alertSevF, setAlertSevF]         = useStateADV('');
+  const [alertSortCol, setAlertSortCol]   = useStateADV('ts');
+  const [alertSortDir, setAlertSortDir]   = useStateADV('desc');
+
   // Detail modal
   const [showDetail, setShowDetail] = useStateADV(false);
   const [detailInst, setDetailInst] = useStateADV(null);
@@ -278,59 +284,147 @@ function PageSLA() {
     if (alertLoading) return <div className="empty mono" style={{ padding: 32 }}>Loading SIEM alerts &amp; syncing SLA timers…</div>;
     if (alertErr)     return <div className="empty mono" style={{ color: 'var(--crit)', padding: 20 }}>{alertErr}</div>;
     if (!alertData)   return null;
-    const alerts = alertData.alerts || [];
-    if (!alerts.length) return <div className="empty mono">No high/medium/critical alerts in this time window</div>;
+
+    const allAlerts = alertData.alerts || [];
+
+    // Severity helper
+    const sevOf = (alert, sla) => {
+      if (sla?.severity) return sla.severity;
+      const l = parseInt(alert?.rule?.level || 0);
+      return l >= 12 ? 'critical' : l >= 8 ? 'high' : 'medium';
+    };
+
+    // Client-side filter
+    const q = alertQ.trim().toLowerCase();
+    let filtered = allAlerts.filter(({ alert, sla }) => {
+      if (alertSevF && sevOf(alert, sla) !== alertSevF) return false;
+      if (q) {
+        const sid  = (alert?.short_id || '').toLowerCase();
+        const rid  = String(alert?.rule?.id || '').toLowerCase();
+        const desc = (alert?.rule?.description || '').toLowerCase();
+        const agt  = (alert?.agent?.name || '').toLowerCase();
+        const src  = (alert?.data?.srcip || '').toLowerCase();
+        if (!sid.includes(q) && !rid.includes(q) && !desc.includes(q) && !agt.includes(q) && !src.includes(q)) return false;
+      }
+      return true;
+    });
+
+    // Client-side sort
+    const dir = alertSortDir === 'asc' ? 1 : -1;
+    filtered = [...filtered].sort((a, b) => {
+      const aa = a.alert, ab = b.alert, sa = a.sla, sb = b.sla;
+      switch (alertSortCol) {
+        case 'short_id': return dir * (aa?.short_id || '').localeCompare(ab?.short_id || '');
+        case 'sev':      return dir * ((parseInt(aa?.rule?.level) || 0) - (parseInt(ab?.rule?.level) || 0));
+        case 'rule':     return dir * String(aa?.rule?.id || '').localeCompare(String(ab?.rule?.id || ''));
+        case 'agent':    return dir * (aa?.agent?.name || '').localeCompare(ab?.agent?.name || '');
+        case 'ts':       return dir * (new Date(aa?.['@timestamp'] || 0) - new Date(ab?.['@timestamp'] || 0));
+        case 'elapsed':  return dir * ((sa?.elapsed_ms || 0) - (sb?.elapsed_ms || 0));
+        case 'risk':     return dir * ((sa?.breach_pct || 0) - (sb?.breach_pct || 0));
+        default:         return 0;
+      }
+    });
+
+    // Sortable column header
+    function SortTh({ col, label, style: s }) {
+      const active = alertSortCol === col;
+      const arrow  = active ? (alertSortDir === 'asc' ? ' ↑' : ' ↓') : '';
+      return (
+        <th style={{ cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap', ...(s || {}) }}
+            onClick={() => {
+              if (alertSortCol === col) setAlertSortDir(d => d === 'asc' ? 'desc' : 'asc');
+              else { setAlertSortCol(col); setAlertSortDir('desc'); }
+            }}>
+          <span style={{ color: active ? 'var(--acc)' : undefined }}>{label}{arrow}</span>
+        </th>
+      );
+    }
+
     return (
       <>
-        <div style={{ fontSize: 10, color: 'var(--fg-3)', padding: '6px 0 10px', display: 'flex', gap: 16, alignItems: 'center' }}>
+        {/* Filter / search bar */}
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '8px 0 12px', flexWrap: 'wrap' }}>
+          <input
+            placeholder="Search alert ID (SOC-…), rule ID, description, agent, IP…"
+            value={alertQ}
+            onChange={e => setAlertQ(e.target.value)}
+            style={{ flex: 1, minWidth: 240, fontSize: 12 }}
+          />
+          <select className="select-mini mono" value={alertSevF} onChange={e => setAlertSevF(e.target.value)}>
+            <option value="">All Severities</option>
+            <option value="critical">Critical</option>
+            <option value="high">High</option>
+            <option value="medium">Medium</option>
+          </select>
+          {(alertQ || alertSevF) && (
+            <button className="btn btn-ghost btn-sm" onClick={() => { setAlertQ(''); setAlertSevF(''); }}>Clear</button>
+          )}
+          <span className="mono" style={{ fontSize: 11, color: 'var(--fg-3)', whiteSpace: 'nowrap' }}>
+            {filtered.length !== allAlerts.length ? `${filtered.length} / ${allAlerts.length}` : allAlerts.length} alerts
+          </span>
+        </div>
+
+        <div style={{ fontSize: 10, color: 'var(--fg-3)', paddingBottom: 8, display: 'flex', gap: 16 }}>
           <span>🔴 = SLA Breached &nbsp;⚠️ = At Risk (&gt;70%) &nbsp;✅ = On Track</span>
-          <span style={{ marginLeft: 'auto' }}>SLA timers auto-started from alert detection time · {alertData.total} alerts</span>
+          <span style={{ marginLeft: 'auto' }}>SLA timers auto-started from alert detection time · click column headers to sort</span>
         </div>
-        <div style={{ overflowX: 'auto' }}>
-          <table className="data-table">
-            <thead><tr>
-              <th style={{ textAlign: 'center' }}>SLA</th>
-              <th>Severity</th><th>Alert</th><th>Rule</th><th>Agent</th>
-              <th>Src IP</th><th>Detected</th><th>Elapsed</th><th>Remaining</th>
-              <th>Risk</th><th>Actions</th>
-            </tr></thead>
-            <tbody>
-              {alerts.map(({ alert, sla }, idx) => {
-                const sev       = sla?.severity || alert?.rule?.level >= 12 ? 'critical' : 'medium';
-                const status    = sla?.status || 'running';
-                const elapsedMs = sla ? (Date.now() - new Date(sla.started_at).getTime() - parseInt(sla.total_paused_ms || 0)) : 0;
-                const pct       = sla ? (sla.breach_pct ?? Math.round(elapsedMs / (sla.response_minutes * 60000) * 100)) : 0;
-                const icon      = sla ? slaIcon(elapsedMs, sla.response_minutes, status) : '—';
-                const remain    = sla?.remaining_human || '—';
-                const elapsed   = sla?.elapsed_human || '—';
-                const rule      = alert?.rule || {};
-                const desc      = (rule.description || '').slice(0, 70);
-                const agent     = alert?.agent?.name || '—';
-                const srcIp     = alert?.data?.srcip || '—';
-                const ts        = alert?.['@timestamp'] || '';
-                const activeSla = sla && ['running','paused','breached'].includes(status);
-                return (
-                  <tr key={idx}>
-                    <td style={{ textAlign: 'center', fontSize: 15 }}>{icon}</td>
-                    <td><SevChip sev={sev} /></td>
-                    <td className="mono" style={{ fontSize: 11, maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={desc}>{desc || '—'}</td>
-                    <td className="mono" style={{ fontSize: 11, color: 'var(--acc)' }}>{rule.id || '—'}</td>
-                    <td style={{ fontSize: 11, color: 'var(--fg-2)' }}>{agent}</td>
-                    <td className="mono" style={{ fontSize: 10, color: 'var(--fg-3)' }}>{srcIp}</td>
-                    <td className="mono" style={{ fontSize: 10, whiteSpace: 'nowrap' }}>{fmtTs(ts)}</td>
-                    <td className="mono" style={{ fontSize: 11 }}>{elapsed}</td>
-                    <td className="mono" style={{ fontSize: 11, color: pct >= 90 ? 'var(--crit)' : pct >= 70 ? 'var(--med)' : 'var(--fg-0)' }}>{remain}</td>
-                    <td>{sla ? <RiskBar pct={pct} status={status} /> : <span style={{ color: 'var(--fg-3)', fontSize: 10 }}>No policy</span>}</td>
-                    <td style={{ whiteSpace: 'nowrap' }}>
-                      {activeSla && <button className="btn btn-ghost btn-sm" style={{ color: 'var(--low)', marginRight: 4 }} onClick={() => doStop(sla.id)}>✓ Resolve</button>}
-                      {sla && <button className="btn btn-ghost btn-sm" onClick={() => openDetail(sla.id)}>Detail</button>}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+
+        {filtered.length === 0 ? (
+          <div className="empty mono">No alerts match current filters</div>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table className="data-table">
+              <thead><tr>
+                <th style={{ textAlign: 'center' }}>SLA</th>
+                <SortTh col="sev"      label="SEVERITY" />
+                <th>ALERT</th>
+                <SortTh col="rule"     label="RULE" />
+                <SortTh col="agent"    label="AGENT" />
+                <th>SRC IP</th>
+                <SortTh col="ts"       label="DETECTED" />
+                <SortTh col="short_id" label="ALERT ID" s={{ color: 'var(--acc)' }} />
+                <SortTh col="elapsed"  label="ELAPSED" />
+                <th>REMAINING</th>
+                <SortTh col="risk"     label="RISK" />
+                <th>ACTIONS</th>
+              </tr></thead>
+              <tbody>
+                {filtered.map(({ alert, sla }, idx) => {
+                  const sev      = sevOf(alert, sla);
+                  const status   = sla?.status || 'running';
+                  const pct      = sla?.breach_pct ?? 0;
+                  const icon     = sla ? slaIcon(sla.elapsed_ms || 0, sla.response_minutes, status) : '—';
+                  const rule     = alert?.rule || {};
+                  const desc     = (rule.description || '').slice(0, 65);
+                  const agent    = alert?.agent?.name || '—';
+                  const srcIp    = alert?.data?.srcip || '—';
+                  const ts       = alert?.['@timestamp'] || '';
+                  const shortId  = alert?.short_id || '—';
+                  const activeSla = sla && ['running','paused','breached'].includes(status);
+                  return (
+                    <tr key={alert?._id || idx}>
+                      <td style={{ textAlign: 'center', fontSize: 15 }}>{icon}</td>
+                      <td><SevChip sev={sev} /></td>
+                      <td className="mono" style={{ fontSize: 11, maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={rule.description}>{desc || '—'}</td>
+                      <td className="mono" style={{ fontSize: 11, color: 'var(--acc)' }}>{rule.id || '—'}</td>
+                      <td style={{ fontSize: 11, color: 'var(--fg-2)' }}>{agent}</td>
+                      <td className="mono" style={{ fontSize: 10, color: 'var(--fg-3)' }}>{srcIp}</td>
+                      <td className="mono" style={{ fontSize: 10, whiteSpace: 'nowrap' }}>{fmtTs(ts)}</td>
+                      <td className="mono" style={{ fontSize: 10, color: 'var(--acc)', letterSpacing: '.05em', fontWeight: 700, whiteSpace: 'nowrap' }}>{shortId}</td>
+                      <td className="mono" style={{ fontSize: 11 }}>{sla?.elapsed_human || '—'}</td>
+                      <td className="mono" style={{ fontSize: 11, color: pct >= 90 ? 'var(--crit)' : pct >= 70 ? 'var(--med)' : 'var(--fg-0)' }}>{sla?.remaining_human || '—'}</td>
+                      <td>{sla ? <RiskBar pct={pct} status={status} /> : <span style={{ color: 'var(--fg-3)', fontSize: 10 }}>No policy</span>}</td>
+                      <td style={{ whiteSpace: 'nowrap' }}>
+                        {activeSla && <button className="btn btn-ghost btn-sm" style={{ color: 'var(--low)', marginRight: 4 }} onClick={() => doStop(sla.id)}>✓ Resolve</button>}
+                        {sla && <button className="btn btn-ghost btn-sm" onClick={() => openDetail(sla.id)}>Detail</button>}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </>
     );
   }
@@ -526,7 +620,13 @@ function PageSLA() {
               <>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20, paddingBottom: 16, borderBottom: '1px solid var(--ln)' }}>
                   {[
-                    ['Entity',           <span style={{ color: 'var(--acc)' }}>{inst.entity_type}: {inst.entity_id}{inst.entity_label && <span style={{ color: 'var(--fg-2)', fontSize: 12, display: 'block', marginTop: 2 }}>{inst.entity_label}</span>}</span>],
+                    ['Entity', <span style={{ color: 'var(--acc)' }}>
+                      {inst.entity_type}:{' '}
+                      {inst.entity_type === 'alert' && inst.entity_short_id
+                        ? <span className="mono" style={{ fontWeight: 700, letterSpacing: '.05em' }}>{inst.entity_short_id}</span>
+                        : <span className="mono">{inst.entity_id}</span>}
+                      {inst.entity_label && <span style={{ color: 'var(--fg-2)', fontSize: 12, display: 'block', marginTop: 2 }}>{inst.entity_label}</span>}
+                    </span>],
                     ['Policy',           inst.policy_name || 'Custom'],
                     ['Status',           <StatusBadge status={inst.status} />],
                     ['Severity',         <SevChip sev={inst.severity} />],
