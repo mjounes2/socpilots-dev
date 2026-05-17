@@ -1298,10 +1298,17 @@ function PageLangChain() {
   }
 
   async function investigate() {
-    if (!target.trim()) return;
+    const tgt = target.trim();
+    const ctx = context.trim();
+    if (!tgt && !ctx) {
+      window.socToast?.({ title: 'Nothing to investigate', sub: 'Enter a target (IP / host / username) or describe the query in the context box', tone: 'error' });
+      return;
+    }
     setOutput('');
     setStream(true);
-    const prompt = `Investigate ${itype}: ${target.trim()}${context ? '\n\nContext: ' + context : ''}`;
+    const prompt = tgt
+      ? `Investigate ${itype}: ${tgt}${ctx ? '\n\nContext: ' + ctx : ''}`
+      : ctx;
     const r = await window.SOC_API.post('/api/ai/investigate', { prompt });
     setStream(false);
     if (!r || r.error) {
@@ -1357,7 +1364,7 @@ function PageLangChain() {
                 {['ip','host','user','case'].map(t => <option key={t} value={t}>{t}</option>)}
               </select>
             </div>
-            <textarea rows="3" value={context} onChange={e => setContext(e.target.value)} placeholder="Optional context: what do you suspect? (e.g. possible C2 beacon, lateral movement…)" style={{ width: '100%', background: 'var(--bg2)', border: '1px solid var(--b2)', borderRadius: 6, padding: 10, color: 'var(--txt)', fontFamily: 'var(--fm)', fontSize: '0.82rem', marginBottom: 10 }} />
+            <textarea rows="3" value={context} onChange={e => setContext(e.target.value)} placeholder="Context or full query — e.g. 'search alerts containing admin', 'possible C2 beacon from this host', 'any lateral movement in last 24h?'" style={{ width: '100%', background: 'var(--bg2)', border: '1px solid var(--b2)', borderRadius: 6, padding: 10, color: 'var(--txt)', fontFamily: 'var(--fm)', fontSize: '0.82rem', marginBottom: 10 }} />
             {streaming && !output && (
               <div style={{ padding: '18px 12px', display: 'flex', alignItems: 'center', gap: 10, color: 'var(--fg-2)', fontFamily: 'var(--fm)', fontSize: '0.82rem', background: 'var(--bg)', border: '1px solid var(--b1)', borderRadius: 6 }}>
                 <span style={{ animation: 'spin 1s linear infinite', display: 'inline-block' }}>⟳</span>
