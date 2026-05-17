@@ -190,9 +190,9 @@ function Topbar({ title, sub, actions }) {
         <div className="tb-title">{title}</div>
         {sub && <div className="tb-sub">{sub}</div>}
       </div>
-      <div className="tb-search">
+      <div className="tb-search" onClick={() => window.socOpenSearch?.()} style={{ cursor: 'pointer' }}>
         <Icon.search width="14" height="14" />
-        <input placeholder="Search alerts, agents, IPs, hashes, rules…" />
+        <input placeholder="Search alerts, agents, IPs, hashes, rules…" readOnly style={{ cursor: 'pointer', pointerEvents: 'none' }} />
         <Kbd>⌘K</Kbd>
       </div>
       <div className="tb-meta">

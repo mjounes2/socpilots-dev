@@ -44,16 +44,25 @@ function ToastHost() {
 
 // ============= COMMAND PALETTE =============
 function CommandPalette({ onNav, page }) {
-  const [open, setOpen] = useS(false);
-  const [q, setQ] = useS('');
-  const [idx, setIdx] = useS(0);
-  const inputRef = useR(null);
+  const [open,    setOpen]    = useS(false);
+  const [q,       setQ]       = useS('');
+  const [idx,     setIdx]     = useS(0);
+  const [results, setResults] = useS([]);
+  const [busy,    setBusy]    = useS(false);
+  const inputRef  = useR(null);
+  const timerRef  = useR(null);
 
+  // Expose global open so Topbar can trigger it
+  useE(() => {
+    window.socOpenSearch = () => { setOpen(true); };
+    return () => { delete window.socOpenSearch; };
+  }, []);
+
+  // Keyboard shortcut Ctrl/Cmd+K
   useE(() => {
     const h = (e) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
-        e.preventDefault();
-        setOpen(o => !o);
+        e.preventDefault(); setOpen(o => !o);
       } else if (e.key === 'Escape') {
         setOpen(false);
       }
@@ -62,64 +71,93 @@ function CommandPalette({ onNav, page }) {
     return () => window.removeEventListener('keydown', h);
   }, []);
 
+  // Reset on open
   useE(() => {
-    if (open) { setQ(''); setIdx(0); setTimeout(() => inputRef.current?.focus(), 50); }
+    if (open) { setQ(''); setIdx(0); setResults([]); setTimeout(() => inputRef.current?.focus(), 50); }
   }, [open]);
 
-  const all = useM(() => [
-    { type: 'nav', label: 'Go to Dashboard',    key: 'dashboard',  hint: '⌘D', sub: 'KPIs · timeline · attack map' },
-    { type: 'nav', label: 'Go to Alerts',       key: 'alerts',     hint: '⌘A', sub: 'live alert feed · triage' },
-    { type: 'nav', label: 'Go to SOCPilots AI', key: 'copilot',    hint: '⌘I', sub: 'chat with the AI co-analyst' },
-    { type: 'nav', label: 'Go to SP-CM Cases',  key: 'cases',      hint: '⌘C', sub: 'kanban · 4 lanes' },
-    { type: 'nav', label: 'Go to Correlation',  key: 'correlation',hint: '⌘L', sub: 'entity link graph' },
-    { type: 'nav', label: 'Go to Create Rules',  key: 'create-rules', hint: '',   sub: 'form builder · AI assistant · deploy to Wazuh' },
-    { type: 'nav', label: 'Go to Threat Hunt',  key: 'hunt',       hint: '⌘H', sub: 'SIEM search · AI co-analyst' },
-    { type: 'nav', label: 'Go to IOC Enrichment', key: 'ioc',      hint: '⌘E', sub: 'IP · domain · URL · hash' },
-    { type: 'action', label: 'New case',        key: 'new-case',   hint: '',   sub: 'create a SP-CM case from scratch',
-      do: () => toast({ title: 'New case', sub: 'CASE-4472 created · assigned to younes', tone: 'ok' }) },
-    { type: 'action', label: 'Isolate agent · web-prod-01', key: 'isolate', hint: '', sub: 'cuts network · keeps Wazuh agent',
-      do: () => toast({ title: 'Isolation queued', sub: 'web-prod-01 · cordoned in 2.4s', tone: 'crit' }) },
-    { type: 'action', label: 'Block IP at perimeter',       key: 'block',   hint: '', sub: 'pushes to firewall via n8n',
-      do: () => toast({ title: 'Block rule deployed', sub: '185.220.101.42 · denied at edge', tone: 'ok' }) },
-    { type: 'action', label: 'Generate exec report',         key: 'report',  hint: '', sub: 'AI-drafted 24h summary',
-      do: () => toast({ title: 'Report drafted', sub: '6 pages · awaiting your review', tone: 'info' }) },
-    { type: 'action', label: 'Run hunt · lateral movement',  key: 'hunt-lat',hint: '', sub: 'MITRE T1021 · last 24h',
-      do: () => { onNav('hunt'); toast({ title: 'Hunt running', sub: '6 events found across 4 hosts', tone: 'info' }); } },
-    { type: 'entity', label: 'WZ-9281047',    key: 'a1', hint: 'alert', sub: 'PowerShell C2 · web-prod-01 · critical' },
-    { type: 'entity', label: 'CASE-4471',     key: 'c1', hint: 'case',  sub: 'Active intrusion · web-prod-01' },
-    { type: 'entity', label: '185.220.101.42', key: 'i1', hint: 'IP',    sub: 'Tor exit · VT 18/94 · AbuseIPDB 100%' },
-    { type: 'entity', label: 'web-prod-01',   key: 'g1', hint: 'agent', sub: 'Ubuntu 22.04 · 412 alerts/24h' },
+  // Real-time API search — fires 300ms after typing stops
+  useE(() => {
+    clearTimeout(timerRef.current);
+    const query = q.trim();
+    if (query.length < 2) { setResults([]); setBusy(false); return; }
+    setBusy(true);
+    timerRef.current = setTimeout(async () => {
+      try {
+        const [alertsR, invsR, iocsR] = await Promise.all([
+          window.SOC_API.get(`/api/alerts?q=${encodeURIComponent(query)}&page_size=5`),
+          window.SOC_API.get(`/api/investigations?q=${encodeURIComponent(query)}&page_size=5`),
+          window.SOC_API.get(`/api/ioc-store?q=${encodeURIComponent(query)}&page_size=5`),
+        ]);
+        const out = [];
+        for (const a of (alertsR?.alerts || []).slice(0, 5)) {
+          out.push({
+            type: 'result', key: `al-${a.id}`, hint: 'alert', nav: 'alerts',
+            label: a.short_id ? `${a.short_id} — ${a.description}` : a.description,
+            sub:   `${a.severity || ''} · ${a.agent || ''} · ${a.srcIp !== 'N/A' ? a.srcIp : ''}`.replace(/^·\s*|·\s*$|\s*·\s*·/g,' · ').trim(),
+          });
+        }
+        for (const inv of (invsR?.items || []).slice(0, 5)) {
+          out.push({
+            type: 'result', key: `inv-${inv.id}`, hint: 'investigation', nav: 'investigations',
+            label: inv.alert_short_id || `INV-${inv.id}`,
+            sub:   `Investigation · ${inv.agent || '—'} · ${inv.severity || ''} · ${inv.status || ''}`,
+          });
+        }
+        for (const ioc of (iocsR?.items || []).slice(0, 5)) {
+          out.push({
+            type: 'result', key: `ioc-${ioc.id}`, hint: 'ioc', nav: 'artifacts',
+            label: ioc.indicator,
+            sub:   `IOC ${ioc.ioc_type} · ${ioc.reputation || 'unknown'} · risk ${ioc.risk_score}`,
+          });
+        }
+        setResults(out);
+      } catch { setResults([]); }
+      setBusy(false);
+    }, 300);
+  }, [q]);
+
+  const navItems = useM(() => [
+    { type: 'nav', label: 'Go to Dashboard',      key: 'dashboard',      hint: '⌘D', sub: 'KPIs · timeline · attack map' },
+    { type: 'nav', label: 'Go to Alerts',          key: 'alerts',         hint: '⌘A', sub: 'live alert feed · triage' },
+    { type: 'nav', label: 'Go to SOCPilots AI',    key: 'copilot',        hint: '⌘I', sub: 'AI co-analyst chat' },
+    { type: 'nav', label: 'Go to SP-CM Cases',     key: 'cases',          hint: '⌘C', sub: 'kanban · 4 lanes' },
+    { type: 'nav', label: 'Go to Investigations',  key: 'investigations', hint: '',   sub: 'all investigations' },
+    { type: 'nav', label: 'Go to UEBA',            key: 'ueba',           hint: '',   sub: 'user & entity behavior analytics' },
+    { type: 'nav', label: 'Go to IOC Intelligence',key: 'artifacts',      hint: '⌘E', sub: 'IOC store · enrichment' },
+    { type: 'nav', label: 'Go to Threat Hunt',     key: 'hunt',           hint: '⌘H', sub: 'SIEM search · scheduled hunts' },
+    { type: 'nav', label: 'Go to MITRE ATT&CK',   key: 'mitre',          hint: '',   sub: 'coverage heatmap · Navigator export' },
+    { type: 'nav', label: 'Go to Correlation',     key: 'correlation',    hint: '⌘L', sub: 'entity link graph' },
+    { type: 'nav', label: 'Go to Create Rules',    key: 'create-rules',   hint: '',   sub: 'form builder · AI assistant' },
+    { type: 'nav', label: 'Go to LangChain Agent', key: 'langchain',      hint: '',   sub: 'ReAct investigation engine' },
+    { type: 'action', label: 'Run hunt · lateral movement', key: 'hunt-lat', hint: '', sub: 'MITRE T1021 · last 24h',
+      do: () => { onNav('hunt'); toast({ title: 'Hunt running', sub: 'Check Hunt page for results', tone: 'info' }); } },
   ], []);
 
   const filtered = useM(() => {
-    if (!q.trim()) return all;
-    const ql = q.toLowerCase();
-    return all.filter(it => (it.label + ' ' + (it.sub||'') + ' ' + (it.hint||'')).toLowerCase().includes(ql));
-  }, [q, all]);
+    const ql = q.trim().toLowerCase();
+    const matchedNav = ql.length < 2
+      ? navItems
+      : navItems.filter(it => (it.label + ' ' + (it.sub||'')).toLowerCase().includes(ql));
+    return [...matchedNav, ...results];
+  }, [q, navItems, results]);
 
   useE(() => { setIdx(0); }, [q]);
 
   function activate(it) {
     setOpen(false);
-    if (it.type === 'nav') {
-      onNav(it.key);
-    } else if (it.type === 'action' && it.do) {
-      it.do();
-    } else if (it.type === 'entity') {
-      toast({ title: `Opening ${it.label}`, sub: it.sub, tone: 'info' });
-      // Naive routing for demo
-      if (it.hint === 'alert') onNav('alerts');
-      if (it.hint === 'case') onNav('cases');
-      if (it.hint === 'IP') onNav('ioc');
-      if (it.hint === 'agent') onNav('agents');
-    }
+    if (it.type === 'nav')    onNav(it.key);
+    else if (it.type === 'action' && it.do) it.do();
+    else if (it.type === 'result') onNav(it.nav || 'alerts');
   }
 
   function onKey(e) {
     if (e.key === 'ArrowDown') { e.preventDefault(); setIdx(i => Math.min(filtered.length - 1, i + 1)); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); setIdx(i => Math.max(0, i - 1)); }
-    else if (e.key === 'Enter') { e.preventDefault(); if (filtered[idx]) activate(filtered[idx]); }
+    else if (e.key === 'Enter')   { e.preventDefault(); if (filtered[idx]) activate(filtered[idx]); }
   }
+
+  const hintColor = h => ({ alert:'var(--crit)', investigation:'var(--acc)', ioc:'var(--high)' })[h] || 'var(--fg-3)';
 
   if (!open) return null;
   return (
@@ -130,41 +168,42 @@ function CommandPalette({ onNav, page }) {
           <input
             ref={inputRef}
             className="cmd-input"
-            placeholder="Search commands, alerts, cases, IPs, hosts…"
+            placeholder="Search alerts, agents, IPs, IOCs, rule descriptions…"
             value={q}
             onChange={e => setQ(e.target.value)}
             onKeyDown={onKey}
           />
-          <Kbd>esc</Kbd>
+          {busy
+            ? <span className="mono" style={{fontSize:10,color:'var(--fg-3)',marginRight:4}}>…</span>
+            : <Kbd>esc</Kbd>
+          }
         </div>
         <div className="cmd-list">
-          {filtered.length === 0 && (
-            <div className="cmd-empty mono">no matches for "{q}"</div>
+          {!busy && filtered.length === 0 && q.trim().length >= 2 && (
+            <div className="cmd-empty mono">no results for "{q}"</div>
           )}
           {groupBy(filtered, 'type').map(([type, items]) => (
             <div key={type} className="cmd-group">
               <div className="cmd-group-label mono">
-                {type === 'nav' ? 'NAVIGATE' : type === 'action' ? 'ACTIONS' : 'ENTITIES'}
+                {type === 'nav' ? 'NAVIGATE' : type === 'action' ? 'ACTIONS' : 'LIVE RESULTS'}
               </div>
               {items.map((it) => {
                 const i = filtered.indexOf(it);
                 return (
-                  <button
-                    key={it.key}
-                    className={`cmd-item ${i === idx ? 'on' : ''}`}
-                    onMouseEnter={() => setIdx(i)}
-                    onClick={() => activate(it)}
-                  >
+                  <button key={it.key} className={`cmd-item ${i === idx ? 'on' : ''}`}
+                    onMouseEnter={() => setIdx(i)} onClick={() => activate(it)}>
                     <div className="cmd-icon">
-                      {it.type === 'nav' && <Icon.chevron width="13" height="13"/>}
-                      {it.type === 'action' && <Icon.spark width="13" height="13"/>}
-                      {it.type === 'entity' && <Icon.target width="13" height="13"/>}
+                      {it.type === 'nav'    && <Icon.chevron width="13" height="13"/>}
+                      {it.type === 'action' && <Icon.spark   width="13" height="13"/>}
+                      {it.type === 'result' && <Icon.target  width="13" height="13" style={{color: hintColor(it.hint)}}/>}
                     </div>
                     <div className="cmd-text">
                       <div className="cmd-label">{it.label}</div>
                       {it.sub && <div className="cmd-sub mono">{it.sub}</div>}
                     </div>
-                    {it.hint && <span className="cmd-hint mono">{it.hint}</span>}
+                    {it.hint && (
+                      <span className="cmd-hint mono" style={{ color: hintColor(it.hint) }}>{it.hint}</span>
+                    )}
                   </button>
                 );
               })}
@@ -173,7 +212,7 @@ function CommandPalette({ onNav, page }) {
         </div>
         <div className="cmd-foot mono">
           <span><Kbd>↑↓</Kbd> navigate</span>
-          <span><Kbd>↵</Kbd> select</span>
+          <span><Kbd>↵</Kbd> open</span>
           <span><Kbd>esc</Kbd> close</span>
           <span style={{marginLeft:'auto'}}>{filtered.length} results</span>
         </div>
