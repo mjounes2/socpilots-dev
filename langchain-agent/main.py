@@ -241,6 +241,7 @@ def get_threat_summary(hours: int = 24) -> str:
         time_filter = {"range": {"@timestamp": {"gte": f"now-{h}h"}}}
         body = {
             "size": 10,
+            "track_total_hits": True,
             "sort": [{"rule.level": {"order": "desc"}}, {"@timestamp": {"order": "desc"}}],
             "query": {"bool": {"filter": [time_filter]}},
             "aggs": {

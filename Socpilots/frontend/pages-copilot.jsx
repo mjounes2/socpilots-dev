@@ -448,21 +448,119 @@ function ChatThinking() {
 }
 
 // ── Markdown renderer ────────────────────────────────────────────────
-function renderMd(text) {
-  if (!text) return '';
-  return text
-    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-    .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')
-    .replace(/`([^`]+)`/g,'<code>$1</code>')
-    .split('\n\n').map(p => {
-      if (/^\s*[-*]\s/.test(p))
-        return '<ul>' + p.split('\n').filter(l=>/^\s*[-*]\s/.test(l))
-          .map(l=>'<li>'+l.replace(/^\s*[-*]\s/,'')+' </li>').join('') + '</ul>';
-      if (/^\s*\d+\.\s/.test(p))
-        return '<ol>' + p.split('\n').filter(l=>/^\s*\d+\.\s/.test(l))
-          .map(l=>'<li>'+l.replace(/^\s*\d+\.\s*/,'')+' </li>').join('') + '</ol>';
-      return '<p>' + p.replace(/\n/g,'<br/>') + '</p>';
-    }).join('');
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
-Object.assign(window, { PageCopilot });
+function inlineMd(raw) {
+  let t = escHtml(raw);
+  // Bold — color known severity keywords
+  t = t.replace(/\*\*([^*\n]+)\*\*/g, (_, m) => {
+    const lo = m.toLowerCase().trim();
+    if (lo === 'critical') return `<strong class="sev-crit">${m}</strong>`;
+    if (lo === 'high')     return `<strong class="sev-high">${m}</strong>`;
+    if (lo === 'medium')   return `<strong class="sev-med">${m}</strong>`;
+    if (lo === 'low')      return `<strong class="sev-low">${m}</strong>`;
+    return `<strong>${m}</strong>`;
+  });
+  // Inline code
+  t = t.replace(/`([^`\n]+)`/g, '<code class="md-code">$1</code>');
+  // IPv4 addresses
+  t = t.replace(/\b(\d{1,3}(?:\.\d{1,3}){3})\b/g, '<span class="md-ip">$1</span>');
+  return t;
+}
+
+function renderMdTable(rows) {
+  const data = rows.filter(l => !/^\s*\|[-:\s|]+\|\s*$/.test(l));
+  if (!data.length) return '';
+  const cells = r => r.split('|').map(c => c.trim()).filter(Boolean);
+  let h = '<table class="md-table"><thead><tr>';
+  cells(data[0]).forEach(c => { h += `<th>${inlineMd(c)}</th>`; });
+  h += '</tr></thead><tbody>';
+  data.slice(1).forEach(row => {
+    h += '<tr>';
+    cells(row).forEach(c => { h += `<td>${inlineMd(c)}</td>`; });
+    h += '</tr>';
+  });
+  return h + '</tbody></table>';
+}
+
+function renderMd(text) {
+  if (!text) return '';
+  const lines = text.split('\n');
+  const out = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    // === BANNER ===
+    if (/^={3,}.*={3,}$/.test(line.trim())) {
+      out.push(`<div class="md-banner">${escHtml(line.trim().replace(/^=+\s*|\s*=+$/g,''))}</div>`);
+      i++; continue;
+    }
+    // ## H2
+    if (/^## /.test(line)) {
+      out.push(`<h2 class="md-h2">${inlineMd(line.slice(3))}</h2>`);
+      i++; continue;
+    }
+    // ### H3
+    if (/^### /.test(line)) {
+      out.push(`<h3 class="md-h3">${inlineMd(line.slice(4))}</h3>`);
+      i++; continue;
+    }
+    // #### H4
+    if (/^#### /.test(line)) {
+      out.push(`<h4 class="md-h4">${inlineMd(line.slice(5))}</h4>`);
+      i++; continue;
+    }
+    // Horizontal rule
+    if (/^---+\s*$/.test(line.trim())) {
+      out.push('<hr class="md-hr"/>');
+      i++; continue;
+    }
+    // Table
+    if (/^\s*\|/.test(line)) {
+      const tRows = [];
+      while (i < lines.length && /^\s*\|/.test(lines[i])) { tRows.push(lines[i]); i++; }
+      out.push(renderMdTable(tRows));
+      continue;
+    }
+    // Unordered list
+    if (/^\s*[-*•]\s/.test(line)) {
+      const items = [];
+      while (i < lines.length && /^\s*[-*•]\s/.test(lines[i])) {
+        items.push(`<li>${inlineMd(lines[i].replace(/^\s*[-*•]\s/,''))}</li>`);
+        i++;
+      }
+      out.push(`<ul class="md-ul">${items.join('')}</ul>`);
+      continue;
+    }
+    // Ordered list
+    if (/^\s*\d+[.)]\s/.test(line)) {
+      const items = [];
+      while (i < lines.length && /^\s*\d+[.)]\s/.test(lines[i])) {
+        items.push(`<li>${inlineMd(lines[i].replace(/^\s*\d+[.)]\s*/,''))}</li>`);
+        i++;
+      }
+      out.push(`<ol class="md-ol">${items.join('')}</ol>`);
+      continue;
+    }
+    // Blank line
+    if (line.trim() === '') { i++; continue; }
+    // Paragraph — collect consecutive non-special lines
+    const pLines = [];
+    while (
+      i < lines.length &&
+      lines[i].trim() !== '' &&
+      !/^#{1,4} /.test(lines[i]) &&
+      !/^={3,}.*={3,}$/.test(lines[i].trim()) &&
+      !/^\s*\|/.test(lines[i]) &&
+      !/^---+\s*$/.test(lines[i].trim()) &&
+      !/^\s*[-*•]\s/.test(lines[i]) &&
+      !/^\s*\d+[.)]\s/.test(lines[i])
+    ) { pLines.push(lines[i]); i++; }
+    if (pLines.length) out.push(`<p class="md-p">${pLines.map(inlineMd).join('<br/>')}</p>`);
+  }
+  return out.join('');
+}
+
+Object.assign(window, { PageCopilot, renderMd });

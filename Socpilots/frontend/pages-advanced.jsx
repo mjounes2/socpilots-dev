@@ -1365,9 +1365,9 @@ function PageLangChain() {
               </div>
             )}
             {output && (
-              <pre style={{ background: 'var(--bg)', border: '1px solid var(--b1)', borderRadius: 6, padding: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'var(--fm)', fontSize: '0.8rem', color: 'var(--txt)', maxHeight: 320, overflowY: 'auto' }}>
-                {output}
-              </pre>
+              <div className="inv-output">
+                <div dangerouslySetInnerHTML={{ __html: window.renderMd ? window.renderMd(output) : output }} />
+              </div>
             )}
           </Card>
         </div>
@@ -1635,9 +1635,10 @@ function PageInvestigation() {
     if (!target.trim()) return;
     setOutput('');
     setStream(true);
+    const message = `Investigate ${scope}: ${target.trim()}${context ? '\n\nContext: ' + context : ''}`;
     window.SOC_API.stream(
-      '/api/ai/investigate',
-      { target: target.trim(), type: scope, context },
+      '/api/ai/chat/stream',
+      { message, history: [], session_id: `inv_${Date.now()}` },
       (text) => setOutput(text),
       (text) => { setOutput(text); setStream(false); }
     ).catch(() => {
@@ -1699,10 +1700,10 @@ function PageInvestigation() {
             )}
 
             {output && (
-              <pre style={{ background: 'var(--bg)', border: '1px solid var(--b1)', borderRadius: 6, padding: 14, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'var(--fm)', fontSize: '0.8rem', color: 'var(--txt)', maxHeight: 400, overflowY: 'auto' }}>
-                {output}
-                {streaming && <span className="mono dim"> ▋</span>}
-              </pre>
+              <div className="inv-output">
+                <div dangerouslySetInnerHTML={{ __html: window.renderMd ? window.renderMd(output) : output }} />
+                {streaming && <span className="mono" style={{ color: 'var(--acc)', opacity: .7 }}> ▋</span>}
+              </div>
             )}
           </div>
         </Card>
