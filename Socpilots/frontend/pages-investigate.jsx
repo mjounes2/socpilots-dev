@@ -211,7 +211,7 @@ function PageCases({ onOpenCase }) {
             disabled={deletingStale}
             title="Delete open cases older than 90 days"
           >
-            <Icon.trash width="13" height="13"/> {deletingStale ? 'Deleting…' : 'Delete Stale'}
+            <Icon.x width="13" height="13"/> {deletingStale ? 'Deleting…' : 'Delete Stale'}
           </button>
           <button className="btn btn-primary" onClick={() => setShowNew(true)}>
             <Icon.plus width="13" height="13"/> New Case
@@ -227,7 +227,7 @@ function PageCases({ onOpenCase }) {
             {KPI_COLS.map(({ label, key, color }) => (
               <div key={key} style={{background:'var(--bg-2)',border:'1px solid var(--ln)',borderRadius:6,padding:'8px 12px'}}>
                 <div style={{fontSize:10,color:'var(--fg-2)',marginBottom:2,whiteSpace:'nowrap'}}>{label}</div>
-                <div style={{fontSize:20,fontWeight:700,color,fontFamily:'var(--font-mono)'}}>{(stats[key] ?? 0).toLocaleString()}</div>
+                <div style={{fontSize:20,fontWeight:700,color,fontFamily:'var(--mono)'}}>{(stats[key] ?? 0).toLocaleString()}</div>
               </div>
             ))}
           </div>
@@ -246,7 +246,7 @@ function PageCases({ onOpenCase }) {
               }}>
                 {t.label}
                 {count != null && (
-                  <span style={{marginLeft:5,fontSize:10,opacity:.65,fontFamily:'var(--font-mono)'}}>
+                  <span style={{marginLeft:5,fontSize:10,opacity:.65,fontFamily:'var(--mono)'}}>
                     {count.toLocaleString()}
                   </span>
                 )}
@@ -324,13 +324,13 @@ function PageCases({ onOpenCase }) {
                       <td style={{padding:'9px 10px'}}>
                         <SevDot sev={c.severity} />
                       </td>
-                      <td style={{padding:'9px 10px',fontFamily:'var(--font-mono)',color:'var(--fg-2)',whiteSpace:'nowrap',fontSize:11}}>
+                      <td style={{padding:'9px 10px',fontFamily:'var(--mono)',color:'var(--fg-2)',whiteSpace:'nowrap',fontSize:11}}>
                         #{c.number || c.id?.slice(0,8)}
                       </td>
                       <td style={{padding:'9px 10px',maxWidth:300}}>
                         <div style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',fontWeight:500}}>{c.title}</div>
                         {c.mitre?.length > 0 && (
-                          <div style={{fontSize:10,color:'var(--fg-3)',marginTop:2,fontFamily:'var(--font-mono)'}}>
+                          <div style={{fontSize:10,color:'var(--fg-3)',marginTop:2,fontFamily:'var(--mono)'}}>
                             {c.mitre.slice(0,3).join(' · ')}
                           </div>
                         )}
@@ -359,7 +359,7 @@ function PageCases({ onOpenCase }) {
                             <span key={t} style={{
                               padding:'1px 6px',borderRadius:3,fontSize:9,
                               background:'rgba(255,255,255,.07)',color:'var(--fg-2)',
-                              fontFamily:'var(--font-mono)',whiteSpace:'nowrap',
+                              fontFamily:'var(--mono)',whiteSpace:'nowrap',
                             }}>{t}</span>
                           ))}
                           {(c.tags||[]).length > 2 && (
@@ -367,10 +367,10 @@ function PageCases({ onOpenCase }) {
                           )}
                         </div>
                       </td>
-                      <td style={{padding:'9px 10px',fontFamily:'var(--font-mono)',fontSize:11,color:'var(--fg-2)',whiteSpace:'nowrap'}}>
+                      <td style={{padding:'9px 10px',fontFamily:'var(--mono)',fontSize:11,color:'var(--fg-2)',whiteSpace:'nowrap'}}>
                         {c.created ? new Date(c.created).toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'}) : '—'}
                       </td>
-                      <td style={{padding:'9px 10px',fontFamily:'var(--font-mono)',fontSize:11,whiteSpace:'nowrap',color:
+                      <td style={{padding:'9px 10px',fontFamily:'var(--mono)',fontSize:11,whiteSpace:'nowrap',color:
                         c.created && (Date.now()-new Date(c.created).getTime())>90*86400000 && !c.isClosed ? '#ff3b3b' : 'var(--fg-2)'
                       }}>
                         {caseAge(c.created)}
@@ -395,7 +395,7 @@ function PageCases({ onOpenCase }) {
             <button className="btn btn-ghost" style={{fontSize:11}} disabled={page<=1} onClick={() => goPage(page-1)}>
               ← Prev
             </button>
-            <span style={{fontSize:11,color:'var(--fg-2)',fontFamily:'var(--font-mono)'}}>
+            <span style={{fontSize:11,color:'var(--fg-2)',fontFamily:'var(--mono)'}}>
               {page} / {totalPages}
             </span>
             <button className="btn btn-ghost" style={{fontSize:11}} disabled={page>=totalPages} onClick={() => goPage(page+1)}>
