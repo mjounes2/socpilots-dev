@@ -475,6 +475,7 @@ function PageCorrelation() {
   const [groups, setGroups] = useStateI([]);
   const [total, setTotal] = useStateI(0);
   const [loading, setLoading] = useStateI(true);
+  const [syncing, setSyncing] = useStateI(false);
   const [page, setPage] = useStateI(1);
   const [selected, setSelected] = useStateI(null);
   const PAGE_SIZE = 20;
@@ -485,8 +486,15 @@ function PageCorrelation() {
     const rows = data?.groups || [];
     setGroups(rows);
     setTotal(data?.total || rows.length);
-    if (!selected && rows.length > 0) setSelected(rows[0]);
+    if (rows.length > 0 && !selected) setSelected(rows[0]);
     setLoading(false);
+  }, []);
+
+  const sync = useCallbackI(async () => {
+    setSyncing(true);
+    await API.post('/api/alert-groups/sync', {});
+    setSyncing(false);
+    load(1);
   }, []);
 
   useEffectI(() => { load(1); }, []);
@@ -507,6 +515,9 @@ function PageCorrelation() {
         title="Correlation"
         sub="Grouped alert clusters · SIEM"
         actions={<>
+          <button className="btn btn-ghost" onClick={sync} disabled={syncing}>
+            <Icon.refresh width="13" height="13" /> {syncing ? 'Syncing…' : 'Sync from SIEM'}
+          </button>
           <button className="btn btn-ghost" onClick={() => load(page)}>
             <Icon.refresh width="13" height="13" /> Refresh
           </button>
@@ -518,10 +529,13 @@ function PageCorrelation() {
             <Spinner />
           </div>
         ) : groups.length === 0 ? (
-          <div style={{padding:48,textAlign:'center',color:'var(--txt-3)'}}>
+          <div style={{padding:48,textAlign:'center',color:'var(--fg-2)'}}>
             <div style={{fontSize:32,marginBottom:12}}>🔗</div>
-            <div style={{fontWeight:500,marginBottom:4}}>No correlated alert groups</div>
-            <div style={{fontSize:12}}>Alert groups appear when the same rule fires repeatedly from the same source. Check back after SIEM receives more events.</div>
+            <div style={{fontWeight:500,marginBottom:6,color:'var(--fg-1)'}}>No correlated alert groups</div>
+            <div style={{fontSize:12,marginBottom:16}}>Sync alert groups from the last 7 days of SIEM events.</div>
+            <button className="btn btn-primary" onClick={sync} disabled={syncing}>
+              {syncing ? 'Syncing from SIEM…' : 'Sync from SIEM now'}
+            </button>
           </div>
         ) : (
           <div className="corr-layout">

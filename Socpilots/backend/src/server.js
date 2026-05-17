@@ -2217,13 +2217,88 @@ app.get('/api/investigations/:id', authMW, async (req, res) => {
 });
 
 // ── ALERT GROUPS (deduplication view) ──
+// Sync from OpenSearch into alert_groups table
+async function syncAlertGroupsFromOS(hours = 168) {
+  try {
+    const r = await osSearch({
+      size: 0,
+      query: { range: { '@timestamp': { gte: `now-${hours}h` } } },
+      aggs: {
+        by_rule: {
+          terms: { field: 'rule.id', size: 200, order: { _count: 'desc' } },
+          aggs: {
+            by_ip: {
+              terms: { field: 'data.srcip', size: 20, missing: 'unknown' },
+              aggs: {
+                by_agent: { terms: { field: 'agent.name', size: 5 } },
+                first_seen: { min: { field: '@timestamp' } },
+                last_seen:  { max: { field: '@timestamp' } },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    let upserted = 0;
+    for (const ruleBkt of (r.aggregations?.by_rule?.buckets || [])) {
+      const rule_id = ruleBkt.key;
+      for (const ipBkt of (ruleBkt.by_ip?.buckets || [])) {
+        const src_ip     = ipBkt.key === 'unknown' ? null : ipBkt.key;
+        const count      = ipBkt.doc_count;
+        if (count < 2) continue;                   // skip singletons
+        const agentName  = ipBkt.by_agent?.buckets?.[0]?.key || null;
+        const first_seen = ipBkt.first_seen?.value_as_string || new Date().toISOString();
+        const last_seen  = ipBkt.last_seen?.value_as_string  || new Date().toISOString();
+        const window_end = new Date(Date.now() + 3600000).toISOString();
+
+        await db.pool.query(
+          `INSERT INTO alert_groups (src_ip, rule_id, agent, count, first_seen, last_seen, window_end)
+           VALUES ($1,$2,$3,$4,$5,$6,$7)
+           ON CONFLICT DO NOTHING`,
+          [src_ip, rule_id, agentName, count, first_seen, last_seen, window_end]
+        ).catch(() => {});
+        upserted++;
+      }
+    }
+    return upserted;
+  } catch(e) {
+    console.error('[alert-groups-sync]', e.message);
+    return 0;
+  }
+}
+
+let _agSynced = false;
+
 app.get('/api/alert-groups', authMW, async (req, res) => {
   try {
     const page      = parseInt(req.query.page)      || 1;
     const page_size = Math.min(parseInt(req.query.page_size) || parseInt(req.query.limit) || 50, 500);
     const { severity, rule_id, agent, q } = req.query;
+
+    // Auto-sync from OpenSearch on first request if table is empty
+    if (!_agSynced) {
+      _agSynced = true;
+      const { rows: check } = await db.listAlertGroups({ page: 1, page_size: 1 });
+      if (check.length === 0) {
+        await syncAlertGroupsFromOS(168);
+      }
+    }
+
     const { rows: groups, total } = await db.listAlertGroups({ page, page_size, severity, rule_id, agent, q });
     res.json({ groups, total, page, page_size, has_more: page * page_size < total });
+  } catch(e) {
+    res.status(503).json({ error: e.message });
+  }
+});
+
+app.post('/api/alert-groups/sync', authMW, async (req, res) => {
+  try {
+    const hours = parseInt(req.query.hours) || 168;
+    const upserted = await syncAlertGroupsFromOS(hours);
+    _agSynced = true;
+    const { rows: groups, total } = await db.listAlertGroups({ page: 1, page_size: 1 });
+    res.json({ ok: true, upserted, total });
   } catch(e) {
     res.status(503).json({ error: e.message });
   }
