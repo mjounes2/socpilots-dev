@@ -1377,61 +1377,134 @@ function PageLangChain() {
 }
 
 // ============= PAGE LOG SOURCES =============
+function srcStatus(s) {
+  if (!s.last_seen) return 'inactive';
+  const ageMin = (Date.now() - new Date(s.last_seen).getTime()) / 60000;
+  if (ageMin < 60)   return 'active';
+  if (ageMin < 1440) return 'warning';
+  return 'inactive';
+}
+function srcTone(s) {
+  const st = typeof s === 'string' ? s : srcStatus(s);
+  return st === 'active' ? 'ok' : st === 'warning' ? 'warn' : 'crit';
+}
+
 function PageLogSources() {
-  const [tab, setTab]       = useStateADV('inventory');
-  const [sources, setSrc]   = useStateADV([]);
-  const [onboard, setOnb]   = useStateADV([]);
-  const [aiText, setAiText] = useStateADV(null);
-  const [loading, setLoad]  = useStateADV(false);
+  const [tab, setTab]         = useStateADV('inventory');
+  const [sources, setSrc]     = useStateADV([]);
+  const [summary, setSummary] = useStateADV(null);
+  const [insights, setInsights] = useStateADV([]);
+  const [onboard, setOnb]     = useStateADV([]);
+  const [aiResult, setAiResult] = useStateADV(null);
+  const [loading, setLoad]    = useStateADV(false);
+  const [analyzing, setAna]   = useStateADV(false);
+  const [pending, setPending] = useStateADV(false);
 
-  useEffectADV(() => {
-    window.SOC_API.get('/api/log-sources').then(d => {
-      const arr = d?.sources || d?.items || (Array.isArray(d) ? d : null);
-      if (arr) setSrc(arr);
-    });
-  }, []);
+  useEffectADV(() => { loadSources(); }, []);
 
-  async function refresh() {
+  async function loadSources() {
     setLoad(true);
     const d = await window.SOC_API.get('/api/log-sources');
-    const arr = d?.sources || d?.items || (Array.isArray(d) ? d : null);
-    if (arr) setSrc(arr);
     setLoad(false);
+    if (!d || d.error) return;
+    if (d.pending) { setPending(true); setTimeout(loadSources, 5000); return; }
+    setPending(false);
+    setSrc(d.sources || []);
+    setSummary(d.summary || null);
+    setInsights(d.insights || []);
   }
 
-  async function aiAnalysis() {
-    const r = await window.SOC_API.get('/api/log-sources/analysis');
-    setAiText(r?.analysis || r?.text || 'All log sources nominal. No anomalies detected.');
-    window.socToast?.({ title: 'AI Analysis complete', sub: '', tone: 'ok' });
+  async function loadHistory() {
+    const d = await window.SOC_API.get('/api/log-sources/history?page_size=100');
+    if (d?.items) setOnb(d.items);
   }
 
-  const active = sources.filter(s => s.status === 'active').length;
-  const issues = sources.filter(s => s.status !== 'active').length;
-  const totalEps = sources.reduce((a, s) => a + (s.eps || 0), 0);
-  const statusTone = s => s === 'active' ? 'ok' : s === 'warning' ? 'warn' : 'crit';
+  useEffectADV(() => { if (tab === 'onboarding') loadHistory(); }, [tab]);
+
+  async function runAiAnalysis() {
+    if (!sources.length) { window.socToast?.({ title: 'No sources loaded', sub: 'Refresh first', tone: 'warn' }); return; }
+    setAna(true);
+    window.socToast?.({ title: 'AI Analysis running', sub: 'Analysing ' + sources.length + ' sources…', tone: 'info' });
+    const r = await window.SOC_API.post('/api/log-sources/analyze', { sources });
+    setAna(false);
+    if (!r || r.error) { window.socToast?.({ title: 'Analysis failed', sub: r?.error || 'AI engine unavailable', tone: 'error' }); return; }
+    setAiResult(r);
+    window.socToast?.({ title: 'AI Analysis complete', sub: (r.sources_analyzed || sources.length) + ' sources reviewed', tone: 'ok' });
+  }
+
+  const active   = sources.filter(s => srcStatus(s) === 'active').length;
+  const warnings = sources.filter(s => srcStatus(s) === 'warning').length;
+  const inactive = sources.filter(s => srcStatus(s) === 'inactive').length;
+  const totalEps = summary?.total_eps ?? sources.reduce((a, s) => a + (s.eps || 0), 0);
 
   return (
     <div className="page">
       <Topbar
         title="Log Sources"
-        sub="Live inventory · onboarding history"
+        sub="Live inventory · onboarding history · AI analysis"
         actions={<>
-          <button className="btn btn-ghost" onClick={refresh} disabled={loading}><Icon.refresh width="13" height="13"/> Refresh</button>
-          <button className="btn btn-primary" onClick={aiAnalysis}><Icon.brain width="13" height="13"/> AI Analysis</button>
+          <button className="btn btn-ghost" onClick={loadSources} disabled={loading}>
+            <Icon.refresh width="13" height="13"/> {loading ? 'Loading…' : 'Refresh'}
+          </button>
+          <button className="btn btn-primary" onClick={runAiAnalysis} disabled={analyzing || !sources.length}>
+            <Icon.brain width="13" height="13"/> {analyzing ? 'Analysing…' : 'AI Analysis'}
+          </button>
         </>}
       />
       <div className="page-body">
-        {aiText && (
-          <Card title="AI Analysis" icon={<Icon.brain width="14" height="14"/>}>
-            <p style={{ fontFamily: 'var(--fm)', fontSize: '0.85rem' }}>{aiText}</p>
+
+        {/* AI Analysis result */}
+        {aiResult && (
+          <Card title="AI Analysis" sub={`${aiResult.sources_analyzed || sources.length} sources · ${new Date().toLocaleTimeString()}`}
+            actions={<button className="btn-icon" onClick={() => setAiResult(null)}><Icon.x width="13" height="13"/></button>}>
+            {aiResult.insights?.length > 0 && (
+              <ul style={{ paddingLeft: 18, margin: '0 0 10px', fontSize: '0.83rem', lineHeight: 1.7 }}>
+                {aiResult.insights.map((ins, i) => <li key={i}>{ins}</li>)}
+              </ul>
+            )}
+            {aiResult.recommendations?.length > 0 && (
+              <div style={{ marginTop: 6 }}>
+                <div className="card-sub" style={{ marginBottom: 4 }}>Recommendations</div>
+                <ul style={{ paddingLeft: 18, margin: 0, fontSize: '0.83rem', lineHeight: 1.7 }}>
+                  {aiResult.recommendations.map((r, i) => <li key={i}>{r}</li>)}
+                </ul>
+              </div>
+            )}
+            {aiResult.anomalies?.length > 0 && (
+              <div style={{ marginTop: 8 }}>
+                <div className="card-sub" style={{ marginBottom: 4 }}>Anomalies detected</div>
+                {aiResult.anomalies.map((a, i) => (
+                  <div key={i} style={{ fontSize: '0.82rem', padding: '4px 0', borderBottom: '1px solid var(--ln)', display:'flex', gap:8 }}>
+                    <Chip mono tone="warn">{a.source_name || a.source_id}</Chip>
+                    <span style={{ color: 'var(--fg-2)' }}>{a.reason || a.anomaly_type}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {!aiResult.insights?.length && !aiResult.recommendations?.length && (
+              <p style={{ fontFamily: 'var(--fm)', fontSize: '0.83rem', margin: 0 }}>
+                {aiResult.summary || aiResult.text || 'All log sources nominal.'}
+              </p>
+            )}
           </Card>
         )}
 
-        <div className="kpi-grid" style={{ gridTemplateColumns: 'repeat(4,1fr)' }}>
-          <KpiCard label="Total Sources"  value={sources.length} sub="configured" />
-          <KpiCard label="Active"         value={active}         sub="receiving events" />
-          <KpiCard label="Issues"         value={issues}         sub="degraded or offline" sev={issues > 0 ? 'high' : undefined} />
-          <KpiCard label="Events/sec"     value={totalEps.toLocaleString()} sub="combined EPS" mono />
+        {/* SIEM insights */}
+        {insights.length > 0 && (
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 2 }}>
+            {insights.map((ins, i) => (
+              <Chip key={i} mono tone={ins.includes('anomalous') || ins.includes('new') ? 'warn' : 'default'}>{ins}</Chip>
+            ))}
+          </div>
+        )}
+
+        {/* KPIs */}
+        <div className="kpi-grid" style={{ gridTemplateColumns: 'repeat(5,1fr)' }}>
+          <KpiCard label="Total Sources"  value={sources.length}                           sub="discovered" />
+          <KpiCard label="Active"         value={active}                                   sub="< 1h last event" />
+          <KpiCard label="Degraded"       value={warnings}                                 sub="1h–24h gap" sev={warnings > 0 ? 'medium' : undefined} />
+          <KpiCard label="Inactive"       value={inactive}                                 sub="> 24h silent"  sev={inactive > 0 ? 'high' : undefined} />
+          <KpiCard label="Combined EPS"   value={totalEps.toLocaleString(undefined,{maximumFractionDigits:2})} sub="events per second" mono />
         </div>
 
         <Card actions={<>
@@ -1440,39 +1513,78 @@ function PageLogSources() {
           ))}
         </>}>
 
-          {tab === 'inventory' && (
-            <table className="data-table">
-              <thead><tr><th>SOURCE NAME</th><th>TYPE</th><th>STATUS</th><th>EVENTS/SEC</th><th>LAST EVENT</th><th>AGENT</th></tr></thead>
-              <tbody>
-                {sources.map(s => (
-                  <tr key={s.id}>
-                    <td>{s.name}</td>
-                    <td className="mono">{s.type}</td>
-                    <td><Chip mono tone={statusTone(s.status)}><span className={`pip pip-${statusTone(s.status)}`}/> {s.status}</Chip></td>
-                    <td className="mono">{s.eps}</td>
-                    <td className="mono dim">{window.SOC_API.relTs(s.last_event)}</td>
-                    <td className="mono">{s.agent}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          {pending && (
+            <div style={{ padding: '24px', textAlign: 'center', color: 'var(--fg-3)', fontFamily: 'var(--fm)', fontSize: '0.83rem' }}>
+              <Icon.refresh width="16" height="16"/> Connecting to SIEM… retrying automatically
+            </div>
           )}
 
-          {tab === 'onboarding' && (
-            <table className="data-table">
-              <thead><tr><th>SOURCE</th><th>ADDED BY</th><th>DATE</th><th>METHOD</th><th>STATUS</th></tr></thead>
-              <tbody>
-                {onboard.map((o, i) => (
-                  <tr key={i}>
-                    <td>{o.source}</td>
-                    <td className="mono">{o.added_by}</td>
-                    <td className="mono dim">{o.date}</td>
-                    <td className="mono">{o.method}</td>
-                    <td><Chip mono tone={statusTone(o.status)}>{o.status}</Chip></td>
+          {!pending && tab === 'inventory' && (
+            sources.length === 0 && !loading ? (
+              <div className="empty mono" style={{ padding: '32px', textAlign: 'center' }}>
+                No log sources found in the last 7 days.
+              </div>
+            ) : (
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>SOURCE</th><th>VENDOR</th><th>TYPE</th><th>PROTOCOL</th>
+                    <th>STATUS</th><th>EPS</th><th>EVENTS/24H</th><th>LAST SEEN</th><th>IP</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {sources.map(s => {
+                    const st = srcStatus(s);
+                    return (
+                      <tr key={s.source_id}>
+                        <td style={{ fontWeight: 500 }}>
+                          {s.source_name}
+                          {s.anomaly && <Chip mono tone="warn" style={{ marginLeft: 6 }}>anomaly</Chip>}
+                          {s.is_new   && <Chip mono tone="info" style={{ marginLeft: 6 }}>new</Chip>}
+                        </td>
+                        <td className="mono">{s.vendor || '—'}</td>
+                        <td className="mono">{s.type || '—'}</td>
+                        <td className="mono">{s.protocol || '—'}</td>
+                        <td>
+                          <Chip mono tone={srcTone(st)}>
+                            <span className={`pip pip-${srcTone(st)}`}/> {st}
+                          </Chip>
+                        </td>
+                        <td className="mono">{s.eps?.toFixed(3) ?? '—'}</td>
+                        <td className="mono">{(s.event_count_24h || 0).toLocaleString()}</td>
+                        <td className="mono dim">{window.SOC_API.relTs(s.last_seen)}</td>
+                        <td className="mono dim">{s.source_ip === 'cloud' ? 'cloud' : s.source_ip || '—'}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )
+          )}
+
+          {!pending && tab === 'onboarding' && (
+            onboard.length === 0 ? (
+              <div className="empty mono" style={{ padding: '32px', textAlign: 'center' }}>
+                No onboarding history yet. Sources are recorded on first discovery.
+              </div>
+            ) : (
+              <table className="data-table">
+                <thead>
+                  <tr><th>SOURCE</th><th>VENDOR</th><th>TYPE</th><th>PROTOCOL</th><th>FIRST SEEN</th></tr>
+                </thead>
+                <tbody>
+                  {onboard.map((o, i) => (
+                    <tr key={i}>
+                      <td>{o.source_name}</td>
+                      <td className="mono">{o.vendor || '—'}</td>
+                      <td className="mono">{o.type || '—'}</td>
+                      <td className="mono">{o.protocol || '—'}</td>
+                      <td className="mono dim">{window.SOC_API.relTs(o.first_seen)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )
           )}
         </Card>
       </div>
