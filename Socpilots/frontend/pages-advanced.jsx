@@ -981,58 +981,183 @@ function PageEvidence() {
 
 // ============= PAGE ARTIFACTS =============
 function PageArtifacts() {
-  const [tab, setTab]       = useStateADV('overview');
-  const [stats, setStats]   = useStateADV({ total: 0, malicious: 0, auto_ingest: false, auto_enrich: false });
-  const [iocs, setIocs]     = useStateADV([]);
-  const [iocSearch, setIocSearch] = useStateADV('');
-  const [newIoc, setNewIoc] = useStateADV('');
-  const [newType, setNewType] = useStateADV('ip');
-  const [extractText, setET] = useStateADV('');
-  const [wlInput, setWlInput] = useStateADV('');
-  const [whitelist, setWl]  = useStateADV([]);
-  const [autoIngest, setAI] = useStateADV(false);
-  const [autoEnrich, setAE] = useStateADV(false);
+  const [tab,        setTab]    = useStateADV('overview');
+  const [stats,      setStats]  = useStateADV({ total: 0, malicious: 0, suspicious: 0, enriched: 0, byType: [], sources: [] });
+  const [jobStatus,  setJobs]   = useStateADV({ ingest: {}, enrich: {} });
+  const [iocs,       setIocs]   = useStateADV([]);
+  const [iocTotal,   setIocTotal] = useStateADV(0);
+  const [iocPage,    setIocPage]  = useStateADV(1);
+  const [q,          setQ]      = useStateADV('');
+  const [typeFilter, setTypeFilter] = useStateADV('');
+  const [loading,    setLoading]  = useStateADV(false);
+  const [newIoc,     setNewIoc]   = useStateADV('');
+  const [newType,    setNewType]  = useStateADV('ip');
+  const [extractText, setET]    = useStateADV('');
+  const [extracted,  setExtracted] = useStateADV([]);
+  const [whitelist,  setWl]     = useStateADV([]);
+  const [wlInput,    setWlInput] = useStateADV('');
+  const [wlType,     setWlType] = useStateADV('ip');
+  const [wlCat,      setWlCat]  = useStateADV('internal');
+  const [wlReason,   setWlReason] = useStateADV('');
+  const [enriching,  setEnriching] = useStateADV({});
 
-  useEffectADV(() => {
-    window.SOC_API.get('/api/ioc-store').then(d => {
-      if (d && !d.error) {
-        setStats({ total: d.total || 0, malicious: d.malicious || 0, auto_ingest: d.auto_ingest || false, auto_enrich: d.auto_enrich || false });
-        setAI(!!d.auto_ingest);
-        setAE(!!d.auto_enrich);
-        if (Array.isArray(d.iocs)) setIocs(d.iocs);
-      }
+  function loadStats() {
+    window.SOC_API.get('/api/ioc-store/stats').then(d => {
+      if (!d || d.error) return;
+      const s = d.summary || {};
+      setStats({
+        total:     parseInt(s.total || 0),
+        malicious: parseInt(s.malicious || 0),
+        suspicious: parseInt(s.suspicious || 0),
+        enriched:  parseInt(s.enriched || 0),
+        byType:    d.by_type || [],
+        sources:   d.enrichment_sources || [],
+      });
+      setJobs({ ingest: d.ingest || {}, enrich: d.enrich || {} });
     });
-  }, []);
+  }
+
+  async function loadIOCs(pg = 1, search = q, tf = typeFilter) {
+    setLoading(true);
+    const p = new URLSearchParams({ page: pg, page_size: 50 });
+    if (search) p.set('q', search);
+    if (tf)     p.set('ioc_type', tf);
+    const d = await window.SOC_API.get('/api/ioc-store?' + p);
+    setLoading(false);
+    if (d && !d.error) { setIocs(d.items || []); setIocTotal(d.total || 0); setIocPage(pg); }
+  }
+
+  function loadWhitelist() {
+    window.SOC_API.get('/api/ioc-whitelist?page_size=100').then(d => {
+      if (d?.items) setWl(d.items);
+    });
+  }
+
+  useEffectADV(() => { loadStats(); loadIOCs(1); loadWhitelist(); }, []);
 
   async function ingestAlerts() {
     const r = await window.SOC_API.post('/api/ioc-store/ingest-alerts', {});
-    window.socToast?.({ title: 'Ingest complete', sub: r?.ingested ? r.ingested + ' IOCs ingested' : 'Done', tone: 'ok' });
+    window.socToast?.({ title: 'Ingest started', sub: r?.status === 'already_running' ? 'Already running' : 'Ingesting IOCs from SIEM alerts…', tone: 'ok' });
+    setTimeout(loadStats, 4000);
   }
 
   async function enrichAll() {
     const r = await window.SOC_API.post('/api/ioc-store/enrich-all', {});
-    window.socToast?.({ title: 'Enrich started', sub: r?.message || 'Enriching all IOCs', tone: 'info' });
-  }
-
-  async function searchIocs() {
-    const r = await window.SOC_API.get('/api/ioc-store?search=' + encodeURIComponent(iocSearch) + '&type=all');
-    if (r && Array.isArray(r.iocs)) setIocs(r.iocs);
-    else if (Array.isArray(r)) setIocs(r);
+    window.socToast?.({ title: 'Enrich started', sub: r?.status === 'already_running' ? 'Already running' : `Running enrichment (batch: ${r?.batch_size || 10})`, tone: 'info' });
+    setTimeout(loadStats, 4000);
   }
 
   async function addIoc() {
     if (!newIoc.trim()) return;
-    const r = await window.SOC_API.post('/api/ioc-store', { indicator: newIoc.trim(), type: newType });
-    if (r && !r.error) { window.socToast?.({ title: 'IOC added', sub: newIoc, tone: 'ok' }); setNewIoc(''); }
-    else window.socToast?.({ title: 'Error', sub: r?.error || 'Failed', tone: 'error' });
+    const r = await window.SOC_API.post('/api/ioc-store', { indicator: newIoc.trim(), ioc_type: newType });
+    if (r && !r.error) {
+      window.socToast?.({ title: 'IOC added', sub: newIoc.trim(), tone: 'ok' });
+      setNewIoc('');
+      loadIOCs(iocPage); loadStats();
+    } else {
+      window.socToast?.({ title: 'Error', sub: r?.error || 'Failed to add IOC', tone: 'error' });
+    }
+  }
+
+  async function enrichIoc(ioc) {
+    setEnriching(e => ({ ...e, [ioc.id]: true }));
+    const r = await window.SOC_API.post(`/api/ioc-store/${ioc.id}/enrich`, {});
+    setEnriching(e => ({ ...e, [ioc.id]: false }));
+    if (r && !r.error) {
+      window.socToast?.({ title: 'Enriched', sub: ioc.indicator, tone: 'ok' });
+      loadIOCs(iocPage);
+    } else {
+      window.socToast?.({ title: 'Enrich failed', sub: r?.error || 'Check TI API keys in Settings', tone: 'error' });
+    }
+  }
+
+  async function deleteIoc(ioc) {
+    const r = await window.SOC_API.del(`/api/ioc-store/${ioc.id}`);
+    if (r !== null) {
+      window.socToast?.({ title: 'IOC deleted', sub: ioc.indicator, tone: 'ok' });
+      loadIOCs(iocPage); loadStats();
+    }
   }
 
   async function extractIOCs() {
+    if (!extractText.trim()) return;
     const r = await window.SOC_API.post('/api/ioc-store/extract', { text: extractText });
-    window.socToast?.({ title: 'Extraction done', sub: r?.count ? r.count + ' IOCs found' : 'No IOCs found', tone: 'ok' });
+    if (r) {
+      setExtracted(r.extracted || []);
+      window.socToast?.({ title: 'Extraction done', sub: `${r.count || 0} IOC${r.count !== 1 ? 's' : ''} found`, tone: r.count > 0 ? 'ok' : 'info' });
+    }
   }
 
-  const scoreColor = s => s >= 80 ? 'critical' : s >= 60 ? 'high' : s >= 40 ? 'medium' : 'low';
+  async function saveExtractedIoc(ioc) {
+    const r = await window.SOC_API.post('/api/ioc-store', { indicator: ioc.indicator, ioc_type: ioc.ioc_type });
+    if (r && !r.error) { window.socToast?.({ title: 'Saved', sub: ioc.indicator, tone: 'ok' }); loadStats(); }
+    else window.socToast?.({ title: 'Error', sub: r?.error || 'Failed', tone: 'error' });
+  }
+
+  async function addWhitelist() {
+    if (!wlInput.trim()) return;
+    const r = await window.SOC_API.post('/api/ioc-whitelist', {
+      indicator: wlInput.trim(), ioc_type: wlType, category: wlCat, reason: wlReason,
+    });
+    if (r && !r.error) {
+      window.socToast?.({ title: 'Whitelisted', sub: wlInput.trim(), tone: 'ok' });
+      setWlInput(''); setWlReason('');
+      loadWhitelist();
+      if (r.risk_warning) window.socToast?.({ title: 'Risk warning', sub: r.risk_warning, tone: 'warn' });
+    } else {
+      window.socToast?.({ title: 'Error', sub: r?.error || 'Failed', tone: 'error' });
+    }
+  }
+
+  const repTone  = r => ({ malicious: 'crit', suspicious: 'warn', trusted: 'ok' })[r] || 'dim';
+  const scoreCol = s => s >= 80 ? 'critical' : s >= 60 ? 'high' : s >= 40 ? 'medium' : 'low';
+
+  const IocTable = ({ rows, actions = true }) => (
+    <table className="data-table">
+      <thead><tr>
+        <th>INDICATOR</th><th>TYPE</th><th>REPUTATION</th><th>RISK</th><th>SOURCE</th><th>ENRICHED</th><th>LAST SEEN</th>
+        {actions && <th></th>}
+      </tr></thead>
+      <tbody>
+        {rows.length === 0
+          ? <tr><td colSpan={actions ? 8 : 7} className="empty mono" style={{ textAlign: 'center', padding: 20 }}>No IOCs found.</td></tr>
+          : rows.map(ioc => (
+            <tr key={ioc.id}>
+              <td className="mono" style={{ color: 'var(--acc)', fontSize: 12 }}>{ioc.indicator}</td>
+              <td><Chip mono>{ioc.ioc_type}</Chip></td>
+              <td><Chip mono tone={repTone(ioc.reputation)}>{ioc.reputation || 'unknown'}</Chip></td>
+              <td>
+                <div className="bar-wrap">
+                  <div className="bar" data-sev={scoreCol(ioc.risk_score)} style={{ width: `${ioc.risk_score}%` }}/>
+                  <span className="bar-val mono">{ioc.risk_score}</span>
+                </div>
+              </td>
+              <td className="mono dim" style={{ fontSize: 11 }}>{ioc.source || '—'}</td>
+              <td className="mono dim" style={{ fontSize: 11 }}>{ioc.enriched_at ? window.SOC_API.relTs(ioc.enriched_at) : '—'}</td>
+              <td className="mono dim" style={{ fontSize: 11 }}>{window.SOC_API.relTs(ioc.last_seen)}</td>
+              {actions && (
+                <td style={{ whiteSpace: 'nowrap' }}>
+                  <button className="btn btn-ghost btn-sm" disabled={enriching[ioc.id]}
+                    onClick={() => enrichIoc(ioc)}>
+                    {enriching[ioc.id] ? '…' : 'Enrich'}
+                  </button>
+                  <button className="btn btn-ghost btn-sm"
+                    onClick={() => { setWlInput(ioc.indicator); setWlType(ioc.ioc_type); setTab('whitelist'); }}>
+                    WL
+                  </button>
+                  <button className="btn btn-ghost btn-sm"
+                    style={{ color: 'var(--crit)', opacity: .7 }}
+                    onClick={() => deleteIoc(ioc)}>
+                    ✕
+                  </button>
+                </td>
+              )}
+            </tr>
+          ))
+        }
+      </tbody>
+    </table>
+  );
 
   return (
     <div className="page">
@@ -1040,132 +1165,202 @@ function PageArtifacts() {
         title="Artifacts &amp; IOC Intelligence"
         sub="IOC store · enrichment · file analysis · threat hunting"
         actions={<>
-          <button className="btn btn-ghost" onClick={ingestAlerts}><Icon.refresh width="13" height="13"/> Ingest from Alerts</button>
-          <button className="btn btn-primary" onClick={enrichAll}><Icon.brain width="13" height="13"/> Enrich All</button>
+          <button className="btn btn-ghost" onClick={ingestAlerts}>
+            <Icon.refresh width="13" height="13"/>
+            {jobStatus.ingest?.running ? ' Ingesting…' : ' Ingest from Alerts'}
+          </button>
+          <button className="btn btn-primary" onClick={enrichAll}>
+            <Icon.brain width="13" height="13"/>
+            {jobStatus.enrich?.running ? ' Enriching…' : ' Enrich All'}
+          </button>
         </>}
       />
       <div className="page-body">
         <div className="kpi-grid" style={{ gridTemplateColumns: 'repeat(4,1fr)' }}>
-          <KpiCard label="Total IOCs"  value={stats.total}    sub="in store" />
-          <KpiCard label="Malicious"   value={stats.malicious} sub="confirmed threats" sev="critical" />
-          <KpiCard label="Auto-Ingest" value={autoIngest ? 'ON' : 'OFF'} sub="from SIEM alerts" />
-          <KpiCard label="Auto-Enrich" value={autoEnrich ? 'ON' : 'OFF'} sub="multi-source enrichment" />
+          <KpiCard label="Total IOCs"   value={stats.total}     sub="in store" />
+          <KpiCard label="Malicious"    value={stats.malicious} sub="confirmed threats" sev="critical" />
+          <KpiCard label="Suspicious"   value={stats.suspicious} sub="needs review" sev="high" />
+          <KpiCard label="Enriched"     value={stats.enriched}  sub="TI lookups done" />
         </div>
 
         <Card actions={<>
-          {['overview','ioc-intel','file-analysis','enrichment','threat-hunting','whitelist','settings'].map(t => (
-            <button key={t} className={`seg-btn ${tab === t ? 'on' : ''}`} onClick={() => setTab(t)} style={{ fontSize: '0.7rem' }}>{t}</button>
+          {['overview','ioc-intel','file-analysis','enrichment','whitelist'].map(t => (
+            <button key={t} className={`seg-btn ${tab === t ? 'on' : ''}`} onClick={() => setTab(t)}
+              style={{ fontSize: '0.7rem' }}>{t}</button>
           ))}
         </>}>
 
           {tab === 'overview' && (
-            <table className="data-table">
-              <thead><tr><th>INDICATOR</th><th>TYPE</th><th>THREAT SCORE</th><th>SOURCES</th><th>FIRST SEEN</th><th>LAST SEEN</th></tr></thead>
-              <tbody>
-                {iocs.slice(0, 10).map(ioc => (
-                  <tr key={ioc.id}>
-                    <td className="mono">{ioc.indicator}</td>
-                    <td className="mono">{ioc.type}</td>
-                    <td><div className="bar-wrap"><div className="bar" data-sev={scoreColor(ioc.threat_score)} style={{ width: `${ioc.threat_score}%` }}/><span className="bar-val mono">{ioc.threat_score}</span></div></td>
-                    <td>{(ioc.sources || []).map(s => <Chip key={s} mono>{s}</Chip>)}</td>
-                    <td className="mono dim">{window.SOC_API.relTs(ioc.first_seen)}</td>
-                    <td className="mono dim">{window.SOC_API.relTs(ioc.last_seen)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <div>
+              {loading
+                ? <div className="loading mono" style={{ padding: 20 }}>Loading IOCs…</div>
+                : <IocTable rows={iocs.slice(0, 15)} actions={false} />
+              }
+              {stats.byType.length > 0 && (
+                <div style={{ marginTop: 14, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  {stats.byType.map(bt => (
+                    <Chip key={bt.ioc_type} mono>{bt.ioc_type}: {bt.cnt}</Chip>
+                  ))}
+                </div>
+              )}
+            </div>
           )}
 
           {tab === 'ioc-intel' && (
             <div>
-              <div style={{ display: 'flex', gap: 8, marginBottom: 12, alignItems: 'center' }}>
-                <input placeholder="Search IP, hash, domain…" value={iocSearch} onChange={e => setIocSearch(e.target.value)} className="mono" style={{ flex: 1 }} />
-                <button className="btn btn-primary" onClick={searchIocs}><Icon.search width="13" height="13"/> Search</button>
-              </div>
-              <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
-                <input placeholder="New IOC indicator" value={newIoc} onChange={e => setNewIoc(e.target.value)} className="mono" style={{ flex: 1 }} />
-                <select className="select-mini mono" value={newType} onChange={e => setNewType(e.target.value)}>
-                  {['ip','domain','url','md5','sha256'].map(t => <option key={t} value={t}>{t}</option>)}
+              {/* Search + filter bar */}
+              <div style={{ display: 'flex', gap: 8, marginBottom: 10, alignItems: 'center' }}>
+                <input placeholder="Search indicator, notes…" value={q}
+                  onChange={e => setQ(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && loadIOCs(1, q, typeFilter)}
+                  className="mono" style={{ flex: 1 }} />
+                <select className="select-mini mono" value={typeFilter}
+                  onChange={e => { setTypeFilter(e.target.value); loadIOCs(1, q, e.target.value); }}>
+                  <option value="">All types</option>
+                  {['ip','domain','url','md5','sha256','sha1'].map(t => <option key={t} value={t}>{t}</option>)}
                 </select>
-                <button className="btn btn-ghost" onClick={addIoc}><Icon.plus width="13" height="13"/> Add IOC</button>
+                <button className="btn btn-primary" onClick={() => loadIOCs(1, q, typeFilter)}>
+                  <Icon.search width="13" height="13"/> Search
+                </button>
               </div>
-              <table className="data-table">
-                <thead><tr><th>INDICATOR</th><th>TYPE</th><th>SCORE</th><th>SOURCES</th><th>FIRST SEEN</th><th>LAST SEEN</th><th></th></tr></thead>
-                <tbody>
-                  {iocs.map(ioc => (
-                    <tr key={ioc.id}>
-                      <td className="mono">{ioc.indicator}</td>
-                      <td className="mono">{ioc.type}</td>
-                      <td><div className="bar-wrap"><div className="bar" data-sev={scoreColor(ioc.threat_score)} style={{ width: `${ioc.threat_score}%` }}/><span className="bar-val mono">{ioc.threat_score}</span></div></td>
-                      <td>{(ioc.sources || []).map(s => <Chip key={s} mono>{s}</Chip>)}</td>
-                      <td className="mono dim">{window.SOC_API.relTs(ioc.first_seen)}</td>
-                      <td className="mono dim">{window.SOC_API.relTs(ioc.last_seen)}</td>
-                      <td>
-                        <button className="btn btn-ghost btn-sm" onClick={() => window.socToast?.({ title: 'Enrich', sub: ioc.indicator, tone: 'info' })}>Enrich</button>
-                        <button className="btn btn-ghost btn-sm" onClick={() => { setWlInput(ioc.indicator); setTab('whitelist'); }}>Whitelist</button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              {/* Add IOC bar */}
+              <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+                <input placeholder="New IOC indicator (IP, domain, hash…)" value={newIoc}
+                  onChange={e => setNewIoc(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && addIoc()}
+                  className="mono" style={{ flex: 1 }} />
+                <select className="select-mini mono" value={newType} onChange={e => setNewType(e.target.value)}>
+                  {['ip','domain','url','md5','sha256','sha1'].map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+                <button className="btn btn-ghost" onClick={addIoc}>
+                  <Icon.plus width="13" height="13"/> Add IOC
+                </button>
+              </div>
+              {loading
+                ? <div className="loading mono" style={{ padding: 20 }}>Loading…</div>
+                : <IocTable rows={iocs} actions={true} />
+              }
+              {/* Pagination */}
+              {iocTotal > 50 && (
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 10 }}>
+                  <button className="btn btn-ghost btn-sm" disabled={iocPage <= 1}
+                    onClick={() => loadIOCs(iocPage - 1)}>← Prev</button>
+                  <span className="mono dim" style={{ fontSize: 11 }}>
+                    Page {iocPage} · {iocTotal} total
+                  </span>
+                  <button className="btn btn-ghost btn-sm" disabled={iocPage * 50 >= iocTotal}
+                    onClick={() => loadIOCs(iocPage + 1)}>Next →</button>
+                </div>
+              )}
             </div>
           )}
 
           {tab === 'file-analysis' && (
             <div>
-              <div className="card-sub" style={{ marginBottom: 8 }}>Paste text to extract IOCs</div>
-              <textarea rows="6" value={extractText} onChange={e => setET(e.target.value)} placeholder="Paste log output, email headers, report text…" style={{ width: '100%', background: 'var(--bg2)', border: '1px solid var(--b2)', borderRadius: 6, padding: 10, color: 'var(--txt)', fontFamily: 'var(--fm)', fontSize: '0.82rem' }} />
+              <div className="card-sub" style={{ marginBottom: 8 }}>Paste log output, email headers, or report text to extract IOCs automatically</div>
+              <textarea rows="7" value={extractText} onChange={e => setET(e.target.value)}
+                placeholder="Paste log output, email headers, report text, threat intel report…"
+                style={{ width: '100%', background: 'var(--bg2)', border: '1px solid var(--b2)', borderRadius: 6, padding: 10, color: 'var(--txt)', fontFamily: 'var(--fm)', fontSize: '0.82rem' }} />
               <div style={{ marginTop: 8 }}>
-                <button className="btn btn-primary" onClick={extractIOCs}><Icon.search width="13" height="13"/> Extract IOCs from Text</button>
+                <button className="btn btn-primary" onClick={extractIOCs} disabled={!extractText.trim()}>
+                  <Icon.search width="13" height="13"/> Extract IOCs
+                </button>
               </div>
+              {extracted.length > 0 && (
+                <div style={{ marginTop: 14 }}>
+                  <div className="card-sub" style={{ marginBottom: 6 }}>{extracted.length} IOCs extracted — click Save to add to store</div>
+                  <table className="data-table">
+                    <thead><tr><th>INDICATOR</th><th>TYPE</th><th></th></tr></thead>
+                    <tbody>
+                      {extracted.map((ioc, i) => (
+                        <tr key={i}>
+                          <td className="mono" style={{ color: 'var(--acc)' }}>{ioc.indicator}</td>
+                          <td><Chip mono>{ioc.ioc_type}</Chip></td>
+                          <td>
+                            <button className="btn btn-ghost btn-sm" onClick={() => saveExtractedIoc(ioc)}>Save</button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           )}
 
           {tab === 'enrichment' && (
-            <div className="card-sub mono" style={{ padding: 20 }}>
-              Enrichment runs automatically via the Enrich All button or per-IOC in IOC Intelligence tab.<br/>
-              Sources: VirusTotal · AbuseIPDB · OTX AlienVault · Shodan
-            </div>
-          )}
-
-          {tab === 'threat-hunting' && (
-            <div className="card-sub mono" style={{ padding: 20 }}>
-              Use the Threat Hunt page for SIEM-based hunting. IOC-based pivot: select an indicator in IOC Intelligence and click Enrich.
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div style={{ display: 'flex', gap: 10 }}>
+                <div style={{ flex: 1, background: 'var(--bg2)', border: '1px solid var(--b1)', borderRadius: 6, padding: 12 }}>
+                  <div className="card-sub">Ingest job</div>
+                  <div className="mono" style={{ fontSize: 11, marginTop: 4 }}>
+                    Status: <span style={{ color: jobStatus.ingest?.running ? 'var(--acc)' : 'var(--fg-3)' }}>
+                      {jobStatus.ingest?.running ? 'running' : 'idle'}
+                    </span>
+                    {jobStatus.ingest?.last_run && <><br/>Last run: {window.SOC_API.relTs(jobStatus.ingest.last_run)}</>}
+                    {jobStatus.ingest?.last_new != null && <><br/>Last ingested: {jobStatus.ingest.last_new} new IOCs</>}
+                  </div>
+                </div>
+                <div style={{ flex: 1, background: 'var(--bg2)', border: '1px solid var(--b1)', borderRadius: 6, padding: 12 }}>
+                  <div className="card-sub">Enrich job</div>
+                  <div className="mono" style={{ fontSize: 11, marginTop: 4 }}>
+                    Status: <span style={{ color: jobStatus.enrich?.running ? 'var(--acc)' : 'var(--fg-3)' }}>
+                      {jobStatus.enrich?.running ? 'running' : 'idle'}
+                    </span>
+                    {jobStatus.enrich?.last_run && <><br/>Last run: {window.SOC_API.relTs(jobStatus.enrich.last_run)}</>}
+                    {jobStatus.enrich?.queue != null && <><br/>Queue: {jobStatus.enrich.queue} pending</>}
+                  </div>
+                </div>
+              </div>
+              <div className="card-sub">Configured TI sources</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {stats.sources.map(src => (
+                  <Chip key={src.name} mono tone={src.configured ? 'ok' : 'dim'}>
+                    <span className={`pip pip-${src.configured ? 'ok' : 'dim'}`}/> {src.name}
+                  </Chip>
+                ))}
+              </div>
             </div>
           )}
 
           {tab === 'whitelist' && (
             <div>
-              <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-                <input placeholder="Indicator to whitelist" value={wlInput} onChange={e => setWlInput(e.target.value)} className="mono" style={{ flex: 1 }} />
-                <button className="btn btn-ghost" onClick={() => { if (wlInput.trim()) { setWl(w => [...w, { indicator: wlInput.trim(), reason: 'manual', added_by: 'analyst', date: new Date().toISOString().slice(0,10) }]); setWlInput(''); } }}>
-                  <Icon.plus width="13" height="13"/> Add to Whitelist
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto auto', gap: 8, marginBottom: 12 }}>
+                <input placeholder="Indicator to whitelist" value={wlInput}
+                  onChange={e => setWlInput(e.target.value)} className="mono" />
+                <select className="select-mini mono" value={wlType} onChange={e => setWlType(e.target.value)}>
+                  {['ip','domain','url','md5','sha256'].map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+                <select className="select-mini mono" value={wlCat} onChange={e => setWlCat(e.target.value)}>
+                  {['internal','scanner','trusted_vendor','false_positive','other'].map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+                <button className="btn btn-ghost" onClick={addWhitelist} disabled={!wlInput.trim()}>
+                  <Icon.plus width="13" height="13"/> Whitelist
                 </button>
               </div>
+              {wlInput && (
+                <input placeholder="Reason (optional)" value={wlReason}
+                  onChange={e => setWlReason(e.target.value)}
+                  style={{ width: '100%', marginBottom: 12, background: 'var(--bg2)', border: '1px solid var(--b1)', borderRadius: 4, padding: '6px 10px', color: 'var(--txt)', fontFamily: 'var(--fm)', fontSize: '0.82rem' }} />
+              )}
               {whitelist.length === 0
                 ? <div className="empty mono" style={{ padding: 20 }}>No whitelisted indicators.</div>
-                : <table className="data-table"><thead><tr><th>INDICATOR</th><th>REASON</th><th>ADDED BY</th><th>DATE</th></tr></thead>
-                  <tbody>{whitelist.map((w,i) => <tr key={i}><td className="mono">{w.indicator}</td><td>{w.reason}</td><td className="mono">{w.added_by}</td><td className="mono dim">{w.date}</td></tr>)}</tbody></table>
+                : <table className="data-table">
+                    <thead><tr><th>INDICATOR</th><th>TYPE</th><th>CATEGORY</th><th>REASON</th><th>ADDED BY</th><th>CREATED</th></tr></thead>
+                    <tbody>
+                      {whitelist.map(w => (
+                        <tr key={w.id}>
+                          <td className="mono" style={{ color: 'var(--acc)' }}>{w.indicator}</td>
+                          <td><Chip mono>{w.ioc_type}</Chip></td>
+                          <td className="mono dim">{w.category}</td>
+                          <td style={{ fontSize: 12 }}>{w.reason || '—'}</td>
+                          <td className="mono dim">{w.added_by}</td>
+                          <td className="mono dim">{window.SOC_API.relTs(w.created_at)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
               }
-            </div>
-          )}
-
-          {tab === 'settings' && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 14, padding: '4px 0' }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <button className={`toggle ${autoIngest ? 'on' : ''}`} onClick={() => setAI(v => !v)}><span className="toggle-thumb"/></button>
-                <span>Auto-Ingest from SIEM alerts</span>
-              </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <button className={`toggle ${autoEnrich ? 'on' : ''}`} onClick={() => setAE(v => !v)}><span className="toggle-thumb"/></button>
-                <span>Auto-Enrich new IOCs</span>
-              </label>
-              <div className="card-sub" style={{ marginTop: 4 }}>Enrichment sources</div>
-              {['VirusTotal','AbuseIPDB','OTX AlienVault','Shodan'].map(src => (
-                <label key={src} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.85rem' }}>
-                  <input type="checkbox" defaultChecked /> {src}
-                </label>
-              ))}
             </div>
           )}
         </Card>
