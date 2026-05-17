@@ -42,6 +42,7 @@ function App() {
       // Detect
       case 'mitre':         return <PageMitre />;
       case 'rules':         return <PageRules />;
+      case 'create-rules':  return <PageCreateRules />;
       case 'hunt':          return <PageHunt />;
       case 'log-sources':   return <PageLogSources />;
       // Investigate
@@ -116,6 +117,7 @@ function App() {
             { value: 'notifications', label: 'Notifications' },
             { value: 'mitre',         label: 'ATT&CK Coverage' },
             { value: 'rules',         label: 'Detection Rules' },
+            { value: 'create-rules',  label: 'Create Rules' },
             { value: 'hunt',          label: 'Threat Hunt' },
             { value: 'log-sources',   label: 'Log Sources' },
             { value: 'copilot',       label: 'SOCPilots AI' },

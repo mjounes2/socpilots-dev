@@ -82,6 +82,7 @@ function Sidebar({ current, onNav }) {
     { group: 'DETECT', items: [
       { id: 'mitre',        label: 'ATT&CK Coverage',    icon: Icon.grid, badge: null },
       { id: 'rules',        label: 'Detection Rules',     icon: Icon.file, badge: null },
+      { id: 'create-rules', label: 'Create Rules',        icon: Icon.cpu, badge: null },
       { id: 'hunt',         label: 'Threat Hunt',         icon: Icon.search, badge: null },
       { id: 'log-sources',  label: 'Log Sources',         icon: Icon.share, badge: null },
     ]},

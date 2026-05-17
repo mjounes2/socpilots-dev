@@ -72,6 +72,7 @@ function CommandPalette({ onNav, page }) {
     { type: 'nav', label: 'Go to SOCPilots AI', key: 'copilot',    hint: '⌘I', sub: 'chat with the AI co-analyst' },
     { type: 'nav', label: 'Go to SP-CM Cases',  key: 'cases',      hint: '⌘C', sub: 'kanban · 4 lanes' },
     { type: 'nav', label: 'Go to Correlation',  key: 'correlation',hint: '⌘L', sub: 'entity link graph' },
+    { type: 'nav', label: 'Go to Create Rules',  key: 'create-rules', hint: '',   sub: 'form builder · AI assistant · deploy to Wazuh' },
     { type: 'nav', label: 'Go to Threat Hunt',  key: 'hunt',       hint: '⌘H', sub: 'SIEM search · AI co-analyst' },
     { type: 'nav', label: 'Go to IOC Enrichment', key: 'ioc',      hint: '⌘E', sub: 'IP · domain · URL · hash' },
     { type: 'action', label: 'New case',        key: 'new-case',   hint: '',   sub: 'create a SP-CM case from scratch',
