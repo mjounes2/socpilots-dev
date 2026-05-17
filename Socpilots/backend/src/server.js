@@ -1701,6 +1701,81 @@ app.post('/api/cases/:id/comments', authMW, async (req, res) => {
   }
 });
 
+// ── DELETE CASE ──
+app.delete('/api/cases/stale', authMW, requireRole('l2'), async (req, res) => {
+  try {
+    const cutoff = Date.now() - 90 * 24 * 60 * 60 * 1000;
+    const [newCases, ipCases] = await Promise.all([
+      hiveQuery([
+        { _name: 'listCase' },
+        { _name: 'filter', _field: 'status', _value: 'New' },
+        { _name: 'filter', _lte: { _field: '_createdAt', _value: cutoff } },
+        { _name: 'page', from: 0, to: 500 },
+      ]).catch(() => []),
+      hiveQuery([
+        { _name: 'listCase' },
+        { _name: 'filter', _field: 'status', _value: 'InProgress' },
+        { _name: 'filter', _lte: { _field: '_createdAt', _value: cutoff } },
+        { _name: 'page', from: 0, to: 500 },
+      ]).catch(() => []),
+    ]);
+    const stale = [
+      ...(Array.isArray(newCases) ? newCases : []),
+      ...(Array.isArray(ipCases)  ? ipCases  : []),
+    ];
+    let deleted = 0, errors = 0;
+    for (const c of stale) {
+      const cid = c._id || c.id;
+      if (!cid) continue;
+      try {
+        await axios.delete(
+          `${HIVE_URL}/api/v1/case/${cid}`,
+          { headers: { Authorization: `Bearer ${HIVE_KEY}` }, httpsAgent, timeout: 10000 }
+        );
+        deleted++;
+      } catch { errors++; }
+    }
+    _hiveCaseStatsCache = null;
+    res.json({ ok: true, deleted, errors, total: stale.length });
+  } catch (e) {
+    console.error('[cases-stale]', e.message);
+    res.status(502).json({ error: e.message });
+  }
+});
+
+app.delete('/api/cases/:id', authMW, requireRole('l2'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    await axios.delete(
+      `${HIVE_URL}/api/v1/case/${id}`,
+      { headers: { Authorization: `Bearer ${HIVE_KEY}` }, httpsAgent, timeout: 10000 }
+    );
+    _hiveCaseStatsCache = null;
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[case-delete]', e.message);
+    res.status(502).json({ error: e.response?.data?.message || e.message });
+  }
+});
+
+app.patch('/api/cases/:id/status', authMW, requireRole('l2'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+    if (!status) return res.status(400).json({ error: 'status required' });
+    await axios.patch(
+      `${HIVE_URL}/api/v1/case/${id}`,
+      { status },
+      { headers: { Authorization: `Bearer ${HIVE_KEY}`, 'Content-Type': 'application/json' }, httpsAgent, timeout: 10000 }
+    );
+    _hiveCaseStatsCache = null;
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[case-status]', e.message);
+    res.status(502).json({ error: e.response?.data?.message || e.message });
+  }
+});
+
 // ── HUNT — OpenSearch + SOCPilots AI ──
 app.post('/api/hunt', authMW, async (req, res) => {
   const { type, value } = req.body;

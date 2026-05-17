@@ -13,88 +13,186 @@ function PageCopilot() {
   );
 }
 
-// ============= CASES KANBAN =============
+// ============= CASES INBOX =============
 function caseAge(ts) {
   if (!ts) return '—';
   const ms = typeof ts === 'number' ? ts : new Date(ts).getTime();
   const s = Math.round((Date.now() - ms) / 1000);
-  if (s < 3600) return `${Math.round(s/60)}m`;
+  if (s < 3600)  return `${Math.round(s/60)}m`;
   if (s < 86400) return `${Math.round(s/3600)}h`;
   return `${Math.round(s/86400)}d`;
 }
 
-function caseToCard(c) {
-  return {
-    id: c.number ? `#${c.number}` : c.id?.slice(0, 8),
-    hiveId: c.id,
-    title: c.title || '(no title)',
-    sev: c.severity || 'low',
-    status: c.status,
-    tags: (c.tags || []).slice(0, 3),
-    assignee: c.assignee || null,
-    age: caseAge(c.created),
-    mitre: c.mitre || [],
-  };
-}
+const CASE_TABS = [
+  { id: 'all',           label: 'All',            status: '',              statKey: 'total'          },
+  { id: 'new',           label: 'New',            status: 'New',           statKey: 'new'            },
+  { id: 'inprogress',    label: 'In Progress',    status: 'InProgress',    statKey: 'in_progress'    },
+  { id: 'truepositive',  label: 'True Positive',  status: 'TruePositive',  statKey: 'true_positive'  },
+  { id: 'falsepositive', label: 'False Positive', status: 'FalsePositive', statKey: 'false_positive' },
+  { id: 'duplicate',     label: 'Duplicate',      status: 'Duplicate',     statKey: null             },
+  { id: 'resolved',      label: 'Resolved',       status: 'Resolved',      statKey: null             },
+  { id: 'archive',       label: 'Archive',        status: '_archive',      statKey: 'closed'         },
+];
+
+const CASE_STATUS_COLOR = {
+  New:          '#ff3b3b',
+  InProgress:   '#ff8c00',
+  TruePositive: '#00e676',
+  FalsePositive:'#607d8b',
+  Duplicate:    '#9e9e9e',
+  Resolved:     '#00bcd4',
+  Other:        '#757575',
+};
 
 function PageCases({ onOpenCase }) {
   const API = window.SOC_API;
-  const [lanes, setLanes] = useStateI({ new: [], inProgress: [], truePositive: [], closed: [] });
-  const [totals, setTotals] = useStateI({ new: 0, inProgress: 0, truePositive: 0, closed: 0 });
-  const [loading, setLoading] = useStateI(true);
-  const [selected, setSelected] = useStateI(null);
-  const [creating, setCreating] = useStateI(false);
-  const [newTitle, setNewTitle] = useStateI('');
+  const PAGE_SIZE = 50;
 
-  const load = useCallbackI(async () => {
+  const [tab,           setTab]           = useStateI('new');
+  const [cases,         setCases]         = useStateI([]);
+  const [stats,         setStats]         = useStateI(null);
+  const [total,         setTotal]         = useStateI(0);
+  const [page,          setPage]          = useStateI(1);
+  const [loading,       setLoading]       = useStateI(true);
+  const [q,             setQ]             = useStateI('');
+  const [sevFilter,     setSevFilter]     = useStateI('');
+  const [timeRange,     setTimeRange]     = useStateI('all');
+  const [showNew,       setShowNew]       = useStateI(false);
+  const [newForm,       setNewForm]       = useStateI({ title:'', description:'', severity:'medium', tags:'' });
+  const [creating,      setCreating]      = useStateI(false);
+  const [deletingStale, setDeletingStale] = useStateI(false);
+  const searchTimer = useRefI(null);
+
+  const buildParams = (p, tabId, qVal, sevVal, trVal) => {
+    const cfg = CASE_TABS.find(t => t.id === tabId) || CASE_TABS[0];
+    let params = `page=${p}&page_size=${PAGE_SIZE}`;
+    if (cfg.status && cfg.status !== '_archive') params += `&status=${cfg.status}`;
+    if (sevVal)    params += `&severity=${sevVal}`;
+    if (qVal?.trim()) params += `&q=${encodeURIComponent(qVal.trim())}`;
+    if (trVal && trVal !== 'all') {
+      const hours = { '24h':24, '7d':168, '30d':720 }[trVal];
+      if (hours) params += `&time_from=${encodeURIComponent(new Date(Date.now()-hours*3600000).toISOString())}`;
+    }
+    return { params, cfg };
+  };
+
+  const loadCases = useCallbackI(async (p, tabId, qVal, sevVal, trVal) => {
     setLoading(true);
-    const [nRes, ipRes, tpRes, fpRes, resolvedRes] = await Promise.all([
-      API.get('/api/cases?status=New&page_size=20'),
-      API.get('/api/cases?status=InProgress&page_size=20'),
-      API.get('/api/cases?status=TruePositive&page_size=20'),
-      API.get('/api/cases?status=FalsePositive&page_size=10'),
-      API.get('/api/cases?status=Resolved&page_size=10'),
-    ]);
-    const nCases     = (nRes?.cases        || []).map(caseToCard);
-    const ipCases    = (ipRes?.cases       || []).map(caseToCard);
-    const tpCases    = (tpRes?.cases       || []).map(caseToCard);
-    const closedArr  = [
-      ...(fpRes?.cases      || []),
-      ...(resolvedRes?.cases || []),
-    ].map(caseToCard);
+    const { params, cfg } = buildParams(p, tabId, qVal, sevVal, trVal);
 
-    setLanes({ new: nCases, inProgress: ipCases, truePositive: tpCases, closed: closedArr });
-    setTotals({
-      new:          nRes?.total  || nCases.length,
-      inProgress:   ipRes?.total || ipCases.length,
-      truePositive: tpRes?.total || tpCases.length,
-      closed:       (fpRes?.total || 0) + (resolvedRes?.total || 0) || closedArr.length,
-    });
-    if (!selected && nCases.length > 0) setSelected(nCases[0]);
+    if (cfg.status === '_archive') {
+      const extra = sevVal ? `&severity=${sevVal}` : '';
+      const qExtra = qVal?.trim() ? `&q=${encodeURIComponent(qVal.trim())}` : '';
+      const [tp, fp, dup, res] = await Promise.all([
+        API.get(`/api/cases?status=TruePositive&page=${p}&page_size=${PAGE_SIZE}${extra}${qExtra}`),
+        API.get(`/api/cases?status=FalsePositive&page=${p}&page_size=${PAGE_SIZE}${extra}${qExtra}`),
+        API.get(`/api/cases?status=Duplicate&page=${p}&page_size=${PAGE_SIZE}${extra}${qExtra}`),
+        API.get(`/api/cases?status=Resolved&page=${p}&page_size=${PAGE_SIZE}${extra}${qExtra}`),
+      ]);
+      const merged = [
+        ...(tp?.cases || []), ...(fp?.cases || []),
+        ...(dup?.cases || []), ...(res?.cases || []),
+      ].sort((a, b) => new Date(b.created) - new Date(a.created));
+      setCases(merged);
+      setTotal((tp?.total||0)+(fp?.total||0)+(dup?.total||0)+(res?.total||0));
+    } else {
+      const data = await API.get(`/api/cases?${params}`);
+      setCases(data?.cases || []);
+      setTotal(data?.total || 0);
+    }
     setLoading(false);
   }, []);
 
-  useEffectI(() => { load(); }, []);
+  const loadStats = useCallbackI(async () => {
+    const s = await API.get('/api/cases/stats');
+    if (s && !s.error) setStats(s);
+  }, []);
+
+  useEffectI(() => {
+    loadStats();
+    loadCases(1, 'new', '', '', 'all');
+  }, []);
+
+  const switchTab = (tabId) => {
+    setTab(tabId);
+    setPage(1);
+    loadCases(1, tabId, q, sevFilter, timeRange);
+  };
+
+  const onSearchChange = (v) => {
+    setQ(v);
+    clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(() => {
+      setPage(1);
+      loadCases(1, tab, v, sevFilter, timeRange);
+    }, 300);
+  };
+
+  const onSevChange = (v) => {
+    setSevFilter(v);
+    setPage(1);
+    loadCases(1, tab, q, v, timeRange);
+  };
+
+  const onTimeChange = (v) => {
+    setTimeRange(v);
+    setPage(1);
+    loadCases(1, tab, q, sevFilter, v);
+  };
+
+  const goPage = (p) => {
+    setPage(p);
+    loadCases(p, tab, q, sevFilter, timeRange);
+  };
 
   const createCase = async () => {
-    if (!newTitle.trim()) return;
+    if (!newForm.title.trim()) return;
     setCreating(true);
-    const res = await API.post('/api/cases/create', { title: newTitle, severity: 'medium' });
+    const tags = newForm.tags.split(',').map(t => t.trim()).filter(Boolean);
+    const res = await API.post('/api/cases/create', {
+      title:       newForm.title,
+      description: newForm.description,
+      severity:    newForm.severity,
+      tags:        tags.length ? tags : ['soc-pilots'],
+    });
     setCreating(false);
-    setNewTitle('');
     if (res && !res.error) {
-      window.socToast?.({ title: 'Case created', sub: res.caseId || 'New case', tone: 'ok' });
-      load();
+      window.socToast?.({ title: 'Case created', sub: newForm.title, tone: 'ok' });
+      setShowNew(false);
+      setNewForm({ title:'', description:'', severity:'medium', tags:'' });
+      loadStats();
+      loadCases(1, tab, q, sevFilter, timeRange);
     } else {
-      window.socToast?.({ title: 'Failed', sub: res?.error || 'Unknown error', tone: 'crit' });
+      window.socToast?.({ title: 'Failed', sub: res?.error || 'Error creating case', tone: 'crit' });
     }
   };
 
-  const laneConfig = [
-    { key: 'new',          label: 'NEW',           sev: 'critical' },
-    { key: 'inProgress',   label: 'IN PROGRESS',   sev: 'high'     },
-    { key: 'truePositive', label: 'TRUE POSITIVE',  sev: 'medium'   },
-    { key: 'closed',       label: 'CLOSED / FP',   sev: 'low'      },
+  const deleteStale = async () => {
+    if (!window.confirm('Delete all open (New / In Progress) cases older than 90 days? This cannot be undone.')) return;
+    setDeletingStale(true);
+    const res = await API.del('/api/cases/stale');
+    setDeletingStale(false);
+    if (res && !res.error) {
+      const tone = res.errors > 0 ? 'warn' : 'ok';
+      window.socToast?.({ title: `Deleted ${res.deleted} stale cases`, sub: res.errors > 0 ? `${res.errors} errors` : 'Done', tone });
+      loadStats();
+      loadCases(1, tab, q, sevFilter, timeRange);
+    } else {
+      window.socToast?.({ title: 'Failed', sub: res?.error || 'Error', tone: 'crit' });
+    }
+  };
+
+  const totalPages = Math.ceil(total / PAGE_SIZE);
+
+  const KPI_COLS = [
+    { label:'Total',        key:'total',          color:'var(--acc)'  },
+    { label:'New',          key:'new',             color:'#ff3b3b'     },
+    { label:'In Progress',  key:'in_progress',     color:'#ff8c00'     },
+    { label:'True Positive',key:'true_positive',   color:'#00e676'     },
+    { label:'False Positive',key:'false_positive', color:'#607d8b'     },
+    { label:'Critical',     key:'critical',        color:'#ff3b3b'     },
+    { label:'High',         key:'high',            color:'#ff8c00'     },
+    { label:'Closed',       key:'closed',          color:'var(--fg-2)' },
   ];
 
   return (
@@ -103,100 +201,270 @@ function PageCases({ onOpenCase }) {
         title="SP-CM Cases"
         sub="Case Management · TheHive"
         actions={<>
-          <button className="btn btn-ghost" onClick={load}>
+          <button className="btn btn-ghost" onClick={() => { loadStats(); loadCases(page, tab, q, sevFilter, timeRange); }}>
             <Icon.refresh width="13" height="13"/> Refresh
           </button>
-          <button className="btn btn-primary" onClick={() => {
-            const t = prompt('Case title:');
-            if (t) { setNewTitle(t); setTimeout(createCase, 50); }
-          }}>
-            <Icon.plus width="13" height="13"/> New case
+          <button
+            className="btn btn-ghost"
+            style={{color:'#ff3b3b'}}
+            onClick={deleteStale}
+            disabled={deletingStale}
+            title="Delete open cases older than 90 days"
+          >
+            <Icon.trash width="13" height="13"/> {deletingStale ? 'Deleting…' : 'Delete Stale'}
+          </button>
+          <button className="btn btn-primary" onClick={() => setShowNew(true)}>
+            <Icon.plus width="13" height="13"/> New Case
           </button>
         </>}
       />
 
       <div className="page-body">
-        {loading ? (
-          <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:300}}>
-            <Spinner />
-          </div>
-        ) : (
-          <div className="kanban">
-            {laneConfig.map(({ key, label, sev }) => {
-              const items = lanes[key] || [];
-              const total = totals[key] || items.length;
-              return (
-                <div key={key} className="lane">
-                  <header className="lane-head" data-sev={sev}>
-                    <span className="lane-bar" />
-                    <span className="lane-label">{label}</span>
-                    <span className="lane-count mono">{total}</span>
-                  </header>
-                  <div className="lane-body">
-                    {items.length === 0 ? (
-                      <div style={{padding:'12px 8px',fontSize:11,color:'var(--txt-3)',textAlign:'center'}}>
-                        No cases
-                      </div>
-                    ) : items.map(c => (
-                      <button
-                        key={c.hiveId || c.id}
-                        className={`case-card ${selected?.hiveId === c.hiveId ? 'sel' : ''}`}
-                        onClick={() => { setSelected(c); if (onOpenCase) onOpenCase(c); }}
-                      >
-                        <div className="cc-top">
-                          <SevDot sev={c.sev} />
-                          <span className="cc-id mono">{c.id}</span>
-                          <span className="cc-age mono">{c.age}</span>
-                        </div>
-                        <div className="cc-title">{c.title}</div>
-                        {c.tags.length > 0 && (
-                          <div className="cc-tags">
-                            {c.tags.map(t => <Chip key={t} mono>{t}</Chip>)}
-                          </div>
-                        )}
-                        <div className="cc-foot">
-                          <SevChip sev={c.sev} />
-                          {c.assignee ? (
-                            <span className="cc-assignee">
-                              <span className="cc-avatar">{c.assignee[0].toUpperCase()}</span>
-                              {c.assignee}
-                            </span>
-                          ) : (
-                            <span className="cc-unassigned">unassigned</span>
-                          )}
-                        </div>
-                      </button>
-                    ))}
-                    {total > items.length && (
-                      <div style={{padding:'6px 8px',fontSize:11,color:'var(--txt-3)',textAlign:'center'}}>
-                        +{total - items.length} more
-                      </div>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
+
+        {/* KPI row */}
+        {stats && (
+          <div style={{display:'grid',gridTemplateColumns:'repeat(8,1fr)',gap:8,marginBottom:16}}>
+            {KPI_COLS.map(({ label, key, color }) => (
+              <div key={key} style={{background:'var(--bg-2)',border:'1px solid var(--ln)',borderRadius:6,padding:'8px 12px'}}>
+                <div style={{fontSize:10,color:'var(--fg-2)',marginBottom:2,whiteSpace:'nowrap'}}>{label}</div>
+                <div style={{fontSize:20,fontWeight:700,color,fontFamily:'var(--font-mono)'}}>{(stats[key] ?? 0).toLocaleString()}</div>
+              </div>
+            ))}
           </div>
         )}
-        {selected && (
-          <div style={{
-            marginTop:12, padding:'12px 16px', background:'var(--bg-2)',
-            border:'1px solid var(--ln)', borderRadius:6, fontSize:12
-          }}>
-            <div style={{display:'flex',gap:12,alignItems:'center',marginBottom:8}}>
-              <SevChip sev={selected.sev} />
-              <span className="mono dim">{selected.id}</span>
-              <span style={{flex:1,fontWeight:500}}>{selected.title}</span>
-              <span className="mono dim">{selected.age} ago</span>
-            </div>
-            {selected.mitre.length > 0 && (
-              <div style={{fontSize:11,color:'var(--txt-2)'}}>
-                MITRE: <span className="mono">{selected.mitre.join(', ')}</span>
-              </div>
-            )}
+
+        {/* Status tabs */}
+        <div style={{display:'flex',gap:0,borderBottom:'1px solid var(--ln)',marginBottom:12,overflowX:'auto'}}>
+          {CASE_TABS.map(t => {
+            const count = t.statKey && stats ? stats[t.statKey] : null;
+            return (
+              <button key={t.id} onClick={() => switchTab(t.id)} style={{
+                padding:'8px 14px',fontSize:12,fontWeight:500,border:'none',background:'none',
+                cursor:'pointer',whiteSpace:'nowrap',
+                color: tab===t.id ? 'var(--acc)' : 'var(--fg-2)',
+                borderBottom: tab===t.id ? '2px solid var(--acc)' : '2px solid transparent',
+              }}>
+                {t.label}
+                {count != null && (
+                  <span style={{marginLeft:5,fontSize:10,opacity:.65,fontFamily:'var(--font-mono)'}}>
+                    {count.toLocaleString()}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Filter bar */}
+        <div style={{display:'flex',gap:8,marginBottom:12,alignItems:'center',flexWrap:'wrap'}}>
+          <div style={{position:'relative',flex:'1 1 220px',maxWidth:320}}>
+            <input
+              value={q}
+              onChange={e => onSearchChange(e.target.value)}
+              placeholder="Search cases…"
+              style={{width:'100%',padding:'6px 10px 6px 30px',background:'var(--bg-2)',border:'1px solid var(--ln)',borderRadius:4,color:'var(--fg-0)',fontSize:12,boxSizing:'border-box'}}
+            />
+            <span style={{position:'absolute',left:9,top:'50%',transform:'translateY(-50%)',opacity:.4,pointerEvents:'none'}}>
+              <Icon.search width="12" height="12"/>
+            </span>
+          </div>
+          <select value={sevFilter} onChange={e => onSevChange(e.target.value)}
+            style={{padding:'6px 10px',background:'var(--bg-2)',border:'1px solid var(--ln)',borderRadius:4,color:'var(--fg-0)',fontSize:12}}>
+            <option value="">All Severities</option>
+            <option value="4">Critical</option>
+            <option value="3">High</option>
+            <option value="2">Medium</option>
+            <option value="1">Low</option>
+          </select>
+          <select value={timeRange} onChange={e => onTimeChange(e.target.value)}
+            style={{padding:'6px 10px',background:'var(--bg-2)',border:'1px solid var(--ln)',borderRadius:4,color:'var(--fg-0)',fontSize:12}}>
+            <option value="all">All Time</option>
+            <option value="24h">Last 24h</option>
+            <option value="7d">Last 7d</option>
+            <option value="30d">Last 30d</option>
+          </select>
+          <span style={{marginLeft:'auto',fontSize:11,color:'var(--fg-2)',whiteSpace:'nowrap'}}>
+            {total.toLocaleString()} case{total !== 1 ? 's' : ''}
+          </span>
+        </div>
+
+        {/* Table */}
+        {loading ? (
+          <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:220}}>
+            <Spinner />
+          </div>
+        ) : cases.length === 0 ? (
+          <div style={{padding:'48px 0',textAlign:'center',color:'var(--fg-2)',fontSize:13}}>
+            No cases found for this view
+          </div>
+        ) : (
+          <div style={{overflowX:'auto',borderRadius:6,border:'1px solid var(--ln)'}}>
+            <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+              <thead>
+                <tr style={{background:'var(--bg-2)'}}>
+                  {['SEV','#','TITLE','STATUS','ASSIGNEE','TAGS','CREATED','AGE',''].map((h,i) => (
+                    <th key={i} style={{
+                      padding:'8px 10px',textAlign:'left',fontSize:10,color:'var(--fg-2)',
+                      fontWeight:600,whiteSpace:'nowrap',borderBottom:'1px solid var(--ln)'
+                    }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {cases.map((c, ri) => {
+                  const sc = CASE_STATUS_COLOR[c.status] || '#888';
+                  return (
+                    <tr
+                      key={c.id || ri}
+                      style={{borderBottom:'1px solid rgba(255,255,255,.04)',cursor:'pointer',transition:'background .1s'}}
+                      onClick={() => { if (onOpenCase) onOpenCase(c); }}
+                      onMouseEnter={e => e.currentTarget.style.background='rgba(255,255,255,.04)'}
+                      onMouseLeave={e => e.currentTarget.style.background=''}
+                    >
+                      <td style={{padding:'9px 10px'}}>
+                        <SevDot sev={c.severity} />
+                      </td>
+                      <td style={{padding:'9px 10px',fontFamily:'var(--font-mono)',color:'var(--fg-2)',whiteSpace:'nowrap',fontSize:11}}>
+                        #{c.number || c.id?.slice(0,8)}
+                      </td>
+                      <td style={{padding:'9px 10px',maxWidth:300}}>
+                        <div style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',fontWeight:500}}>{c.title}</div>
+                        {c.mitre?.length > 0 && (
+                          <div style={{fontSize:10,color:'var(--fg-3)',marginTop:2,fontFamily:'var(--font-mono)'}}>
+                            {c.mitre.slice(0,3).join(' · ')}
+                          </div>
+                        )}
+                      </td>
+                      <td style={{padding:'9px 10px',whiteSpace:'nowrap'}}>
+                        <span style={{
+                          padding:'2px 8px',borderRadius:10,fontSize:10,fontWeight:600,
+                          background:`${sc}22`,color:sc,
+                        }}>{c.statusLabel || c.status}</span>
+                      </td>
+                      <td style={{padding:'9px 10px',whiteSpace:'nowrap',maxWidth:120}}>
+                        {c.assignee ? (
+                          <span style={{display:'inline-flex',alignItems:'center',gap:5,color:'var(--fg-1)'}}>
+                            <span style={{
+                              width:20,height:20,borderRadius:'50%',background:'var(--acc)',
+                              color:'#000',display:'inline-flex',alignItems:'center',justifyContent:'center',
+                              fontSize:9,fontWeight:700,flexShrink:0,
+                            }}>{(c.assignee[0]||'?').toUpperCase()}</span>
+                            <span style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:80,fontSize:11}}>{c.assignee}</span>
+                          </span>
+                        ) : <span style={{color:'var(--fg-3)',fontSize:11}}>—</span>}
+                      </td>
+                      <td style={{padding:'9px 10px',maxWidth:140}}>
+                        <div style={{display:'flex',gap:3,flexWrap:'wrap',alignItems:'center'}}>
+                          {(c.tags||[]).slice(0,2).map(t => (
+                            <span key={t} style={{
+                              padding:'1px 6px',borderRadius:3,fontSize:9,
+                              background:'rgba(255,255,255,.07)',color:'var(--fg-2)',
+                              fontFamily:'var(--font-mono)',whiteSpace:'nowrap',
+                            }}>{t}</span>
+                          ))}
+                          {(c.tags||[]).length > 2 && (
+                            <span style={{fontSize:10,color:'var(--fg-3)'}}>+{c.tags.length-2}</span>
+                          )}
+                        </div>
+                      </td>
+                      <td style={{padding:'9px 10px',fontFamily:'var(--font-mono)',fontSize:11,color:'var(--fg-2)',whiteSpace:'nowrap'}}>
+                        {c.created ? new Date(c.created).toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'}) : '—'}
+                      </td>
+                      <td style={{padding:'9px 10px',fontFamily:'var(--font-mono)',fontSize:11,whiteSpace:'nowrap',color:
+                        c.created && (Date.now()-new Date(c.created).getTime())>90*86400000 && !c.isClosed ? '#ff3b3b' : 'var(--fg-2)'
+                      }}>
+                        {caseAge(c.created)}
+                      </td>
+                      <td style={{padding:'9px 10px'}} onClick={e => e.stopPropagation()}>
+                        <button className="btn btn-ghost" style={{fontSize:10,padding:'3px 8px',whiteSpace:'nowrap'}}
+                          onClick={() => { if (onOpenCase) onOpenCase(c); }}>
+                          View
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* Pagination */}
+        {totalPages > 1 && (
+          <div style={{display:'flex',gap:6,alignItems:'center',justifyContent:'center',marginTop:14}}>
+            <button className="btn btn-ghost" style={{fontSize:11}} disabled={page<=1} onClick={() => goPage(page-1)}>
+              ← Prev
+            </button>
+            <span style={{fontSize:11,color:'var(--fg-2)',fontFamily:'var(--font-mono)'}}>
+              {page} / {totalPages}
+            </span>
+            <button className="btn btn-ghost" style={{fontSize:11}} disabled={page>=totalPages} onClick={() => goPage(page+1)}>
+              Next →
+            </button>
           </div>
         )}
       </div>
+
+      {/* New Case Modal */}
+      {showNew && (
+        <div style={{
+          position:'fixed',inset:0,background:'rgba(0,0,0,.65)',
+          display:'flex',alignItems:'center',justifyContent:'center',zIndex:1000,
+        }} onClick={e => { if(e.target===e.currentTarget) setShowNew(false); }}>
+          <div style={{
+            background:'var(--bg-1)',border:'1px solid var(--ln)',borderRadius:8,
+            width:500,maxWidth:'90vw',padding:24,
+          }}>
+            <h3 style={{margin:'0 0 18px',fontSize:16,fontWeight:600}}>New Case</h3>
+            <label style={{display:'block',marginBottom:12}}>
+              <div style={{fontSize:11,color:'var(--fg-2)',marginBottom:4}}>Title *</div>
+              <input
+                value={newForm.title}
+                onChange={e => setNewForm(f => ({...f, title:e.target.value}))}
+                placeholder="Case title"
+                autoFocus
+                style={{width:'100%',padding:'8px 10px',background:'var(--bg-2)',border:'1px solid var(--ln)',borderRadius:4,color:'var(--fg-0)',fontSize:13,boxSizing:'border-box'}}
+              />
+            </label>
+            <label style={{display:'block',marginBottom:12}}>
+              <div style={{fontSize:11,color:'var(--fg-2)',marginBottom:4}}>Description</div>
+              <textarea
+                value={newForm.description}
+                onChange={e => setNewForm(f => ({...f, description:e.target.value}))}
+                rows={3} placeholder="Brief description…"
+                style={{width:'100%',padding:'8px 10px',background:'var(--bg-2)',border:'1px solid var(--ln)',borderRadius:4,color:'var(--fg-0)',fontSize:13,resize:'vertical',boxSizing:'border-box'}}
+              />
+            </label>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:18}}>
+              <label>
+                <div style={{fontSize:11,color:'var(--fg-2)',marginBottom:4}}>Severity</div>
+                <select value={newForm.severity} onChange={e => setNewForm(f => ({...f, severity:e.target.value}))}
+                  style={{width:'100%',padding:'8px 10px',background:'var(--bg-2)',border:'1px solid var(--ln)',borderRadius:4,color:'var(--fg-0)',fontSize:13}}>
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                  <option value="critical">Critical</option>
+                </select>
+              </label>
+              <label>
+                <div style={{fontSize:11,color:'var(--fg-2)',marginBottom:4}}>Tags</div>
+                <input
+                  value={newForm.tags}
+                  onChange={e => setNewForm(f => ({...f, tags:e.target.value}))}
+                  placeholder="apt, phishing, …"
+                  style={{width:'100%',padding:'8px 10px',background:'var(--bg-2)',border:'1px solid var(--ln)',borderRadius:4,color:'var(--fg-0)',fontSize:13,boxSizing:'border-box'}}
+                />
+              </label>
+            </div>
+            <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
+              <button className="btn btn-ghost" onClick={() => setShowNew(false)}>Cancel</button>
+              <button className="btn btn-primary" disabled={creating || !newForm.title.trim()} onClick={createCase}>
+                {creating ? 'Creating…' : 'Create Case'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
