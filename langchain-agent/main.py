@@ -92,21 +92,28 @@ _sync_client = httpx.Client(verify=False, timeout=30.0)
 
 # ── LangChain Tools (all synchronous) ───────────────────────
 
+_GENERIC_QUERIES = {
+    "*", "all", "any", "everything", "threat", "threats", "security", "alerts",
+    "summary", "summarize", "overview", "recent", "latest", "today", "now",
+    "status", "report", "news", "incidents", "events",
+}
+
 @tool
 def search_alerts(query: str, hours: int = 24) -> str:
     """
-    Search Wazuh/OpenSearch for security alerts related to an IP, hostname, user, or keyword.
-    Input: a single string. To search further back than 24h, append ' hours=N' or ' days=N' to the query.
+    Search Wazuh/OpenSearch for security alerts related to an IP, hostname, user, rule ID, or keyword.
+    Input: a specific indicator or keyword. To look further back append 'hours=N' or 'days=N'.
       Examples:
-        "gsuite hours=720"          — Google Workspace events from the last 30 days
-        "failed login hours=168"    — failed logins from the last 7 days
-        "192.168.1.5"               — recent alerts for that IP (last 24h)
-    Returns: list of matching alerts with timestamp, rule, severity, agent, source IP, integration.
+        "192.168.1.5"               — all alerts involving that IP (last 24h)
+        "failed login hours=168"    — failed-login rules in the last 7 days
+        "T1059"                     — alerts mapped to MITRE technique T1059
+        "agent-name hours=48"       — all alerts from a specific agent
+    For a FULL THREAT OVERVIEW use get_threat_summary instead of this tool.
+    Returns: matching alerts with timestamp, rule ID, level, description, agent, source IP.
     """
     if not OPENSEARCH_URL:
         return "OpenSearch not configured"
     try:
-        # Parse optional hours/days suffix from query string (handles ReAct single-string input)
         import re as _re
         lookback_hours = int(hours)
         h_match = _re.search(r'\bhours?=(\d+)\b', query, _re.IGNORECASE)
@@ -117,52 +124,215 @@ def search_alerts(query: str, hours: int = 24) -> str:
         elif d_match:
             lookback_hours = int(d_match.group(1)) * 24
             query = _re.sub(r'\bdays?=\d+\b', '', query, flags=_re.IGNORECASE).strip().strip(',').strip()
-        # Strip surrounding quotes the ReAct agent sometimes adds
-        query = query.strip('"\'')
-        lookback_hours = max(1, min(lookback_hours, 720))  # clamp 1h–30d
+        query = query.strip('"\'').strip()
+        lookback_hours = max(1, min(lookback_hours, 720))
+
+        time_filter = {"range": {"@timestamp": {"gte": f"now-{lookback_hours}h"}}}
+        is_generic = not query or query.lower() in _GENERIC_QUERIES
+
+        if is_generic:
+            # Broad fetch — top 15 by severity then recency, plus severity histogram
+            body = {
+                "size": 15,
+                "sort": [{"rule.level": {"order": "desc"}}, {"@timestamp": {"order": "desc"}}],
+                "query": {"bool": {"filter": [time_filter]}},
+                "aggs": {
+                    "by_level": {"range": {"field": "rule.level",
+                        "ranges": [{"key":"critical","from":12},{"key":"high","from":8,"to":12},
+                                   {"key":"medium","from":4,"to":8},{"key":"low","to":4}]}},
+                    "top_rules":  {"terms": {"field": "rule.id", "size": 5}},
+                    "top_agents": {"terms": {"field": "agent.name", "size": 5}},
+                },
+            }
+        else:
+            body = {
+                "size": 15,
+                "sort": [{"rule.level": {"order": "desc"}}, {"@timestamp": {"order": "desc"}}],
+                "query": {
+                    "bool": {
+                        "should": [{
+                            "multi_match": {
+                                "query": query,
+                                "fields": ["data.srcip^3", "agent.name^2", "rule.id^2",
+                                           "rule.description", "full_log", "data.dstuser",
+                                           "data.integration", "rule.mitre.id"],
+                                "type": "best_fields",
+                            }
+                        }],
+                        "filter": [time_filter],
+                        "minimum_should_match": 1,
+                    }
+                },
+            }
+
+        r = _sync_client.post(
+            f"{OPENSEARCH_URL}/{WAZUH_INDEX}/_search",
+            json=body,
+            auth=(OPENSEARCH_USER, OPENSEARCH_PASS),
+        )
+        data = r.json()
+        hits  = data.get("hits", {}).get("hits", [])
+        total = data.get("hits", {}).get("total", {}).get("value", 0)
+
+        if not hits:
+            if not is_generic:
+                # Fallback: broaden to match_all so the agent knows there are (or aren't) alerts
+                fb = _sync_client.post(
+                    f"{OPENSEARCH_URL}/{WAZUH_INDEX}/_search",
+                    json={"size": 5, "sort": [{"rule.level": {"order": "desc"}}],
+                          "query": {"bool": {"filter": [time_filter]}}},
+                    auth=(OPENSEARCH_USER, OPENSEARCH_PASS),
+                )
+                fb_data = fb.json()
+                fb_total = fb_data.get("hits", {}).get("total", {}).get("value", 0)
+                if fb_total > 0:
+                    return (f"No alerts matched '{query}' directly, but there are {fb_total} "
+                            f"alerts in the last {lookback_hours}h. Try a more specific term or "
+                            f"call get_threat_summary for an overview.")
+            return f"No alerts in the last {lookback_hours}h"
+
+        aggs = data.get("aggregations", {})
+        by_level = {b["key"]: b["doc_count"] for b in aggs.get("by_level", {}).get("buckets", [])}
+
+        label = "all" if is_generic else f"matching '{query}'"
+        lines = [f"Found {total} alert(s) {label} in the last {lookback_hours}h"]
+        if by_level:
+            lines.append(
+                f"  Severity: critical={by_level.get('critical',0)} | "
+                f"high={by_level.get('high',0)} | medium={by_level.get('medium',0)} | "
+                f"low={by_level.get('low',0)}"
+            )
+        lines.append(f"Top {len(hits)} by severity:")
+        for h in hits:
+            s = h["_source"]
+            integ = s.get("data", {}).get("integration", "")
+            mitre = s.get("rule", {}).get("mitre", {})
+            mitre_ids = mitre.get("id", []) if isinstance(mitre, dict) else []
+            mitre_str = f" | MITRE:{','.join(mitre_ids[:2])}" if mitre_ids else ""
+            integ_str = f" | integ:{integ}" if integ else ""
+            lines.append(
+                f"  [{s.get('@timestamp','')[:16]}] Rule {s.get('rule',{}).get('id','')} "
+                f"L{s.get('rule',{}).get('level','?')} — "
+                f"{s.get('rule',{}).get('description','')} | "
+                f"agent:{s.get('agent',{}).get('name','')} | "
+                f"src:{s.get('data',{}).get('srcip','—')}"
+                f"{integ_str}{mitre_str}"
+            )
+        return "\n".join(lines)
+    except Exception as e:
+        return f"Error searching alerts: {e}"
+
+
+@tool
+def get_threat_summary(hours: int = 24) -> str:
+    """
+    Get a comprehensive SIEM threat summary for the given time window.
+    USE THIS TOOL for any overview/summary request: 'summarize threats', 'what happened today',
+    'security status', 'threat overview', 'last 24h threats', 'any attacks?'.
+    Input: number of hours to look back (1–720, default 24).
+    Returns: total alert count, severity breakdown, top triggered rules (with counts),
+             top affected agents, top attacker source IPs, active MITRE techniques,
+             and the 10 highest-severity recent alerts with full detail.
+    """
+    if not OPENSEARCH_URL:
+        return "OpenSearch not configured"
+    try:
+        h = max(1, min(int(hours), 720))
+        time_filter = {"range": {"@timestamp": {"gte": f"now-{h}h"}}}
         body = {
             "size": 10,
-            "sort": [{"@timestamp": {"order": "desc"}}],
-            "query": {
-                "bool": {
-                    "must": [{
-                        "multi_match": {
-                            "query": query,
-                            "fields": ["data.srcip", "agent.name", "full_log",
-                                       "rule.description", "data.dstuser",
-                                       "data.integration", "rule.groups"]
-                        }
-                    }],
-                    "filter": [{"range": {"@timestamp": {"gte": f"now-{lookback_hours}h"}}}]
-                }
-            }
+            "sort": [{"rule.level": {"order": "desc"}}, {"@timestamp": {"order": "desc"}}],
+            "query": {"bool": {"filter": [time_filter]}},
+            "aggs": {
+                "by_level": {"range": {"field": "rule.level",
+                    "ranges": [{"key":"critical","from":12},{"key":"high","from":8,"to":12},
+                               {"key":"medium","from":4,"to":8},{"key":"low","to":4}]}},
+                "top_rules":  {"terms": {"field": "rule.description.keyword", "size": 8,
+                                         "order": {"_count": "desc"}}},
+                "top_agents": {"terms": {"field": "agent.name", "size": 5,
+                                         "order": {"_count": "desc"}}},
+                "top_srcips": {"terms": {"field": "data.srcip", "size": 5,
+                                         "order": {"_count": "desc"},
+                                         "exclude": ["", "0.0.0.0", "127.0.0.1"]}},
+                "top_mitre":  {"terms": {"field": "rule.mitre.id", "size": 6,
+                                         "order": {"_count": "desc"}}},
+                "hourly":     {"date_histogram": {"field": "@timestamp",
+                                "calendar_interval": "hour", "min_doc_count": 1}},
+            },
         }
         r = _sync_client.post(
             f"{OPENSEARCH_URL}/{WAZUH_INDEX}/_search",
             json=body,
-            auth=(OPENSEARCH_USER, OPENSEARCH_PASS)
+            auth=(OPENSEARCH_USER, OPENSEARCH_PASS),
         )
         data = r.json()
-        hits = data.get("hits", {}).get("hits", [])
+        hits  = data.get("hits", {}).get("hits", [])
         total = data.get("hits", {}).get("total", {}).get("value", 0)
-        if not hits:
-            return f"No alerts found matching '{query}' in the last {lookback_hours}h"
-        results = [f"Found {total} alert(s) matching '{query}' in the last {lookback_hours}h (showing {len(hits)}):"]
-        for h in hits:
-            s = h["_source"]
-            integ = s.get("data", {}).get("integration", "")
-            integ_str = f" | Integration: {integ}" if integ else ""
-            results.append(
-                f"[{s.get('@timestamp','')}] Rule {s.get('rule',{}).get('id','')} "
-                f"(level {s.get('rule',{}).get('level','?')}) — "
-                f"{s.get('rule',{}).get('description','')} | "
-                f"Agent: {s.get('agent',{}).get('name','')} | "
-                f"SrcIP: {s.get('data',{}).get('srcip','')}"
-                f"{integ_str}"
+        aggs  = data.get("aggregations", {})
+
+        if total == 0:
+            return (f"No alerts recorded in the last {h}h. "
+                    "SIEM is collecting events but no rules triggered in this window. "
+                    "This may indicate a quiet period or a log-collection gap — check log sources.")
+
+        by_level = {b["key"]: b["doc_count"] for b in aggs.get("by_level", {}).get("buckets", [])}
+        critical = by_level.get("critical", 0)
+        high     = by_level.get("high", 0)
+        medium   = by_level.get("medium", 0)
+        low      = by_level.get("low", 0)
+
+        lines = [
+            f"=== SIEM THREAT SUMMARY — LAST {h}h ===",
+            f"Total alerts : {total:,}",
+            f"Severity     : CRITICAL={critical} | HIGH={high} | MEDIUM={medium} | LOW={low}",
+        ]
+
+        top_rules = aggs.get("top_rules", {}).get("buckets", [])
+        if top_rules:
+            lines.append("Top triggered rules:")
+            for b in top_rules:
+                lines.append(f"  [{b['doc_count']:>5}x] {b['key']}")
+
+        top_agents = aggs.get("top_agents", {}).get("buckets", [])
+        if top_agents:
+            lines.append("Most active agents:")
+            for b in top_agents:
+                lines.append(f"  [{b['doc_count']:>5}] {b['key']}")
+
+        top_ips = aggs.get("top_srcips", {}).get("buckets", [])
+        if top_ips:
+            lines.append("Top attacker source IPs:")
+            for b in top_ips:
+                lines.append(f"  [{b['doc_count']:>5}] {b['key']}")
+
+        top_mitre = aggs.get("top_mitre", {}).get("buckets", [])
+        if top_mitre:
+            mitre_str = ", ".join(f"{b['key']}({b['doc_count']})" for b in top_mitre)
+            lines.append(f"Active MITRE techniques: {mitre_str}")
+
+        hourly = aggs.get("hourly", {}).get("buckets", [])
+        if len(hourly) >= 2:
+            peak = max(hourly, key=lambda b: b["doc_count"])
+            lines.append(f"Peak hour: {peak['key_as_string'][:13]} UTC ({peak['doc_count']} alerts)")
+
+        lines.append(f"Highest-severity alerts (top {len(hits)}):")
+        for hit in hits:
+            s = hit["_source"]
+            ts    = s.get("@timestamp", "")[:16].replace("T", " ")
+            rule  = s.get("rule", {})
+            agent = s.get("agent", {}).get("name", "—")
+            srcip = s.get("data", {}).get("srcip", "")
+            mitre = s.get("rule", {}).get("mitre", {})
+            mids  = mitre.get("id", []) if isinstance(mitre, dict) else []
+            m_str = f" [{','.join(mids[:2])}]" if mids else ""
+            s_str = f" src:{srcip}" if srcip else ""
+            lines.append(
+                f"  {ts} | L{rule.get('level','?')} | {rule.get('description','')}"
+                f" | agent:{agent}{s_str}{m_str}"
             )
-        return "\n".join(results)
+        return "\n".join(lines)
     except Exception as e:
-        return f"Error searching alerts: {e}"
+        return f"Error getting threat summary: {e}"
 
 
 @tool
@@ -524,24 +694,19 @@ def query_log_sources(filter_str: str = "all") -> str:
 
 # ── LLM Selection ─────────────────────────────────────────────
 def get_llm(model_preference: str = "auto"):
-    if model_preference == "mistral" and MISTRAL_API_KEY:
-        return ChatMistralAI(
-            model="mistral-small-latest",
-            api_key=MISTRAL_API_KEY,
-            temperature=0,
-        )
+    """
+    LLM routing:
+      "gpt"     / "openai"  → GPT-4o (deep analysis, best tool use)
+      "mistral"             → Mistral-large (fast, good for enrichment)
+      "auto"                → GPT-4o if available, else Mistral-large
+    """
+    pref = (model_preference or "auto").lower()
+    if pref in ("mistral",) and MISTRAL_API_KEY:
+        return ChatMistralAI(model="mistral-large-latest", api_key=MISTRAL_API_KEY, temperature=0)
     if OPENAI_API_KEY:
-        return ChatOpenAI(
-            model="gpt-4o-mini",
-            api_key=OPENAI_API_KEY,
-            temperature=0,
-        )
+        return ChatOpenAI(model="gpt-4o", api_key=OPENAI_API_KEY, temperature=0)
     if MISTRAL_API_KEY:
-        return ChatMistralAI(
-            model="mistral-small-latest",
-            api_key=MISTRAL_API_KEY,
-            temperature=0,
-        )
+        return ChatMistralAI(model="mistral-large-latest", api_key=MISTRAL_API_KEY, temperature=0)
     raise ValueError("No LLM API key configured (OPENAI_API_KEY or MISTRAL_API_KEY)")
 
 
@@ -1124,7 +1289,7 @@ def query_agents(filter_str: str = "all") -> str:
         return f"Agent query error: {e}"
 
 
-CHAT_TOOLS = [search_alerts, enrich_ip, check_cases, query_assets, query_ueba, query_knowledge_base, query_agents, query_log_sources]
+CHAT_TOOLS = [get_threat_summary, search_alerts, enrich_ip, check_cases, query_assets, query_ueba, query_knowledge_base, query_agents, query_log_sources]
 
 # ChatPromptTemplate required by create_tool_calling_agent (native function calling).
 # Works with GPT-4o-mini and Mistral — far more reliable than string-based ReAct.
@@ -1151,17 +1316,26 @@ CHAT_PROMPT = ChatPromptTemplate.from_messages([
      "headers for sections in longer responses\n"
      "- For multi-step investigations, reason through the data as you gather it\n\n"
      "TOOL SELECTION GUIDE\n"
-     "- search_alerts: recent SIEM alerts, attack patterns, rule triggers, IOC activity\n"
-     "- enrich_ip: full threat intel (VT + AbuseIPDB + OTX + Shodan) — always use for external IPs\n"
-     "- check_cases: existing TheHive cases — always check for known context on hosts/users/IPs\n"
-     "- query_ueba: user/host behaviour anomaly scores, lateral movement, impossible travel\n"
-     "- query_assets: asset inventory, criticality ratings, Wazuh agent coverage gaps\n"
-     "- query_knowledge_base: MITRE ATT&CK techniques, detection rules, incident playbooks\n"
+     "- get_threat_summary: ALWAYS use first for any overview/summary/status request "
+     "('summarize threats', 'what happened today', 'last 24h threats', 'any attacks', 'security status'). "
+     "Pass hours=N to adjust the lookback window. This is your primary situational-awareness tool.\n"
+     "- search_alerts: search for a SPECIFIC indicator — source IP, agent name, rule ID, username, "
+     "MITRE technique ID, or keyword. Do NOT call with generic words like 'threats' or 'security'.\n"
+     "- enrich_ip: full threat intel (VT + AbuseIPDB + OTX) — always use for any external IP found\n"
+     "- check_cases: TheHive cases — check for existing cases on a specific host, IP, or user\n"
+     "- query_ueba: user/host behavioural risk scores, anomaly detection, lateral movement\n"
+     "- query_assets: asset inventory, OS, open ports, Wazuh agent coverage gaps\n"
+     "- query_knowledge_base: MITRE ATT&CK techniques, detection rules, playbooks\n"
      "- query_agents: Wazuh agent status, coverage, last-seen, disconnected endpoints\n"
-     "- query_log_sources: active log sources, collection health, coverage gaps\n\n"
-     "Apply expertise in: MITRE ATT&CK, threat hunting, malware analysis, network forensics, "
-     "Windows/Linux IR, Active Directory attacks, and SOC operations. Cross-reference findings "
-     "against known TTPs and attacker tradecraft."),
+     "- query_log_sources: active log sources, collection health, cloud integrations\n\n"
+     "RESPONSE FORMAT\n"
+     "- Lead with concrete data from tools — never state 'no data' without actually calling a tool\n"
+     "- Use exact numbers, timestamps, rule IDs, agent names from tool output\n"
+     "- Use markdown: **bold** key findings, `code` for IPs/hashes, ## headers for sections\n"
+     "- Risk assessment: Critical/High/Medium/Low with justification from real data\n"
+     "- End with prioritised, actionable next steps\n\n"
+     "Apply expertise in: MITRE ATT&CK, threat hunting, malware analysis, Windows/Linux IR, "
+     "Active Directory attacks, and SOC operations."),
     MessagesPlaceholder("chat_history", optional=True),
     ("human", "{input}"),
     MessagesPlaceholder("agent_scratchpad"),

@@ -1675,7 +1675,7 @@ async function listUserSessions(username, limit = 20) {
     `SELECT session_id,
             MAX(created_at) AS last_message,
             COUNT(*) AS count,
-            (ARRAY_AGG(content ORDER BY created_at DESC))[1] AS last_content
+            (ARRAY_AGG(content ORDER BY created_at ASC) FILTER (WHERE role = 'user'))[1] AS last_content
      FROM chat_sessions WHERE username=$1
      GROUP BY session_id ORDER BY last_message DESC LIMIT $2`,
     [username, limit]

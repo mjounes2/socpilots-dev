@@ -372,8 +372,7 @@ function ChatMsg({ msg, user, onReload }) {
       <div className="msg-body">
         <div className="msg-name" style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
           SOCPilots AI
-          {msg.model     && <span className="msg-tag">{msg.model}</span>}
-          {msg.tools_used > 0 && <span className="msg-tag msg-tag-soft">{msg.tools_used} tools</span>}
+          {msg.model       && <span className="msg-tag">{msg.model}</span>}
           {msg.duration_ms > 0 && <span className="msg-tag msg-tag-soft">{(msg.duration_ms/1000).toFixed(1)}s</span>}
           {tsStr && (
             <span style={{fontSize:10,color:'var(--fg-3)',fontFamily:'var(--mono)',fontWeight:400,marginLeft:'auto'}}>
