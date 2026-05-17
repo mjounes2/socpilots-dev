@@ -6673,6 +6673,11 @@ async function autoIngestAlerts(windowMinutes = 15) {
       }
 
       // ── Upsert each unique candidate ────────────────────────────
+      const alertId    = hit._id;
+      const alertTs    = s['@timestamp'] || new Date().toISOString();
+      const alertDesc  = s.rule?.description || '';
+      const alertLabel = `Rule ${ruleId}${alertDesc ? ': ' + alertDesc.slice(0,80) : ''} | agent:${agentName} | ${alertTs.slice(0,19).replace('T',' ')}`;
+
       for (const { indicator, ioc_type } of candidates) {
         const ind = String(indicator).trim();
         if (!ind || ind.length < 3 || ind.length > 512) continue;
@@ -6690,6 +6695,10 @@ async function autoIngestAlerts(windowMinutes = 15) {
           });
           if (result?.is_insert) newCount++;
           else updCount++;
+          // Store the alert relation so we know which alert produced this IOC
+          if (result?.id && alertId) {
+            db.addIOCRelation(result.id, 'alert', alertId, alertLabel, 'observed_in').catch(() => {});
+          }
         } catch(e) { /* skip individual upsert errors */ }
       }
     }

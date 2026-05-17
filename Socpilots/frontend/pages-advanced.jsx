@@ -1109,51 +1109,138 @@ function PageArtifacts() {
     }
   }
 
+  const [expandedId,   setExpandedId]   = useStateADV(null);
+  const [expandedRels, setExpandedRels] = useStateADV([]);
+  const [loadingRels,  setLoadingRels]  = useStateADV(false);
+
+  async function toggleExpand(ioc) {
+    if (expandedId === ioc.id) { setExpandedId(null); setExpandedRels([]); return; }
+    setExpandedId(ioc.id);
+    setExpandedRels([]);
+    setLoadingRels(true);
+    const r = await window.SOC_API.get(`/api/ioc-store/${ioc.id}/relations`);
+    setLoadingRels(false);
+    setExpandedRels(Array.isArray(r) ? r.filter(x => x.entity_type === 'alert') : []);
+  }
+
   const repTone  = r => ({ malicious: 'crit', suspicious: 'warn', trusted: 'ok' })[r] || 'dim';
   const scoreCol = s => s >= 80 ? 'critical' : s >= 60 ? 'high' : s >= 40 ? 'medium' : 'low';
+  const COLS = 9; // total columns including actions
 
   const IocTable = ({ rows, actions = true }) => (
     <table className="data-table">
       <thead><tr>
-        <th>INDICATOR</th><th>TYPE</th><th>REPUTATION</th><th>RISK</th><th>SOURCE</th><th>ENRICHED</th><th>LAST SEEN</th>
+        <th style={{ width: 20 }}></th>
+        <th>INDICATOR</th><th>TYPE</th><th>REPUTATION</th><th>RISK</th>
+        <th>ALERTS</th><th>SOURCE</th><th>LAST SEEN</th>
         {actions && <th></th>}
       </tr></thead>
       <tbody>
         {rows.length === 0
-          ? <tr><td colSpan={actions ? 8 : 7} className="empty mono" style={{ textAlign: 'center', padding: 20 }}>No IOCs found.</td></tr>
-          : rows.map(ioc => (
-            <tr key={ioc.id}>
-              <td className="mono" style={{ color: 'var(--acc)', fontSize: 12 }}>{ioc.indicator}</td>
-              <td><Chip mono>{ioc.ioc_type}</Chip></td>
-              <td><Chip mono tone={repTone(ioc.reputation)}>{ioc.reputation || 'unknown'}</Chip></td>
-              <td>
-                <div className="bar-wrap">
-                  <div className="bar" data-sev={scoreCol(ioc.risk_score)} style={{ width: `${ioc.risk_score}%` }}/>
-                  <span className="bar-val mono">{ioc.risk_score}</span>
-                </div>
-              </td>
-              <td className="mono dim" style={{ fontSize: 11 }}>{ioc.source || '—'}</td>
-              <td className="mono dim" style={{ fontSize: 11 }}>{ioc.enriched_at ? window.SOC_API.relTs(ioc.enriched_at) : '—'}</td>
-              <td className="mono dim" style={{ fontSize: 11 }}>{window.SOC_API.relTs(ioc.last_seen)}</td>
-              {actions && (
-                <td style={{ whiteSpace: 'nowrap' }}>
-                  <button className="btn btn-ghost btn-sm" disabled={enriching[ioc.id]}
-                    onClick={() => enrichIoc(ioc)}>
-                    {enriching[ioc.id] ? '…' : 'Enrich'}
-                  </button>
-                  <button className="btn btn-ghost btn-sm"
-                    onClick={() => { setWlInput(ioc.indicator); setWlType(ioc.ioc_type); setTab('whitelist'); }}>
-                    WL
-                  </button>
-                  <button className="btn btn-ghost btn-sm"
-                    style={{ color: 'var(--crit)', opacity: .7 }}
-                    onClick={() => deleteIoc(ioc)}>
-                    ✕
-                  </button>
-                </td>
-              )}
-            </tr>
-          ))
+          ? <tr><td colSpan={COLS} className="empty mono" style={{ textAlign:'center', padding:20 }}>No IOCs found.</td></tr>
+          : rows.map(ioc => {
+            const isOpen  = expandedId === ioc.id;
+            const aCnt    = parseInt(ioc.alert_count || 0);
+            return (
+              <React.Fragment key={ioc.id}>
+                <tr style={{ cursor: 'pointer', background: isOpen ? 'var(--bg-2)' : '' }}
+                    onClick={() => toggleExpand(ioc)}>
+                  <td style={{ textAlign:'center', color:'var(--fg-3)', fontSize:10 }}>
+                    {isOpen ? '▼' : '▶'}
+                  </td>
+                  <td className="mono" style={{ color:'var(--acc)', fontSize:12 }}>{ioc.indicator}</td>
+                  <td><Chip mono>{ioc.ioc_type}</Chip></td>
+                  <td><Chip mono tone={repTone(ioc.reputation)}>{ioc.reputation || 'unknown'}</Chip></td>
+                  <td>
+                    <div className="bar-wrap">
+                      <div className="bar" data-sev={scoreCol(ioc.risk_score)} style={{ width:`${ioc.risk_score}%` }}/>
+                      <span className="bar-val mono">{ioc.risk_score}</span>
+                    </div>
+                  </td>
+                  <td>
+                    {aCnt > 0
+                      ? <span className="mono" style={{ color:'var(--acc)', fontWeight:700, fontSize:12 }}>
+                          🔗 {aCnt}
+                        </span>
+                      : <span className="mono dim" style={{ fontSize:11 }}>—</span>
+                    }
+                  </td>
+                  <td className="mono dim" style={{ fontSize:11 }}>{ioc.source || '—'}</td>
+                  <td className="mono dim" style={{ fontSize:11 }}>{window.SOC_API.relTs(ioc.last_seen)}</td>
+                  {actions && (
+                    <td style={{ whiteSpace:'nowrap' }} onClick={e => e.stopPropagation()}>
+                      <button className="btn btn-ghost btn-sm" disabled={enriching[ioc.id]}
+                        onClick={() => enrichIoc(ioc)}>
+                        {enriching[ioc.id] ? '…' : 'Enrich'}
+                      </button>
+                      <button className="btn btn-ghost btn-sm"
+                        onClick={() => { setWlInput(ioc.indicator); setWlType(ioc.ioc_type); setTab('whitelist'); }}>
+                        WL
+                      </button>
+                      <button className="btn btn-ghost btn-sm"
+                        style={{ color:'var(--crit)', opacity:.7 }}
+                        onClick={() => deleteIoc(ioc)}>
+                        ✕
+                      </button>
+                    </td>
+                  )}
+                </tr>
+                {isOpen && (
+                  <tr>
+                    <td colSpan={COLS} style={{ padding:0 }}>
+                      <div style={{
+                        background:'var(--bg-1)', borderLeft:'3px solid var(--acc)',
+                        padding:'10px 16px', margin:'0 0 2px',
+                      }}>
+                        <div style={{ fontSize:11, color:'var(--fg-3)', fontFamily:'var(--mono)', marginBottom:8, letterSpacing:'0.05em' }}>
+                          ALERT ORIGINS — {ioc.indicator}
+                        </div>
+                        {loadingRels && expandedId === ioc.id
+                          ? <div className="mono dim" style={{ fontSize:11 }}>Loading…</div>
+                          : expandedRels.length === 0
+                            ? <div className="mono dim" style={{ fontSize:11 }}>
+                                No alert relations stored yet. Run "Ingest from Alerts" to populate.
+                              </div>
+                            : <table style={{ width:'100%', borderCollapse:'collapse', fontSize:11 }}>
+                                <thead>
+                                  <tr>
+                                    <th style={{ textAlign:'left', color:'var(--fg-3)', fontFamily:'var(--mono)', padding:'3px 10px 3px 0', letterSpacing:'.05em' }}>ALERT ID</th>
+                                    <th style={{ textAlign:'left', color:'var(--fg-3)', fontFamily:'var(--mono)', padding:'3px 10px 3px 0', letterSpacing:'.05em' }}>RULE / AGENT / TIME</th>
+                                    <th style={{ textAlign:'left', color:'var(--fg-3)', fontFamily:'var(--mono)', padding:'3px 0', letterSpacing:'.05em' }}>RELATION</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {expandedRels.map(rel => (
+                                    <tr key={rel.id} style={{ borderTop:'1px solid var(--ln)' }}>
+                                      <td style={{ padding:'5px 10px 5px 0', verticalAlign:'top' }}>
+                                        <span className="mono" style={{ color:'var(--acc)', fontSize:11, wordBreak:'break-all' }}>
+                                          {rel.entity_id}
+                                        </span>
+                                        <button
+                                          title="Copy alert ID"
+                                          onClick={() => navigator.clipboard?.writeText(rel.entity_id)}
+                                          style={{ marginLeft:6, background:'none', border:'none', cursor:'pointer', color:'var(--fg-3)', fontSize:10 }}>
+                                          ⧉
+                                        </button>
+                                      </td>
+                                      <td style={{ padding:'5px 10px 5px 0', color:'var(--fg-2)', verticalAlign:'top', maxWidth:480 }}>
+                                        {rel.entity_label || '—'}
+                                      </td>
+                                      <td style={{ padding:'5px 0', verticalAlign:'top' }}>
+                                        <Chip mono tone="dim">{rel.rel_type}</Chip>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                        }
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </React.Fragment>
+            );
+          })
         }
       </tbody>
     </table>

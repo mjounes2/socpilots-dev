@@ -2147,7 +2147,10 @@ async function listIOCs({ page = 1, page_size = 50, ioc_type, reputation, q, sor
   const where = conditions.join(' AND ');
   vals.push(page_size, offset);
   const r = await pool.query(
-    `SELECT *, COUNT(*) OVER() AS total_count FROM ioc_store WHERE ${where}
+    `SELECT s.*,
+       (SELECT COUNT(*) FROM ioc_relations r WHERE r.ioc_id=s.id AND r.entity_type='alert') AS alert_count,
+       COUNT(*) OVER() AS total_count
+     FROM ioc_store s WHERE ${where}
      ORDER BY ${col} ${dir} LIMIT $${vals.length - 1} OFFSET $${vals.length}`,
     vals
   );
