@@ -661,34 +661,41 @@ function PageDarkSOC() {
                     <th style={{width:100}}>LAST RUN</th><th style={{width:80}}>RUNS</th><th style={{width:90}}></th>
                   </tr></thead>
                   <tbody>
-                    {playbooks.map(pb => (
-                      <tr key={pb.id}>
-                        <td style={{ fontWeight:600 }}>{pb.name}</td>
-                        <td><SevChip sev={pb.trigger_severity || 'high'} /></td>
-                        <td className="mono" style={{ fontSize:10,color:'var(--fg-2)' }}>
-                          {(pb.trigger_mitre || []).join(', ') || '—'}
-                        </td>
-                        <td>
-                          <div style={{ display:'flex',gap:4,flexWrap:'wrap' }}>
-                            {(pb.actions || []).map(a => <Chip key={a} mono tone="default">{a}</Chip>)}
-                          </div>
-                        </td>
-                        <td>
-                          <Chip mono tone={pb.enabled || pb.status === 'active' ? 'ok' : 'default'}>
-                            {pb.enabled || pb.status === 'active' ? 'active' : 'paused'}
-                          </Chip>
-                        </td>
-                        <td className="mono" style={{ fontSize:10,color:'var(--fg-3)' }}>
-                          {pb.last_run ? relTs(pb.last_run) : '—'}
-                        </td>
-                        <td className="mono">{pb.run_count ?? 0}</td>
-                        <td>
-                          <button className="btn btn-ghost btn-sm" onClick={() => togglePlaybook(pb)}>
-                            {(pb.enabled || pb.status === 'active') ? 'Pause' : 'Enable'}
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
+                    {playbooks.map(pb => {
+                      const lvl = pb.min_rule_level || 0;
+                      const sev = pb.trigger_severity || (lvl >= 12 ? 'critical' : lvl >= 10 ? 'high' : lvl >= 7 ? 'medium' : 'low');
+                      const mitre = pb.mitre_techniques || pb.trigger_mitre || [];
+                      const actions = (pb.actions || []).map(a => typeof a === 'string' ? a : a.type || JSON.stringify(a));
+                      const isOn = pb.enabled || pb.status === 'active';
+                      return (
+                        <tr key={pb.id}>
+                          <td style={{ fontWeight:600 }}>{pb.name}</td>
+                          <td><SevChip sev={sev} /></td>
+                          <td className="mono" style={{ fontSize:10,color:'var(--fg-2)' }}>
+                            {mitre.slice(0,3).join(', ') || '—'}{mitre.length > 3 ? ` +${mitre.length-3}` : ''}
+                          </td>
+                          <td>
+                            <div style={{ display:'flex',gap:4,flexWrap:'wrap' }}>
+                              {actions.map(a => <Chip key={a} mono tone="default">{a}</Chip>)}
+                            </div>
+                          </td>
+                          <td>
+                            <Chip mono tone={isOn ? 'ok' : 'default'}>
+                              {isOn ? 'active' : 'paused'}
+                            </Chip>
+                          </td>
+                          <td className="mono" style={{ fontSize:10,color:'var(--fg-3)' }}>
+                            {pb.last_run ? relTs(pb.last_run) : '—'}
+                          </td>
+                          <td className="mono">{pb.run_count ?? 0}</td>
+                          <td>
+                            <button className="btn btn-ghost btn-sm" onClick={() => togglePlaybook(pb)}>
+                              {isOn ? 'Pause' : 'Enable'}
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
           }
