@@ -90,17 +90,17 @@ function CaseDetailSheet({ openCase, onClose, onOpenRunbook }) {
 
   // Reset + load when case changes
   useEffectC(() => {
-    if (!openCase?.hiveId) return;
+    const caseId = openCase?.hiveId || openCase?.id;
+    if (!caseId) return;
     setTab('overview');
     setTimeline(null); setObs(null); setTasks(null); setComments(null); setAlerts(null);
     const API = window.SOC_API;
-    const id  = openCase.hiveId;
-    API.get(`/api/cases/${id}/timeline`).then(d => setTimeline(d?.events || []));
-    API.get(`/api/cases/${id}/observables`).then(d => setObs(d?.observables || []));
-    API.get(`/api/cases/${id}/tasks`).then(d => setTasks(d?.tasks || []));
-    API.get(`/api/cases/${id}/comments`).then(d => setComments(d?.comments || []));
-    API.get(`/api/cases/${id}/alerts`).then(d => setAlerts(d?.alerts || []));
-  }, [openCase?.hiveId]);
+    API.get(`/api/cases/${caseId}/timeline`).then(d => setTimeline(d?.events || []));
+    API.get(`/api/cases/${caseId}/observables`).then(d => setObs(d?.observables || []));
+    API.get(`/api/cases/${caseId}/tasks`).then(d => setTasks(d?.tasks || []));
+    API.get(`/api/cases/${caseId}/comments`).then(d => setComments(d?.comments || []));
+    API.get(`/api/cases/${caseId}/alerts`).then(d => setAlerts(d?.alerts || []));
+  }, [openCase?.hiveId, openCase?.id]);
 
   if (!openCase) return null;
 
@@ -124,7 +124,7 @@ function CaseDetailSheet({ openCase, onClose, onOpenRunbook }) {
         <header className="case-head">
           <div className="case-head-l">
             <div className="case-eyebrow mono">
-              <SevDot sev={sev}/> {openCase.id} · {openCase.status?.toUpperCase() || 'OPEN'} · {openCase.age || '—'} AGO
+              <SevDot sev={sev}/> #{openCase.number || (openCase.hiveId || openCase.id || '').slice(0,8)} · {openCase.status?.toUpperCase() || 'OPEN'} · {openCase.age || caseRelAgo(openCase.created)}
             </div>
             <h2 className="case-title">{openCase.title}</h2>
             <div className="case-meta">
@@ -165,7 +165,7 @@ function CaseDetailSheet({ openCase, onClose, onOpenRunbook }) {
           {tab === 'timeline'    && <CaseTimeline events={timeline} />}
           {tab === 'observables' && <CaseObservables items={observables} />}
           {tab === 'tasks'       && <CaseTasks items={tasks} />}
-          {tab === 'comments'    && <CaseComments items={comments} caseId={openCase.hiveId} />}
+          {tab === 'comments'    && <CaseComments items={comments} caseId={openCase.hiveId || openCase.id} />}
           {tab === 'alerts'      && <CaseLinkedAlerts items={alerts} />}
         </div>
       </div>

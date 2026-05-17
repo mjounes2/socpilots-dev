@@ -76,12 +76,12 @@ function PageCases({ onOpenCase }) {
     return { params, cfg };
   };
 
-  const loadCases = useCallbackI(async (p, tabId, qVal, sevVal, trVal) => {
-    setLoading(true);
+  const loadCases = useCallbackI(async (p, tabId, qVal, sevVal, trVal, showSpinner = true) => {
+    if (showSpinner) setLoading(true);
     const { params, cfg } = buildParams(p, tabId, qVal, sevVal, trVal);
 
     if (cfg.status === '_archive') {
-      const extra = sevVal ? `&severity=${sevVal}` : '';
+      const extra  = sevVal ? `&severity=${sevVal}` : '';
       const qExtra = qVal?.trim() ? `&q=${encodeURIComponent(qVal.trim())}` : '';
       const [tp, fp, dup, res] = await Promise.all([
         API.get(`/api/cases?status=TruePositive&page=${p}&page_size=${PAGE_SIZE}${extra}${qExtra}`),
@@ -124,20 +124,20 @@ function PageCases({ onOpenCase }) {
     clearTimeout(searchTimer.current);
     searchTimer.current = setTimeout(() => {
       setPage(1);
-      loadCases(1, tab, v, sevFilter, timeRange);
+      loadCases(1, tab, v, sevFilter, timeRange, false);
     }, 300);
   };
 
   const onSevChange = (v) => {
     setSevFilter(v);
     setPage(1);
-    loadCases(1, tab, q, v, timeRange);
+    loadCases(1, tab, q, v, timeRange, false);
   };
 
   const onTimeChange = (v) => {
     setTimeRange(v);
     setPage(1);
-    loadCases(1, tab, q, sevFilter, v);
+    loadCases(1, tab, q, sevFilter, v, false);
   };
 
   const goPage = (p) => {
