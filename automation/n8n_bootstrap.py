@@ -27,7 +27,7 @@ from pathlib import Path
 SCRIPT_DIR  = Path(__file__).parent
 PROJECT_DIR = SCRIPT_DIR.parent
 WF_DIR      = PROJECT_DIR / "Socpilots" / "workflows"
-DB_PATH     = Path("/var/lib/docker/volumes/socpilots_n8n_data/_data/database.sqlite")
+DB_PATH     = Path("/var/lib/docker/volumes/socpilots-dev_n8n_data/_data/database.sqlite")
 
 ASSET_WF_DIR = PROJECT_DIR / "services" / "asset-scan" / "n8n_workflows"
 
@@ -257,15 +257,15 @@ def deploy_workflow(db: sqlite3.Connection, wf_id: str, wf_file: Path, cred_ids:
             (wf_id, name, nodes_json, conns_json, new_vid, new_vid,
              json.dumps({"executionOrder": "v1"}), "{}", "{}", "{}")
         )
-        # Link to owner's project
+        # Link to owner's personal project (projectId + role text — n8n v1.x schema)
         try:
-            owner_id, _ = get_owner(db)
+            _, project_id = get_owner(db)
             db.execute(
-                "INSERT INTO shared_workflow (workflowId, userId, roleId) VALUES (?,?,(SELECT id FROM role WHERE name='editor' LIMIT 1))",
-                (wf_id, owner_id)
+                "INSERT OR IGNORE INTO shared_workflow (workflowId, projectId, role) VALUES (?,?,?)",
+                (wf_id, project_id, "workflow:owner")
             )
-        except Exception:
-            pass  # Table/schema may differ between n8n versions
+        except Exception as _e:
+            print(f"  WARN: could not insert shared_workflow for {wf_id}: {_e}")
         print(f"  Created workflow: {name} ({wf_id})")
 
     # Insert workflow_history entry so n8n treats it as "published" (not draft)
