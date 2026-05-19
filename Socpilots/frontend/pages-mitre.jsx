@@ -284,7 +284,34 @@ function PageMitre() {
     setLoading(true);
     window.SOC_API.get(`/api/mitre/coverage?timeframe=${tf}`).then(resp => {
       if (resp && resp.coverage) {
-        setCovData(resp.coverage);
+        // Roll up subtechnique hits (e.g. T1110.001) into their parent (T1110)
+        const raw = resp.coverage;
+        const merged = { ...raw };
+        for (const [tid, data] of Object.entries(raw)) {
+          if (!tid.includes('.')) continue;
+          const parent = tid.split('.')[0];
+          if (!merged[parent]) {
+            merged[parent] = {
+              ...data,
+              rules:    [...(data.rules   || [])],
+              agents:   [...(data.agents  || [])],
+              decoders: [...(data.decoders|| [])],
+            };
+          } else {
+            const p = merged[parent];
+            merged[parent] = {
+              ...p,
+              count:          p.count + data.count,
+              max_level:      Math.max(p.max_level || 0, data.max_level || 0),
+              rules:          [...new Set([...(p.rules   || []), ...(data.rules   || [])])],
+              agents:         [...new Set([...(p.agents  || []), ...(data.agents  || [])])],
+              decoders:       [...new Set([...(p.decoders|| []), ...(data.decoders|| [])])],
+              coverage_score: Math.max(p.coverage_score || 0, data.coverage_score || 0),
+              last_seen:      Math.max(p.last_seen || 0, data.last_seen || 0) || null,
+            };
+          }
+        }
+        setCovData(merged);
         setAllAgents(resp.all_agents || []);
       }
       setLoading(false);
