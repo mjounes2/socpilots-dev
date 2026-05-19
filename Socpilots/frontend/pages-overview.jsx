@@ -45,12 +45,42 @@ function dashGeoH(ip) {
 }
 
 // ─── Canvas world map ─────────────────────────────────────────
-// Kaspersky-style rotating globe (d3 orthographic projection)
-// Renders: starfield, sphere, graticule, continent fills, pulsing attack dots,
-// and animated arcs from each attack origin to a fixed HQ target.
+// ─── Real-world topology cache (fetched once, shared across all mounts) ──
+window._socWorldFc = window._socWorldFc || null;
+window._socWorldLoading = window._socWorldLoading || null;
+function _loadWorldGeometry() {
+  if (window._socWorldFc) return Promise.resolve(window._socWorldFc);
+  if (window._socWorldLoading) return window._socWorldLoading;
+  window._socWorldLoading = (async () => {
+    for (let i = 0; i < 60 && (!window.topojson || !window.d3); i++) {
+      await new Promise(r => setTimeout(r, 50));
+    }
+    if (!window.topojson || !window.d3) throw new Error('topojson/d3 missing');
+    const r = await fetch('https://cdn.jsdelivr.net/npm/world-atlas@2.0.2/countries-110m.json');
+    if (!r.ok) throw new Error('world-atlas fetch failed');
+    const topo = await r.json();
+    const fc = window.topojson.feature(topo, topo.objects.countries);
+    window._socWorldFc = fc;
+    return fc;
+  })();
+  return window._socWorldLoading;
+}
+
+// ─── Kaspersky-style rotating globe ───────────────────────────
+// Real world-atlas country geometry, multi-layer atmospheric glow,
+// pulsing attack origins with rising light beams, animated geodesic
+// attack arcs toward a fixed HQ.
 function DashWorldMap({ ips }) {
   const cvRef   = useRef1(null);
   const wrapRef = useRef1(null);
+  const [world, setWorld] = useState1(window._socWorldFc);
+
+  useEffect1(() => {
+    if (world) return;
+    let cancelled = false;
+    _loadWorldGeometry().then(fc => { if (!cancelled) setWorld(fc); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [world]);
 
   useEffect1(() => {
     const cv   = cvRef.current;
@@ -60,7 +90,7 @@ function DashWorldMap({ ips }) {
 
     const dpr = window.devicePixelRatio || 1;
     const W = wrap.clientWidth || 400;
-    const H = 230;
+    const H = 260;
     cv.width  = W * dpr;
     cv.height = H * dpr;
     cv.style.width  = W + 'px';
@@ -68,59 +98,44 @@ function DashWorldMap({ ips }) {
     const ctx = cv.getContext('2d');
     ctx.scale(dpr, dpr);
 
-    // Star field (seeded so positions are stable across renders)
-    const STAR_COUNT = 110;
+    // Star field — two layers (background tiny + foreground bigger)
     const stars = [];
     const rng = (() => { let s = 9301; return () => { s = (s * 9301 + 49297) % 233280; return s / 233280; }; })();
-    for (let i = 0; i < STAR_COUNT; i++) {
+    for (let i = 0; i < 160; i++) {
       stars.push({
-        x: rng() * W,
-        y: rng() * H,
-        r: rng() < 0.85 ? 0.5 : 1.1,
+        x: rng() * W, y: rng() * H,
+        r: rng() < 0.92 ? 0.4 : 1.0,
         twinkle: rng() * Math.PI * 2,
-        alpha: 0.35 + rng() * 0.55,
+        alpha: 0.25 + rng() * 0.55,
+        hue: rng() < 0.85 ? '220,230,255' : '180,210,240',
       });
     }
 
-    // Globe geometry
-    const cx = W * 0.62, cy = H / 2, radius = Math.min(H, W) * 0.45;
+    // Globe geometry — center sphere in widget
+    const cx = W * 0.55, cy = H / 2, radius = Math.min(H * 0.5, W * 0.4) * 0.95;
     const proj = d3.geoOrthographic()
       .scale(radius)
       .translate([cx, cy])
       .clipAngle(90);
-
-    // Convert DASH_CONTINENTS to GeoJSON-style polygons
-    const continentFeatures = DASH_CONTINENTS.map(pts => ({
-      type: 'Feature',
-      geometry: { type: 'Polygon', coordinates: [pts] },
-    }));
     const pathFn = d3.geoPath(proj, ctx);
 
-    // Attack origins (real IPs from API → lat/lon via dashGeoH)
-    const HQ = { lat: 33.5, lon: 36.3 }; // pulled from MAP_TARGETS_DEFAULT
+    const HQ = { lat: 33.5, lon: 36.3 };
     const origins = (ips || []).slice(0, 30).map(({ ip, count }) => {
       const g = dashGeoH(ip);
       return {
-        ip,
-        count,
-        lat: g.lat,
-        lon: g.lon,
+        ip, count,
+        lat: g.lat, lon: g.lon,
         sev: count > 20 ? 'critical' : count > 10 ? 'high' : 'medium',
       };
     });
 
-    // Each arc has a phase that advances; emit one new arc every ~700ms
     const arcs = [];
     let nextArcAt = 0;
-
-    // Continuous slow rotation: 0.06°/frame ≈ ~9°/sec at 60fps
     let lambda = 30, raf = 0;
-    const start = performance.now();
-    let last = start;
+    let last = performance.now();
 
-    function greatArcPoints(a, b, steps = 28) {
-      // Geodesic interpolation via slerp in 3D
-      const toRad = d => d * Math.PI / 180;
+    const toRad = d => d * Math.PI / 180;
+    function greatArcPoints(a, b, steps = 32) {
       const v = (lat, lon) => {
         const φ = toRad(lat), λ = toRad(lon);
         return [Math.cos(φ) * Math.cos(λ), Math.cos(φ) * Math.sin(λ), Math.sin(φ)];
@@ -138,9 +153,7 @@ function DashWorldMap({ ips }) {
         const x = A * v1[0] + B * v2[0];
         const y = A * v1[1] + B * v2[1];
         const z = A * v1[2] + B * v2[2];
-        const lat = Math.asin(z) * 180 / Math.PI;
-        const lon = Math.atan2(y, x) * 180 / Math.PI;
-        out.push([lon, lat]);
+        out.push([Math.atan2(y, x) * 180 / Math.PI, Math.asin(z) * 180 / Math.PI]);
       }
       return out;
     }
@@ -148,93 +161,118 @@ function DashWorldMap({ ips }) {
     function frame(now) {
       const dt = now - last;
       last = now;
-      lambda = (lambda + dt * 0.012) % 360;
-      proj.rotate([lambda, -15]);
+      // Slower rotation: ~6°/sec for cinematic feel
+      lambda = (lambda + dt * 0.006) % 360;
+      proj.rotate([lambda, -12]);
 
-      // Background gradient (deep space)
-      const bg = ctx.createRadialGradient(cx, cy, radius * 0.4, cx, cy, radius * 2.2);
-      bg.addColorStop(0, '#081428');
-      bg.addColorStop(1, '#020610');
+      // Deep-space backdrop
+      ctx.clearRect(0, 0, W, H);
+      const bg = ctx.createRadialGradient(cx, cy, radius * 0.2, cx, cy, radius * 2.4);
+      bg.addColorStop(0, '#0a1830');
+      bg.addColorStop(0.6, '#040a1a');
+      bg.addColorStop(1, '#01030a');
       ctx.fillStyle = bg;
       ctx.fillRect(0, 0, W, H);
 
-      // Stars (twinkle by sine)
+      // Stars
       stars.forEach(s => {
-        const tw = 0.6 + 0.4 * Math.sin((now / 1000) * 1.6 + s.twinkle);
-        ctx.fillStyle = `rgba(220,230,255,${s.alpha * tw})`;
+        const tw = 0.55 + 0.45 * Math.sin((now / 1000) * 1.4 + s.twinkle);
+        ctx.fillStyle = `rgba(${s.hue},${(s.alpha * tw).toFixed(3)})`;
         ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2); ctx.fill();
       });
 
-      // Globe outer glow halo
-      const halo = ctx.createRadialGradient(cx, cy, radius * 0.92, cx, cy, radius * 1.25);
-      halo.addColorStop(0, 'rgba(0,229,255,0.18)');
-      halo.addColorStop(1, 'rgba(0,229,255,0)');
-      ctx.fillStyle = halo;
-      ctx.beginPath(); ctx.arc(cx, cy, radius * 1.25, 0, Math.PI * 2); ctx.fill();
+      // Atmospheric glow — 3 stacked halos for depth
+      const halos = [
+        { r: radius * 1.50, c1: 'rgba(0,150,200,0.0)',  c2: 'rgba(0,150,200,0.10)' },
+        { r: radius * 1.22, c1: 'rgba(0,180,220,0.0)',  c2: 'rgba(0,180,220,0.18)' },
+        { r: radius * 1.06, c1: 'rgba(0,229,255,0.0)',  c2: 'rgba(0,229,255,0.30)' },
+      ];
+      halos.forEach(h => {
+        const g = ctx.createRadialGradient(cx, cy, radius * 0.92, cx, cy, h.r);
+        g.addColorStop(0, h.c2);
+        g.addColorStop(1, h.c1);
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(cx, cy, h.r, 0, Math.PI * 2); ctx.fill();
+      });
 
-      // Sphere body — subtle radial gradient for 3D feel
+      // Sphere body (clipped)
       ctx.save();
       ctx.beginPath(); ctx.arc(cx, cy, radius, 0, Math.PI * 2); ctx.clip();
-      const sphereBg = ctx.createRadialGradient(cx - radius * 0.3, cy - radius * 0.3, 0, cx, cy, radius);
-      sphereBg.addColorStop(0, '#0d2444');
-      sphereBg.addColorStop(1, '#040a16');
+
+      // Inner sphere — slight specular highlight upper-left
+      const sphereBg = ctx.createRadialGradient(
+        cx - radius * 0.35, cy - radius * 0.35, radius * 0.05,
+        cx, cy, radius);
+      sphereBg.addColorStop(0,    '#13345e');
+      sphereBg.addColorStop(0.55, '#0a1f3e');
+      sphereBg.addColorStop(1,    '#020812');
       ctx.fillStyle = sphereBg;
       ctx.fillRect(cx - radius, cy - radius, radius * 2, radius * 2);
 
-      // Graticule (lat/lon grid)
-      ctx.strokeStyle = 'rgba(0,229,255,0.08)';
+      // Graticule
+      ctx.strokeStyle = 'rgba(0,200,230,0.07)';
       ctx.lineWidth = 0.5;
-      const grat = d3.geoGraticule().step([20, 20])();
+      const grat = d3.geoGraticule().step([15, 15])();
       ctx.beginPath();
       d3.geoPath(proj, ctx)(grat);
       ctx.stroke();
 
-      // Continents
-      continentFeatures.forEach(f => {
+      // Real continents (or fallback to hand-drawn while world loads)
+      if (world && world.features) {
         ctx.beginPath();
-        pathFn(f);
-        ctx.fillStyle = 'rgba(20,60,110,0.85)';
+        pathFn({ type: 'FeatureCollection', features: world.features });
+        ctx.fillStyle = 'rgba(30,80,140,0.85)';
         ctx.fill();
-        ctx.strokeStyle = 'rgba(0,229,255,0.35)';
-        ctx.lineWidth = 0.7;
+        ctx.strokeStyle = 'rgba(0,229,255,0.38)';
+        ctx.lineWidth = 0.6;
         ctx.stroke();
-      });
+      } else {
+        DASH_CONTINENTS.forEach(pts => {
+          ctx.beginPath();
+          pathFn({ type: 'Feature', geometry: { type: 'Polygon', coordinates: [pts] } });
+          ctx.fillStyle = 'rgba(20,60,110,0.8)';
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(0,229,255,0.3)';
+          ctx.lineWidth = 0.7;
+          ctx.stroke();
+        });
+      }
       ctx.restore();
 
-      // Sphere edge
+      // Sphere edge ring
       ctx.beginPath(); ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-      ctx.strokeStyle = 'rgba(0,229,255,0.5)';
-      ctx.lineWidth = 1;
+      ctx.strokeStyle = 'rgba(0,229,255,0.55)';
+      ctx.lineWidth = 1.2;
       ctx.stroke();
 
-      // Visibility test — only draw points on the visible hemisphere
+      // Visibility test
       const center = proj.invert([cx, cy]);
-      const visible = (lat, lon) => {
-        const p = proj([lon, lat]);
-        if (!p) return false;
-        const d3sph = d3.geoDistance([center[0], center[1]], [lon, lat]);
-        return d3sph < Math.PI / 2;
-      };
+      const visible = (lat, lon) =>
+        d3.geoDistance([center[0], center[1]], [lon, lat]) < Math.PI / 2;
 
-      // Spawn new arcs from random visible origins toward HQ
+      // Spawn arcs toward HQ
       if (now > nextArcAt && origins.length) {
-        const visOrigins = origins.filter(o => visible(o.lat, o.lon));
-        const src = (visOrigins.length ? visOrigins : origins)[Math.floor(Math.random() * (visOrigins.length || origins.length))];
-        const points = greatArcPoints(src, HQ, 32);
-        arcs.push({ points, t0: now, life: 2200, sev: src.sev });
-        nextArcAt = now + 600 + Math.random() * 700;
+        const vis = origins.filter(o => visible(o.lat, o.lon));
+        const pool = vis.length ? vis : origins;
+        const src = pool[Math.floor(Math.random() * pool.length)];
+        arcs.push({
+          points: greatArcPoints(src, HQ, 36),
+          t0: now, life: 2400, sev: src.sev,
+        });
+        nextArcAt = now + 500 + Math.random() * 600;
       }
 
-      // Draw arcs (head-of-line glowing trail)
+      // Draw arcs (animated glowing trail)
       for (let i = arcs.length - 1; i >= 0; i--) {
         const a = arcs[i];
         const t = (now - a.t0) / a.life;
-        if (t > 1.1) { arcs.splice(i, 1); continue; }
+        if (t > 1.15) { arcs.splice(i, 1); continue; }
         const tipIdx = Math.min(a.points.length - 1, Math.floor(t * a.points.length));
-        const trailLen = 10;
+        const trailLen = 14;
         const startIdx = Math.max(0, tipIdx - trailLen);
-        const color = a.sev === 'critical' ? '#ff1744' : a.sev === 'high' ? '#ff6d00' : '#00e5ff';
-        ctx.strokeStyle = color;
+        const color = a.sev === 'critical' ? '#ff1744'
+                    : a.sev === 'high'     ? '#ff8a00'
+                    :                        '#00e5ff';
         ctx.lineCap = 'round';
         for (let k = startIdx; k < tipIdx; k++) {
           const seg = (k - startIdx) / trailLen;
@@ -242,38 +280,65 @@ function DashWorldMap({ ips }) {
           const p2 = proj(a.points[k + 1]);
           if (!p1 || !p2) continue;
           ctx.globalAlpha = seg * (1 - Math.max(0, t - 1));
-          ctx.lineWidth = 1.2 + seg * 1.4;
+          ctx.strokeStyle = color;
+          ctx.shadowColor = color; ctx.shadowBlur = 6;
+          ctx.lineWidth = 1.1 + seg * 1.6;
           ctx.beginPath(); ctx.moveTo(p1[0], p1[1]); ctx.lineTo(p2[0], p2[1]); ctx.stroke();
         }
-        ctx.globalAlpha = 1;
+        ctx.globalAlpha = 1; ctx.shadowBlur = 0;
       }
 
-      // Attack dots — pulse + glow, only if on visible hemisphere
+      // Attack origins — rising light beams + pulsing dot
       origins.forEach((o, i) => {
         if (!visible(o.lat, o.lon)) return;
         const p = proj([o.lon, o.lat]);
         if (!p) return;
         const pulse = 0.5 + 0.5 * Math.sin((now / 1000) * 2 + i * 0.6);
-        const baseR = Math.min(2 + Math.log2((o.count || 1) + 1) * 0.7, 5);
-        const color = o.sev === 'critical' ? '#ff1744' : o.sev === 'high' ? '#ff6d00' : '#ffab00';
-        // Outer pulse ring
+        const baseR = Math.min(1.8 + Math.log2((o.count || 1) + 1) * 0.6, 4);
+        const color = o.sev === 'critical' ? '#ff1744'
+                    : o.sev === 'high'     ? '#ff8a00'
+                    :                        '#ffd54f';
+
+        // Vertical light beam rising from the surface (Kaspersky-style)
+        const beamH = 14 + Math.log2((o.count || 1) + 1) * 3 + pulse * 4;
+        const beamGrad = ctx.createLinearGradient(p[0], p[1] - beamH, p[0], p[1]);
+        beamGrad.addColorStop(0, `rgba(255,255,255,0)`);
+        beamGrad.addColorStop(0.4, color + '88');
+        beamGrad.addColorStop(1, color);
+        ctx.strokeStyle = beamGrad;
+        ctx.lineWidth = 1.6;
+        ctx.shadowColor = color; ctx.shadowBlur = 6;
+        ctx.beginPath();
+        ctx.moveTo(p[0], p[1]);
+        ctx.lineTo(p[0], p[1] - beamH);
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+
+        // Outer ripple ring
         ctx.fillStyle = color;
-        ctx.globalAlpha = 0.15 + 0.25 * (1 - pulse);
-        ctx.beginPath(); ctx.arc(p[0], p[1], baseR + 4 + pulse * 5, 0, Math.PI * 2); ctx.fill();
+        ctx.globalAlpha = 0.10 + 0.18 * (1 - pulse);
+        ctx.beginPath(); ctx.arc(p[0], p[1], baseR + 4 + pulse * 6, 0, Math.PI * 2); ctx.fill();
+
         // Solid dot
         ctx.globalAlpha = 1;
-        ctx.shadowColor = color; ctx.shadowBlur = 8;
+        ctx.shadowColor = color; ctx.shadowBlur = 9;
         ctx.beginPath(); ctx.arc(p[0], p[1], baseR, 0, Math.PI * 2); ctx.fill();
         ctx.shadowBlur = 0;
       });
 
-      // HQ target dot (fixed bullseye)
+      // HQ bullseye
       if (visible(HQ.lat, HQ.lon)) {
         const p = proj([HQ.lon, HQ.lat]);
-        ctx.strokeStyle = '#00e5ff'; ctx.lineWidth = 1;
-        ctx.beginPath(); ctx.arc(p[0], p[1], 5, 0, Math.PI * 2); ctx.stroke();
+        // Outer pulsing ring
+        const hqPulse = 0.5 + 0.5 * Math.sin(now / 350);
+        ctx.strokeStyle = `rgba(0,229,255,${0.4 + hqPulse * 0.4})`;
+        ctx.lineWidth = 1.2;
+        ctx.beginPath(); ctx.arc(p[0], p[1], 6 + hqPulse * 4, 0, Math.PI * 2); ctx.stroke();
+        // Inner
         ctx.fillStyle = '#00e5ff';
-        ctx.beginPath(); ctx.arc(p[0], p[1], 1.6, 0, Math.PI * 2); ctx.fill();
+        ctx.shadowColor = '#00e5ff'; ctx.shadowBlur = 8;
+        ctx.beginPath(); ctx.arc(p[0], p[1], 2.2, 0, Math.PI * 2); ctx.fill();
+        ctx.shadowBlur = 0;
       }
 
       raf = requestAnimationFrame(frame);
@@ -281,12 +346,12 @@ function DashWorldMap({ ips }) {
 
     raf = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(raf);
-  }, [ips]);
+  }, [ips, world]);
 
   return (
     <div ref={wrapRef} style={{
       position: 'relative',
-      background: 'radial-gradient(circle at 60% 50%, #081428 0%, #020610 100%)',
+      background: 'radial-gradient(ellipse at center, #0a1830 0%, #01030a 100%)',
       borderRadius: 4,
       overflow: 'hidden',
     }}>
@@ -393,122 +458,199 @@ function DashSpark({ data, height = 28, color = 'var(--acc)' }) {
   );
 }
 
-// ─── Stacked-bar timeline (SVG) ─────────────────────────────
+// ─── Stacked-bar timeline (SVG + hover tooltip) ─────────────
 // Vertical bars per hour bucket, stacked by severity (Critical at bottom,
-// then High, Medium, Low). Centered legend above the chart.
+// then High, Medium, Low). Centered legend above; per-bar tooltip on hover.
+const TIMELINE_FONT_DISPLAY = "'IBM Plex Sans','Exo 2',system-ui,sans-serif";
+const TIMELINE_FONT_MONO    = "'IBM Plex Mono','Share Tech Mono',monospace";
+
 function AlertTimeline({ data }) {
+  const [hover, setHover] = useState1(null); // { idx, px, py }
+  const wrapRef = useRef1(null);
+
   if (!data || data.length < 1) return <EmptyState icon="📊" text="Insufficient timeline data" />;
 
-  const w = 800, h = 240;
-  const pad = { l: 56, r: 16, t: 36, b: 28 };
+  const w = 800, h = 260;
+  const pad = { l: 64, r: 18, t: 44, b: 32 };
   const innerW = w - pad.l - pad.r;
   const innerH = h - pad.t - pad.b;
 
   // Order from bottom of stack → top
-  const layers = ['critical', 'high', 'medium', 'low'];
-  const layerLabel = { critical: 'Critical', high: 'High', medium: 'Medium', low: 'Low' };
-  const layerColor = {
-    critical: '#ff1744',
-    high:     '#ff9800',
-    medium:   '#ffc107',
-    low:      '#26c6da',
-  };
+  const layers      = ['critical', 'high', 'medium', 'low'];
+  const layerLabel  = { critical: 'Critical', high: 'High', medium: 'Medium', low: 'Low' };
+  const layerColor  = { critical: '#ff1744', high: '#ff9800', medium: '#ffc107', low: '#26c6da' };
 
-  // Pre-compute totals to find max for Y axis
   const totals = data.map(d => layers.reduce((s, L) => s + (d[L] || 0), 0));
   const rawMax = Math.max(...totals, 1);
-  // Round max to a "nice" round number for grid (1k, 2k, 5k bands)
   const niceMax = (() => {
     const pow = Math.pow(10, Math.floor(Math.log10(rawMax)));
     const m = rawMax / pow;
     const nice = m <= 1 ? 1 : m <= 2 ? 2 : m <= 5 ? 5 : 10;
     return nice * pow;
   })();
-
-  // 6 Y gridlines from 0 → niceMax
   const tickStep = niceMax / 6;
-  const yTicks = Array.from({ length: 7 }, (_, i) => Math.round(i * tickStep));
+  const yTicks   = Array.from({ length: 7 }, (_, i) => Math.round(i * tickStep));
+  const fmtTick  = v => v.toLocaleString('en-US');
 
-  const fmtTick = v => v.toLocaleString('en-US');
-
-  // Bar geometry — leave 25% of column width as gap between bars
   const colW = innerW / data.length;
   const barW = colW * 0.7;
   const x = i => pad.l + colW * i + (colW - barW) / 2;
   const y = v => pad.t + innerH - (v / niceMax) * innerH;
   const ySpan = v => (v / niceMax) * innerH;
 
+  const handleMove = (e) => {
+    const rect = wrapRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const px = e.clientX - rect.left;
+    const py = e.clientY - rect.top;
+    const svgX = (px / rect.width) * w;
+    if (svgX < pad.l || svgX > w - pad.r) { setHover(null); return; }
+    const idx = Math.floor((svgX - pad.l) / colW);
+    if (idx < 0 || idx >= data.length) { setHover(null); return; }
+    setHover({ idx, px, py, rectW: rect.width });
+  };
+
+  const tooltipFor = hover ? data[hover.idx] : null;
+
+  // Position tooltip — keep inside container by clamping to edges
+  let tipLeft = hover ? hover.px + 14 : 0;
+  let tipTop  = hover ? hover.py - 8  : 0;
+  if (hover) {
+    const TIP_W = 170, TIP_H = 142, M = 8;
+    if (tipLeft + TIP_W > hover.rectW - M) tipLeft = hover.px - TIP_W - 14;
+    if (tipTop < M) tipTop = M;
+  }
+
   return (
-    <svg viewBox={`0 0 ${w} ${h}`} width="100%" height={h} className="chart">
-      {/* Legend (centered above chart area) */}
-      <g transform={`translate(${pad.l + innerW / 2},${10})`}>
-        {(() => {
-          const items = ['critical', 'high', 'medium', 'low'];
-          // Approx widths: square (8) + gap (4) + label width
-          const widths = items.map(L => 8 + 4 + layerLabel[L].length * 7 + 18);
-          const total = widths.reduce((a, b) => a + b, 0);
-          let cursor = -total / 2;
-          return items.map((L, i) => {
-            const tx = cursor;
-            cursor += widths[i];
-            return (
-              <g key={L} transform={`translate(${tx},0)`}>
-                <rect width="10" height="10" y="-1" rx="1" fill={layerColor[L]} />
-                <text x="16" y="9" className="chart-legend" style={{ fontSize: 11, fill: 'var(--fg-2)' }}>{layerLabel[L]}</text>
-              </g>
-            );
-          });
-        })()}
-      </g>
-
-      {/* Y gridlines + tick labels */}
-      {yTicks.slice().reverse().map((t, i) => (
-        <g key={i}>
-          <line x1={pad.l} x2={w - pad.r} y1={y(t)} y2={y(t)} stroke="var(--ln)" strokeOpacity="0.4" />
-          <text x={pad.l - 10} y={y(t) + 3} textAnchor="end" className="chart-tick" style={{ fontSize: 10, fill: 'var(--fg-3)', fontFamily: 'var(--mono)' }}>
-            {fmtTick(t)}
-          </text>
-        </g>
-      ))}
-
-      {/* Stacked bars */}
-      {data.map((d, i) => {
-        let acc = 0;
-        return (
-          <g key={i}>
-            {layers.map(L => {
-              const v = d[L] || 0;
-              if (v <= 0) return null;
-              const segH = ySpan(v);
-              const segY = y(acc + v);
-              acc += v;
+    <div ref={wrapRef}
+      style={{ position: 'relative', width: '100%' }}
+      onMouseMove={handleMove}
+      onMouseLeave={() => setHover(null)}>
+      <svg viewBox={`0 0 ${w} ${h}`} width="100%" height={h} className="chart"
+        style={{ display: 'block' }}>
+        {/* Legend (centered above chart area) */}
+        <g transform={`translate(${pad.l + innerW / 2},${14})`}>
+          {(() => {
+            const items = ['critical', 'high', 'medium', 'low'];
+            const widths = items.map(L => 12 + 6 + layerLabel[L].length * 8 + 22);
+            const total = widths.reduce((a, b) => a + b, 0);
+            let cursor = -total / 2;
+            return items.map((L, i) => {
+              const tx = cursor;
+              cursor += widths[i];
               return (
-                <rect key={L}
-                  x={x(i)} y={segY}
-                  width={barW} height={Math.max(0, segH)}
-                  fill={layerColor[L]} />
+                <g key={L} transform={`translate(${tx},0)`}>
+                  <rect width="12" height="12" y="0" rx="2" fill={layerColor[L]} />
+                  <text x="20" y="11" style={{
+                    fontSize: 13, fill: 'var(--fg-1, #e8f4fd)',
+                    fontFamily: TIMELINE_FONT_DISPLAY, fontWeight: 500,
+                  }}>{layerLabel[L]}</text>
+                </g>
               );
-            })}
-          </g>
-        );
-      })}
+            });
+          })()}
+        </g>
 
-      {/* X-axis labels (HH:00) */}
-      {data.map((d, i) => {
-        const stride = Math.max(1, Math.floor(data.length / 8));
-        if (i % stride !== 0 && i !== data.length - 1) return null;
-        return (
-          <text key={i}
-            x={x(i) + barW / 2}
-            y={h - 8}
-            textAnchor="middle"
-            className="chart-tick"
-            style={{ fontSize: 10, fill: 'var(--fg-3)', fontFamily: 'var(--mono)' }}>
-            {String(d.hour).padStart(2, '0')}:00
-          </text>
-        );
-      })}
-    </svg>
+        {/* Y gridlines + tick labels */}
+        {yTicks.slice().reverse().map((t, i) => (
+          <g key={i}>
+            <line x1={pad.l} x2={w - pad.r} y1={y(t)} y2={y(t)}
+              stroke="var(--ln, #1a2f4a)" strokeOpacity="0.55" />
+            <text x={pad.l - 12} y={y(t) + 4} textAnchor="end"
+              style={{ fontSize: 12, fill: 'var(--fg-2, #8ab0d0)', fontFamily: TIMELINE_FONT_MONO }}>
+              {fmtTick(t)}
+            </text>
+          </g>
+        ))}
+
+        {/* Hovered column highlight */}
+        {hover && (
+          <rect
+            x={pad.l + colW * hover.idx} y={pad.t}
+            width={colW} height={innerH}
+            fill="rgba(255,255,255,0.04)"
+            pointerEvents="none"/>
+        )}
+
+        {/* Stacked bars */}
+        {data.map((d, i) => {
+          let acc = 0;
+          return (
+            <g key={i}>
+              {layers.map(L => {
+                const v = d[L] || 0;
+                if (v <= 0) return null;
+                const segH = ySpan(v);
+                const segY = y(acc + v);
+                acc += v;
+                return (
+                  <rect key={L}
+                    x={x(i)} y={segY}
+                    width={barW} height={Math.max(0, segH)}
+                    fill={layerColor[L]} />
+                );
+              })}
+            </g>
+          );
+        })}
+
+        {/* X-axis labels (HH:00) */}
+        {data.map((d, i) => {
+          const stride = Math.max(1, Math.floor(data.length / 8));
+          if (i % stride !== 0 && i !== data.length - 1) return null;
+          return (
+            <text key={i}
+              x={x(i) + barW / 2}
+              y={h - 10}
+              textAnchor="middle"
+              style={{ fontSize: 12, fill: 'var(--fg-2, #8ab0d0)', fontFamily: TIMELINE_FONT_MONO }}>
+              {String(d.hour).padStart(2, '0')}:00
+            </text>
+          );
+        })}
+      </svg>
+
+      {/* Tooltip */}
+      {hover && tooltipFor && (
+        <div style={{
+          position: 'absolute',
+          left: tipLeft, top: tipTop,
+          minWidth: 158,
+          padding: '10px 12px 12px',
+          background: 'rgba(8,18,34,0.97)',
+          border: '1px solid rgba(0,229,255,0.35)',
+          borderRadius: 6,
+          boxShadow: '0 8px 24px rgba(0,0,0,0.5), 0 0 0 1px rgba(0,229,255,0.08)',
+          pointerEvents: 'none',
+          fontFamily: TIMELINE_FONT_DISPLAY,
+          color: 'var(--fg-1, #e8f4fd)',
+          zIndex: 20,
+        }}>
+          <div style={{
+            fontWeight: 600, fontSize: 13, marginBottom: 8,
+            paddingBottom: 6, borderBottom: '1px solid rgba(0,229,255,0.18)',
+          }}>
+            Hour: {String(tooltipFor.hour).padStart(2, '0')}:00
+          </div>
+          {layers.slice().reverse().map(L => (
+            <div key={L} style={{
+              display: 'flex', alignItems: 'center', gap: 8,
+              fontSize: 12.5, lineHeight: '20px',
+              fontFamily: TIMELINE_FONT_MONO,
+            }}>
+              <span style={{
+                width: 10, height: 10, borderRadius: 2,
+                background: layerColor[L], flexShrink: 0,
+              }} />
+              <span style={{ color: layerColor[L], fontWeight: 500 }}>{layerLabel[L]}:</span>
+              <span style={{ color: 'var(--fg-1, #e8f4fd)', marginLeft: 'auto' }}>
+                {(tooltipFor[L] || 0).toLocaleString()}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
