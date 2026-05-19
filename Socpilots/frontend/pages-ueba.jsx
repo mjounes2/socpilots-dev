@@ -56,6 +56,26 @@ function Delta({ value }) {
   );
 }
 
+// ── ML Score Badge (compact) ───────────────────────────────────
+function MlBadge({ score, size = 'sm' }) {
+  if (score == null || score === 0) return null;
+  const pct = Math.round(score);
+  const tone = pct >= 80 ? 'crit' : pct >= 50 ? 'high' : 'med';
+  const color = tone === 'crit' ? 'var(--crit)' : tone === 'high' ? 'var(--high)' : 'var(--med)';
+  const w = size === 'sm' ? 44 : 64;
+  return (
+    <div title={`ML composite score: ${pct}`} style={{
+      display: 'inline-flex', alignItems: 'center', gap: 5,
+      padding: '2px 7px', borderRadius: 4,
+      background: 'rgba(180,80,200,.13)',
+      border: `1px solid ${color}`,
+    }}>
+      <span className="mono" style={{ fontSize: 8.5, color: 'var(--fg-3)', fontWeight: 600, letterSpacing: 1 }}>ML</span>
+      <span className="mono" style={{ fontSize: size === 'sm' ? 11 : 13, color, fontWeight: 600 }}>{pct}</span>
+    </div>
+  );
+}
+
 // ── Mini risk gauge (used in watchlist cards) ──────────────────
 function RiskGauge({ risk }) {
   const pct = Math.min(100, Math.max(0, risk));
@@ -112,7 +132,10 @@ function WatchlistCard({ entity, onProfile, onInvestigate, onDisable, investigat
             {entity.last_anomaly ? `last anomaly: ${entity.last_anomaly.slice(0,16).replace('T',' ')}` : 'no recent anomalies'}
           </div>
         </div>
-        <SevChip sev={sev}/>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 5 }}>
+          <SevChip sev={sev}/>
+          {entity.ml_score > 0 && <MlBadge score={entity.ml_score} size="sm"/>}
+        </div>
       </div>
 
       {/* Flag chips */}
@@ -331,6 +354,8 @@ function EntityModal({ entity, onClose, onInvestigate, onAction, investigating }
   const [baseline, setBaseline] = useUStateU(null);
   const [timeline, setTimeline] = useUStateU([]);
   const [graph, setGraph] = useUStateU(null);
+  const [mlData, setMlData] = useUStateU(null);
+  const [mlPeers, setMlPeers] = useUStateU(null);
   const [loadingProfile, setLP] = useUStateU(true);
 
   useUEffectU(() => {
@@ -342,12 +367,16 @@ function EntityModal({ entity, onClose, onInvestigate, onAction, investigating }
       API.get(`/api/ueba/baseline/${encodeURIComponent(entity)}`),
       API.get(`/api/ueba/entity/${encodeURIComponent(entity)}/timeline?hours=24`),
       API.get(`/api/ueba/graph-nodes/${encodeURIComponent(entity)}`),
-    ]).then(([prof, base, tl, g]) => {
+      API.get(`/api/ueba/ml/explain/${encodeURIComponent(entity)}`).catch(() => null),
+      API.get(`/api/ueba/ml/peers/${encodeURIComponent(entity)}`).catch(() => null),
+    ]).then(([prof, base, tl, g, ml, peers]) => {
       if (cancelled) return;
       setProfile(prof && !prof.error ? (prof.profile || prof) : null);
       setBaseline(base && !base.error ? base : null);
       setTimeline(tl && !tl.error ? (tl.buckets || []).map(b => b.count) : []);
       setGraph(g && !g.error ? g : null);
+      setMlData(ml && !ml.error ? ml : null);
+      setMlPeers(peers && !peers.error ? peers : null);
       setLP(false);
     });
     return () => { cancelled = true; };
@@ -378,12 +407,13 @@ function EntityModal({ entity, onClose, onInvestigate, onAction, investigating }
         }}>
           <RiskGauge risk={r}/>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
               <div className="mono" style={{ fontSize: 18, color: 'var(--fg-0)', fontWeight: 600 }}>{entity}</div>
               <Chip mono tone={profile?.entity_type === 'host' ? 'warn' : 'default'}>
                 {profile?.entity_type || 'entity'}
               </Chip>
               {r >= 70 && <SevChip sev="critical"/>}
+              {mlData?.ml_score > 0 && <MlBadge score={mlData.ml_score}/>}
             </div>
             <div className="mono" style={{ fontSize: 11, color: 'var(--fg-3)', marginTop: 2 }}>
               {profile?.anomaly_count ?? 0} anomalies · {profile?.total_events ?? 0} events · last seen {profile?.last_seen ? profile.last_seen.slice(0,16).replace('T',' ') : '—'}
@@ -394,7 +424,7 @@ function EntityModal({ entity, onClose, onInvestigate, onAction, investigating }
 
         {/* Tabs */}
         <div style={{ display: 'flex', gap: 0, padding: '0 20px', borderBottom: '1px solid var(--ln)', background: 'var(--bg-2)' }}>
-          {['overview', 'anomalies', 'connections', 'actions'].map(t => (
+          {['overview', 'anomalies', 'ml', 'connections', 'actions'].map(t => (
             <button key={t} onClick={() => setTab(t)} style={{
               background: 'transparent', border: 'none',
               borderBottom: tab === t ? '2px solid var(--acc)' : '2px solid transparent',
@@ -508,6 +538,114 @@ function EntityModal({ entity, onClose, onInvestigate, onAction, investigating }
                 <div className="empty mono">No recent anomalous events recorded</div>
               )}
             </div>
+          ) : tab === 'ml' ? (
+            !mlData ? (
+              <div className="empty mono" style={{ padding: 14 }}>
+                No ML score yet for this entity. Re-run scoring from the ML Insights card.
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                {/* Composite score breakdown */}
+                <div style={{ background: 'var(--bg-2)', border: '1px solid var(--ln)', borderRadius: 6, padding: 14 }}>
+                  <div className="mono" style={{ fontSize: 11, color: 'var(--fg-3)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10 }}>
+                    Composite ML Score Breakdown
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 12 }}>
+                    <div className="mono" style={{ fontSize: 36, fontWeight: 700, color: mlData.ml_score >= 80 ? 'var(--crit)' : mlData.ml_score >= 50 ? 'var(--high)' : 'var(--med)' }}>
+                      {Math.round(mlData.ml_score)}
+                    </div>
+                    <div style={{ flex: 1, fontSize: 12, color: 'var(--fg-1)', lineHeight: 1.5 }}>
+                      {mlData.interpretation}
+                    </div>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
+                    {[
+                      ['Isolation Forest', mlData.components?.isolation_forest, 'global outlier'],
+                      ['Z-Score',          mlData.components?.z_score,          'vs own baseline'],
+                      ['Peer Distance',    mlData.components?.peer_distance,    'vs cluster'],
+                    ].map(([label, value, hint], i) => (
+                      <div key={i} style={{ background: 'var(--bg-1)', border: '1px solid var(--ln)', borderRadius: 4, padding: 10 }}>
+                        <div className="mono" style={{ fontSize: 9.5, color: 'var(--fg-3)', letterSpacing: 1, textTransform: 'uppercase' }}>{label}</div>
+                        <div className="mono" style={{ fontSize: 22, fontWeight: 600, color: 'var(--fg-0)', margin: '4px 0' }}>{Math.round(value || 0)}</div>
+                        <div className="mono" style={{ fontSize: 9, color: 'var(--fg-3)' }}>{hint}</div>
+                        <div style={{ marginTop: 6, height: 3, background: 'var(--bg-3)', borderRadius: 2, overflow: 'hidden' }}>
+                          <div style={{ width: (value || 0) + '%', height: 3, background: (value || 0) >= 70 ? 'var(--crit)' : 'var(--acc)' }}/>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Top contributing features (bar chart) */}
+                <div style={{ background: 'var(--bg-2)', border: '1px solid var(--ln)', borderRadius: 6, padding: 14 }}>
+                  <div className="mono" style={{ fontSize: 11, color: 'var(--fg-3)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10 }}>
+                    Top Contributing Features
+                  </div>
+                  {(mlData.top_features || []).length === 0 ? (
+                    <div className="mono" style={{ fontSize: 11, color: 'var(--fg-3)' }}>No features exceeded the z-score threshold</div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {mlData.top_features.map((f, i) => {
+                        const maxZ = Math.max(...mlData.top_features.map(x => x.z), 5);
+                        const pct = (f.z / maxZ) * 100;
+                        return (
+                          <div key={i}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
+                              <span className="mono" style={{ fontSize: 11, color: 'var(--fg-0)' }}>
+                                {f.feature.replace(/_/g, ' ')}
+                              </span>
+                              <span className="mono" style={{ fontSize: 11, color: 'var(--fg-2)' }}>
+                                value <span style={{ color: 'var(--fg-0)' }}>{f.value}</span> · z-score <span style={{ color: f.z >= 3 ? 'var(--crit)' : 'var(--high)', fontWeight: 600 }}>{f.z}</span>
+                              </span>
+                            </div>
+                            <div style={{ height: 5, background: 'var(--bg-1)', borderRadius: 3, overflow: 'hidden' }}>
+                              <div style={{
+                                width: pct + '%', height: 5,
+                                background: f.z >= 3 ? 'var(--crit)' : f.z >= 2 ? 'var(--high)' : 'var(--acc)',
+                                transition: 'width .4s',
+                              }}/>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Peer group */}
+                <div style={{ background: 'var(--bg-2)', border: '1px solid var(--ln)', borderRadius: 6, padding: 14 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                    <div className="mono" style={{ fontSize: 11, color: 'var(--fg-3)', textTransform: 'uppercase', letterSpacing: 1 }}>
+                      Peer Group (DBSCAN cluster {mlData.peer_group})
+                    </div>
+                    <span className="mono" style={{ fontSize: 10, color: 'var(--fg-3)' }}>
+                      {mlData.peer_group === -1 ? 'noise — no peer cluster' : `${mlPeers?.peer_count || 0} peers`}
+                    </span>
+                  </div>
+                  {mlPeers && mlPeers.peers && mlPeers.peers.length > 0 ? (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                      {mlPeers.peers.slice(0, 12).map(p => (
+                        <span key={p.name} onClick={() => { setTab('overview'); onClose(); setTimeout(() => window.location.hash = '#peer-' + p.name, 50); }}
+                              title={`ML score ${p.ml_score}`}
+                              className="mono" style={{
+                                fontSize: 10.5, padding: '3px 8px',
+                                background: 'var(--bg-1)', border: '1px solid var(--ln)',
+                                borderRadius: 4, color: 'var(--acc)', cursor: 'pointer',
+                              }}>
+                          {p.name} <span style={{ color: 'var(--fg-3)' }}>·{Math.round(p.ml_score)}</span>
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="mono" style={{ fontSize: 11, color: 'var(--fg-3)' }}>
+                      {mlData.peer_group === -1
+                        ? "This entity's behavior doesn't match any peer cluster — strong outlier signal."
+                        : 'No peers found.'}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )
           ) : tab === 'connections' ? (
             graph && graph.nodes?.length > 0 ? (
               <UEBAForceGraph data={graph} height={420} selectedId={entity}/>
@@ -547,6 +685,90 @@ function EntityModal({ entity, onClose, onInvestigate, onAction, investigating }
   );
 }
 
+// ── ML Insights Card ────────────────────────────────────────
+// Surfaces "unknown unknowns" — entities flagged by ML that the rule
+// engine missed (or scored low). These are the highest-value finds.
+function MlInsightsCard({ topMl, mlStats, onProfile, onRecalc, recalcing }) {
+  // Sort: surface entities with high ML but low rule-based — the genuine novel finds
+  const novel = [...(topMl || [])]
+    .filter(e => e.ml_score >= 60)
+    .sort((a, b) => (b.ml_score - (b.risk_score || 0) * 0.5) - (a.ml_score - (a.risk_score || 0) * 0.5));
+
+  const lastRun = mlStats?.at ? new Date(mlStats.at) : null;
+  const ageMin = lastRun ? Math.round((Date.now() - lastRun.getTime()) / 60_000) : null;
+  const offline = !mlStats || mlStats.errors?.length > 0;
+
+  return (
+    <Card
+      title="ML Anomaly Insights"
+      sub={lastRun
+        ? `${mlStats.users_scored || 0} entities scored · ${ageMin}min ago · IsolationForest + z-score + DBSCAN`
+        : 'ML pipeline not yet run'}
+      actions={<>
+        <Chip mono tone={offline ? 'crit' : 'ok'}>
+          {offline ? 'offline' : `${mlStats.high_anomaly_count || 0} high`}
+        </Chip>
+        <button className="btn btn-ghost btn-sm" onClick={onRecalc} disabled={recalcing}>
+          <Icon.refresh width="12" height="12"/>
+          {recalcing ? ' Scoring…' : ' Re-score'}
+        </button>
+      </>}
+    >
+      {novel.length === 0 ? (
+        <div className="empty mono" style={{ padding: 12 }}>
+          {offline
+            ? 'ueba-ml service unreachable — check docker compose ps ueba-ml'
+            : 'No high-ML anomalies in this window. ML acts as a second-opinion signal.'}
+        </div>
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 10 }}>
+          {novel.slice(0, 6).map(e => {
+            const isNovel = (e.ml_score || 0) - (e.risk_score || 0) >= 30;
+            return (
+              <div key={e.entity || e.name}
+                onClick={() => onProfile(e.entity || e.name)}
+                style={{
+                  background: 'var(--bg-2)', border: '1px solid var(--ln)',
+                  borderLeft: '3px solid ' + (isNovel ? 'var(--acc)' : 'var(--high)'),
+                  borderRadius: 5, padding: 11, cursor: 'pointer',
+                  display: 'flex', flexDirection: 'column', gap: 6,
+                }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                  <span className="mono" style={{ fontSize: 12, color: 'var(--fg-0)', fontWeight: 600,
+                                                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                    {e.entity || e.name}
+                  </span>
+                  <MlBadge score={e.ml_score}/>
+                </div>
+                <div style={{ display: 'flex', gap: 8, fontSize: 10, fontFamily: 'var(--mono)', color: 'var(--fg-3)' }}>
+                  <span>rule: <span style={{ color: (e.risk_score || 0) >= 60 ? 'var(--high)' : 'var(--fg-2)' }}>{e.risk_score || 0}</span></span>
+                  <span>iF:{Math.round(e.ml_iforest_score || 0)}</span>
+                  <span>z:{Math.round(e.ml_zscore || 0)}</span>
+                  <span>peer:{Math.round(e.ml_peer_distance || 0)}</span>
+                </div>
+                {isNovel && (
+                  <div className="mono" style={{
+                    fontSize: 9, color: 'var(--acc)', padding: '2px 6px',
+                    background: 'rgba(0,229,255,.1)', borderRadius: 8,
+                    border: '1px solid var(--acc)', display: 'inline-block', width: 'fit-content',
+                  }}>
+                    💡 ML-only finding (rules missed this)
+                  </div>
+                )}
+                {(e.ml_top_features || []).length > 0 && (
+                  <div className="mono" style={{ fontSize: 9.5, color: 'var(--fg-2)' }}>
+                    top: {(e.ml_top_features || []).slice(0, 2).map(f => `${f.feature.replace(/_/g, ' ')}·z${f.z}`).join(' · ')}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 // ── MAIN PAGE ─────────────────────────────────────────────────
 function PageUEBA() {
   const API  = window.SOC_API;
@@ -559,6 +781,9 @@ function PageUEBA() {
   const [watchlist,   setWatchlist]   = useUStateU([]);
   const [anomalies,   setAnomalies]   = useUStateU({});
   const [anomalyCounts, setAnomalyCounts] = useUStateU({});
+  const [topMl,       setTopMl]       = useUStateU([]);
+  const [mlStats,     setMlStats]     = useUStateU(null);
+  const [mlRecalcing, setMlRecalcing] = useUStateU(false);
 
   const [graphData,   setGraphData]   = useUStateU(null);
   const [graphLoading, setGraphLoading] = useUStateU(false);
@@ -591,9 +816,11 @@ function PageUEBA() {
 
     async function fetchAll() {
       try {
-        const [overview, anomRes] = await Promise.all([
+        const [overview, anomRes, topMlRes, mlStatsRes] = await Promise.all([
           API.get(`/api/ueba/overview?hours=${hours}`),
           API.get(`/api/ueba/anomalies?hours=${hours}`),
+          API.get(`/api/ueba/ml/top-anomalies?min_score=50&limit=20`).catch(() => null),
+          API.get(`/api/ueba/ml/stats`).catch(() => null),
         ]);
         if (cancelled) return;
 
@@ -603,6 +830,8 @@ function PageUEBA() {
           setAnomalyCounts(overview.anomaly_counts || {});
         }
         if (anomRes && !anomRes.error) setAnomalies(anomRes);
+        if (topMlRes && !topMlRes.error) setTopMl(topMlRes.items || []);
+        if (mlStatsRes && !mlStatsRes.error) setMlStats(mlStatsRes);
       } catch {/* leave existing */}
       finally { if (!cancelled) setLoading(false); }
     }
@@ -708,6 +937,18 @@ function PageUEBA() {
     if (r && r.ok) {
       window.socToast?.({ title: 'Risk recalculated', sub: `${r.updated || 0} entities updated`, tone: 'ok' });
       setRefreshKey(k => k + 1);
+    }
+  }, []);
+
+  const recalcMl = useUCBU(async () => {
+    setMlRecalcing(true);
+    const r = await API.post('/api/ueba/ml/recalc', {});
+    setMlRecalcing(false);
+    if (r && r.ok) {
+      window.socToast?.({ title: 'ML scoring complete', sub: `${r.users_scored || 0} entities scored in ${r.duration_sec || 0}s`, tone: 'ok' });
+      setRefreshKey(k => k + 1);
+    } else {
+      window.socToast?.({ title: 'ML re-score failed', sub: r?.error || 'service unavailable', tone: 'crit' });
     }
   }, []);
 
@@ -826,6 +1067,15 @@ function PageUEBA() {
           anomalyCounts={anomalyCounts}
           active={mitreFilter}
           onToggle={tech => setMitreFilter(t => t === tech ? null : tech)}
+        />
+
+        {/* ── ML Anomaly Insights ───────────────────── */}
+        <MlInsightsCard
+          topMl={topMl}
+          mlStats={mlStats}
+          onProfile={openEntity}
+          onRecalc={recalcMl}
+          recalcing={mlRecalcing}
         />
 
         {/* ── Anomaly Map (3x3 grid) ─────────────────── */}

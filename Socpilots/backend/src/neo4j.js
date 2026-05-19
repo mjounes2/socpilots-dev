@@ -1145,7 +1145,7 @@ async function getCriticalWatchlist(limit = 5, hours = 24) {
   try {
     const recs = await run(
       `MATCH (u:User)
-       WHERE coalesce(u.risk_score, 0) >= 40
+       WHERE coalesce(u.risk_score, 0) >= 40 OR coalesce(u.ml_score, 0) >= 60
        OPTIONAL MATCH (u)-[r:LOGGED_IN]->(h:Host)
        WHERE r.time IS NOT NULL
          AND datetime(r.time) > datetime() - duration({hours: $hours})
@@ -1156,19 +1156,21 @@ async function getCriticalWatchlist(limit = 5, hours = 24) {
        RETURN u.name AS entity,
               'user' AS entity_type,
               coalesce(u.risk_score, 0) AS risk_score,
+              coalesce(u.ml_score, 0)   AS ml_score,
+              u.ml_top_features_json    AS ml_top_features_json,
               coalesce(u.anomaly_count, 0) AS anomaly_count,
               u.last_anomaly AS last_anomaly,
               u.last_seen AS last_seen,
               events,
               hosts,
               allFlags AS flags
-       ORDER BY risk_score DESC, u.total_events DESC LIMIT $limit`,
+       ORDER BY (coalesce(u.risk_score, 0) + coalesce(u.ml_score, 0)) DESC, u.total_events DESC LIMIT $limit`,
       { limit: neo4j.int(limit), hours: neo4j.int(hours) }
     ).catch(async () => {
       // Fallback if APOC not available — fetch flags manually
       return run(
         `MATCH (u:User)
-         WHERE coalesce(u.risk_score, 0) >= 40
+         WHERE coalesce(u.risk_score, 0) >= 40 OR coalesce(u.ml_score, 0) >= 60
          OPTIONAL MATCH (u)-[r:LOGGED_IN]->(h:Host)
          WHERE r.time IS NOT NULL
            AND datetime(r.time) > datetime() - duration({hours: $hours})
@@ -1178,12 +1180,14 @@ async function getCriticalWatchlist(limit = 5, hours = 24) {
          RETURN u.name AS entity,
                 'user' AS entity_type,
                 coalesce(u.risk_score, 0) AS risk_score,
+                coalesce(u.ml_score, 0)   AS ml_score,
+                u.ml_top_features_json    AS ml_top_features_json,
                 coalesce(u.anomaly_count, 0) AS anomaly_count,
                 u.last_anomaly AS last_anomaly,
                 u.last_seen AS last_seen,
                 events, hosts,
                 flagLists AS flags
-         ORDER BY risk_score DESC, u.total_events DESC LIMIT $limit`,
+         ORDER BY (coalesce(u.risk_score, 0) + coalesce(u.ml_score, 0)) DESC, u.total_events DESC LIMIT $limit`,
         { limit: neo4j.int(limit), hours: neo4j.int(hours) }
       );
     });
@@ -1194,18 +1198,25 @@ async function getCriticalWatchlist(limit = 5, hours = 24) {
       const flatFlags = Array.isArray(rawFlags[0])
         ? rawFlags.flat().filter(Boolean)
         : rawFlags.filter(Boolean);
-      // Tally flag types
       const flagCounts = {};
       for (const f of flatFlags) flagCounts[f] = (flagCounts[f] || 0) + 1;
+      // Parse ML top features
+      let mlTop = [];
+      try {
+        const raw = r.get('ml_top_features_json');
+        if (raw) mlTop = JSON.parse(raw);
+      } catch {}
       return {
-        entity:        r.get('entity'),
-        entity_type:   r.get('entity_type'),
-        risk_score:    r.get('risk_score')?.toNumber?.() ?? r.get('risk_score') ?? 0,
-        anomaly_count: r.get('anomaly_count')?.toNumber?.() ?? 0,
-        last_anomaly:  r.get('last_anomaly'),
-        last_seen:     r.get('last_seen'),
-        events:        r.get('events')?.toNumber?.() ?? 0,
-        hosts:         r.get('hosts') || [],
+        entity:         r.get('entity'),
+        entity_type:    r.get('entity_type'),
+        risk_score:     r.get('risk_score')?.toNumber?.() ?? r.get('risk_score') ?? 0,
+        ml_score:       r.get('ml_score')?.toNumber?.()   ?? r.get('ml_score')   ?? 0,
+        ml_top_features: mlTop,
+        anomaly_count:  r.get('anomaly_count')?.toNumber?.() ?? 0,
+        last_anomaly:   r.get('last_anomaly'),
+        last_seen:      r.get('last_seen'),
+        events:         r.get('events')?.toNumber?.() ?? 0,
+        hosts:          r.get('hosts') || [],
         flag_breakdown: flagCounts,
       };
     });
@@ -1263,7 +1274,7 @@ module.exports = {
   getGraphNodes, getAttackPath,
   computeEntityBaseline, assessEntityFP,
   getEntityTimeline, getCriticalWatchlist,
-  purgeOldData,
+  purgeOldData, run,
   ANOMALY_WEIGHTS,
 };
 

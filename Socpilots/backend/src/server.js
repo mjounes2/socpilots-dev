@@ -76,6 +76,8 @@ const SCANNER_URL       = process.env.SCANNER_URL      || 'http://scanner:7777';
 const LANGCHAIN_URL     = process.env.LANGCHAIN_URL    || 'http://langchain-agent:8001';
 const RAG_URL           = process.env.RAG_URL          || 'http://rag-retrieval:5005';
 const KNOWLEDGE_URL     = process.env.KNOWLEDGE_URL    || 'http://knowledge-ingestion:5004';
+const UEBA_ML_URL       = process.env.UEBA_ML_URL      || 'http://ueba-ml:5006';
+const UEBA_ML_API_KEY   = process.env.UEBA_ML_API_KEY  || '';
 const LANGCHAIN_TOKEN   = process.env.LANGCHAIN_INTERNAL_TOKEN || '';
 const MCP_WAZUH_URL     = process.env.MCP_WAZUH_URL    || 'http://mcp-wazuh:3001';
 const OTX_API_KEY       = process.env.OTX_API_KEY      || '';
@@ -3491,6 +3493,98 @@ async function uebaIngestWorker() {
 setInterval(() => { uebaIngestWorker(); }, 120_000);
 setTimeout(() => { uebaIngestWorker(); }, 60_000); // first run 60s after boot (staggered from triage)
 
+// ── UEBA ML AUTONOMOUS BOOST ──────────────────────────────────
+// When BOTH the rule-based risk_score (>=60) and the ML composite ml_score
+// (>=80) are high, automatically trigger an autonomous investigation.
+// Dedup: per-entity 4h cooldown to prevent investigation storms.
+// Skipped entirely if `autonomous_engine_enabled` setting is false.
+const _mlBoostCooldown = new Map();   // entity → last trigger ts
+const ML_BOOST_COOLDOWN_MS = 4 * 3600 * 1000;
+let _mlBoostRunning = false;
+
+async function uebaMlBoostWorker() {
+  if (_mlBoostRunning) return;
+  _mlBoostRunning = true;
+  try {
+    const engineOn = await db.getSetting('autonomous_engine_enabled');
+    if (engineOn !== 'true') return;
+
+    // Find users with both signals high
+    const candidates = await ueba.run?.(
+      `MATCH (u:User)
+       WHERE coalesce(u.ml_score, 0) >= 80
+         AND coalesce(u.risk_score, 0) >= 60
+       RETURN u.name AS name,
+              coalesce(u.risk_score, 0) AS risk,
+              coalesce(u.ml_score, 0)   AS ml_score,
+              u.last_seen               AS last_seen
+       ORDER BY (u.risk_score + u.ml_score) DESC LIMIT 5`
+    ).catch(() => null);
+
+    // Fallback if ueba.run isn't exported
+    if (!candidates) return;
+
+    const now = Date.now();
+    let triggered = 0;
+
+    for (const rec of candidates) {
+      const name = rec.get('name');
+      if (!name) continue;
+      const lastTrigger = _mlBoostCooldown.get(name) || 0;
+      if (now - lastTrigger < ML_BOOST_COOLDOWN_MS) continue;
+
+      const risk     = rec.get('risk')?.toNumber?.() ?? rec.get('risk') ?? 0;
+      const mlScore  = rec.get('ml_score')?.toNumber?.() ?? rec.get('ml_score') ?? 0;
+      const lastSeen = rec.get('last_seen');
+
+      // Build a synthetic alert representing the ML+rule signal
+      const alert = {
+        ruleId:      'UEBA-ML-BOOST',
+        rule_id:     'UEBA-ML-BOOST',
+        level:       Math.min(15, Math.round((risk + mlScore) / 14)),
+        description: `UEBA + ML composite signal on ${name} (risk ${risk}, ml ${mlScore})`,
+        agent:       name,
+        timestamp:   new Date().toISOString(),
+        source:      'ueba_ml_boost',
+        severity:    (risk >= 80 || mlScore >= 90) ? 'critical' : 'high',
+        full_log:    `Entity ${name} flagged: rule-based risk=${risk}, ML score=${mlScore}, last_seen=${lastSeen}.`,
+      };
+
+      try {
+        await axios.post(
+          `${LANGCHAIN_URL}/autonomous/investigate`,
+          { alert, session_id: `ml_boost_${name}_${now}`, deep_mode: true },
+          { timeout: 300_000, headers: { Authorization: `Bearer ${LANGCHAIN_TOKEN}` } }
+        );
+        _mlBoostCooldown.set(name, now);
+        triggered++;
+        console.log(`[UEBA-ML-Boost] Triggered autonomous investigation: ${name} (risk=${risk}, ml=${mlScore})`);
+
+        db.createNotification(
+          'ml_boost',
+          `ML-boosted autonomous investigation`,
+          `${name} flagged by both rule engine (risk ${risk}) and ML (score ${mlScore}). Investigation started.`,
+          'warning',
+          null,
+          { entity: name, risk_score: risk, ml_score: mlScore }
+        ).catch(() => {});
+      } catch (e) {
+        console.warn(`[UEBA-ML-Boost] Failed for ${name}: ${e.message}`);
+      }
+    }
+
+    if (triggered > 0) console.log(`[UEBA-ML-Boost] Triggered ${triggered} investigations`);
+  } catch (e) {
+    console.warn('[UEBA-ML-Boost] worker error:', e.message);
+  } finally {
+    _mlBoostRunning = false;
+  }
+}
+
+// Run every 5 min, first run 3 min after boot (well after ueba-ml's first cycle)
+setInterval(() => { uebaMlBoostWorker(); }, 5 * 60_000);
+setTimeout(() => { uebaMlBoostWorker(); }, 180_000);
+
 // ═══════════════════════════════════════════════════════════════
 // ─── DARK SOC — AUTONOMOUS HUNT SCHEDULER (every 6 hours) ──────
 // Pulls top IOCs from recent alerts, generates hunt queries via
@@ -4660,6 +4754,82 @@ app.get('/api/ueba/overview', authMW, async (req, res) => {
   } catch (e) {
     console.error('[ueba/overview]', e.message);
     res.status(500).json({ error: e.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// ─── UEBA ML SERVICE PROXY ─────────────────────────────────────
+// Proxies to ueba-ml:5006 (Isolation Forest + z-score + DBSCAN).
+// ═══════════════════════════════════════════════════════════════
+const _uebaMlHeaders = () => UEBA_ML_API_KEY ? { 'X-API-Key': UEBA_ML_API_KEY } : {};
+
+app.get('/api/ueba/ml/health', authMW, async (req, res) => {
+  try {
+    const r = await axios.get(`${UEBA_ML_URL}/health`, { timeout: 5_000, headers: _uebaMlHeaders() });
+    res.json(r.data);
+  } catch (e) {
+    res.status(502).json({ available: false, error: e.message });
+  }
+});
+
+app.get('/api/ueba/ml/stats', authMW, async (req, res) => {
+  try {
+    const r = await axios.get(`${UEBA_ML_URL}/stats`, { timeout: 5_000, headers: _uebaMlHeaders() });
+    res.json(r.data);
+  } catch (e) {
+    res.status(502).json({ error: e.message });
+  }
+});
+
+app.get('/api/ueba/ml/score/:entity', authMW, async (req, res) => {
+  try {
+    const r = await axios.get(`${UEBA_ML_URL}/score/${encodeURIComponent(req.params.entity)}`,
+      { timeout: 8_000, headers: _uebaMlHeaders() });
+    res.json(r.data);
+  } catch (e) {
+    if (e.response?.status === 404) return res.status(404).json({ error: 'not found' });
+    res.status(502).json({ error: e.message });
+  }
+});
+
+app.get('/api/ueba/ml/explain/:entity', authMW, async (req, res) => {
+  try {
+    const r = await axios.get(`${UEBA_ML_URL}/explain/${encodeURIComponent(req.params.entity)}`,
+      { timeout: 8_000, headers: _uebaMlHeaders() });
+    res.json(r.data);
+  } catch (e) {
+    if (e.response?.status === 404) return res.status(404).json({ error: 'not scored yet' });
+    res.status(502).json({ error: e.message });
+  }
+});
+
+app.get('/api/ueba/ml/peers/:entity', authMW, async (req, res) => {
+  try {
+    const r = await axios.get(`${UEBA_ML_URL}/peers/${encodeURIComponent(req.params.entity)}`,
+      { timeout: 8_000, headers: _uebaMlHeaders() });
+    res.json(r.data);
+  } catch (e) {
+    res.status(502).json({ error: e.message });
+  }
+});
+
+app.get('/api/ueba/ml/top-anomalies', authMW, async (req, res) => {
+  try {
+    const r = await axios.get(`${UEBA_ML_URL}/top-anomalies`,
+      { timeout: 8_000, headers: _uebaMlHeaders(), params: req.query });
+    res.json(r.data);
+  } catch (e) {
+    res.status(502).json({ error: e.message });
+  }
+});
+
+app.post('/api/ueba/ml/recalc', authMW, requireRole('admin'), async (req, res) => {
+  try {
+    const r = await axios.post(`${UEBA_ML_URL}/score-all`, {},
+      { timeout: 120_000, headers: _uebaMlHeaders() });
+    res.json({ ok: true, ...r.data });
+  } catch (e) {
+    res.status(502).json({ error: e.message });
   }
 });
 
