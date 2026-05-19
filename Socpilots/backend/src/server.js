@@ -4244,17 +4244,126 @@ app.get('/api/vulns', authMW, async (req, res) => {
   res.json({ items: [], total: 0 });
 });
 
+// ── Build MITRE ATT&CK context block for report prompts ──────────────────────
+function _buildMitreCoverageContext() {
+  if (!_mitreCovCache) return '';
+  const cov      = _mitreCovCache.coverage || {};
+  const covered  = Object.keys(cov).length;
+  const total    = _MITRE_TECHS_LIST.length;
+  const pct      = total > 0 ? Math.round(covered / total * 100) : 0;
+  const logSrcs  = [...new Set(Object.values(cov).flatMap(d => d.decoders || []))].filter(Boolean).slice(0, 8);
+  const topTechs = Object.entries(cov)
+    .sort((a, b) => b[1].count - a[1].count).slice(0, 8)
+    .map(([id, d]) => `${id} (${d.count.toLocaleString()} alerts, max level ${d.max_level})`);
+  const agents   = (_mitreCovCache.all_agents || []).slice(0, 10);
+
+  let ctx = `\n\n## MITRE ATT&CK Coverage Intelligence (timeframe: ${_mitreCovCacheTf || '7d'})
+- Coverage: ${covered} of ${total} Enterprise techniques detected (${pct}%)
+- Active log sources: ${logSrcs.join(', ') || 'unknown'}
+- Monitored agents: ${agents.join(', ') || 'none'}
+- Top detected techniques: ${topTechs.join('; ') || 'none'}`;
+
+  if (_mitreAutoAnalysis?.result) {
+    const ai = _mitreAutoAnalysis.result;
+    const gaps = (ai.gap_analysis || []).slice(0, 6)
+      .map(g => `${g.id} (${g.name}): ${g.detection_opportunity || 'no coverage'}`);
+    const quickWins = (ai.recommendations || [])
+      .filter(r => r.effort === 'quick_win').slice(0, 4)
+      .map(r => `• ${r.title}: ${r.impact}`);
+    const medEffort = (ai.recommendations || [])
+      .filter(r => r.effort === 'medium_effort').slice(0, 3)
+      .map(r => `• ${r.title}: ${r.impact}`);
+    if (gaps.length)      ctx += `\n- Priority coverage gaps: ${gaps.join('; ')}`;
+    if (quickWins.length) ctx += `\n- Quick-win detections: ${quickWins.join(' | ')}`;
+    if (medEffort.length) ctx += `\n- Medium-effort improvements: ${medEffort.join(' | ')}`;
+    if (ai.tactic_breakdown?.length) {
+      const worst = [...ai.tactic_breakdown].sort((a, b) => a.pct - b.pct).slice(0, 3)
+        .map(t => `${t.tactic} (${t.pct}%)`);
+      ctx += `\n- Weakest tactic coverage: ${worst.join(', ')}`;
+    }
+  }
+  return ctx;
+}
+
+app.get('/api/reports/coverage', authMW, (req, res) => {
+  const cov      = _mitreCovCache?.coverage || {};
+  const covered  = Object.keys(cov).length;
+  const total    = _MITRE_TECHS_LIST.length;
+  const pct      = total > 0 ? Math.round(covered / total * 100) : 0;
+  const logSrcs  = [...new Set(Object.values(cov).flatMap(d => d.decoders || []))].filter(Boolean);
+  const agents   = _mitreCovCache?.all_agents || [];
+  const timeframe = _mitreCovCacheTf || '7d';
+
+  // Tactic breakdown
+  const TACTICS_MAP = {
+    TA0043:'Reconnaissance',TA0042:'Resource Development',TA0001:'Initial Access',
+    TA0002:'Execution',TA0003:'Persistence',TA0004:'Privilege Escalation',
+    TA0005:'Defense Evasion',TA0006:'Credential Access',TA0007:'Discovery',
+    TA0008:'Lateral Movement',TA0009:'Collection',TA0010:'Exfiltration',
+    TA0011:'Command and Control',TA0040:'Impact',
+  };
+  const tacticCounts = {};
+  for (const [, tactics] of _MITRE_TECHS_LIST.map(t => [t[0], t[2]])) {
+    for (const ta of tactics) {
+      if (!tacticCounts[ta]) tacticCounts[ta] = { name: TACTICS_MAP[ta] || ta, covered: 0, total: 0 };
+      tacticCounts[ta].total++;
+      // Check rollup: parent or subtechnique match
+    }
+  }
+  for (const [tid] of _MITRE_TECHS_LIST) {
+    const parent = tid.includes('.') ? tid.split('.')[0] : tid;
+    const entry  = cov[tid] || cov[parent];
+    if (!entry || entry.count === 0) continue;
+    const [, , tactics] = _MITRE_TECHS_LIST.find(t => t[0] === tid) || [];
+    if (!tactics) continue;
+    for (const ta of tactics) {
+      if (tacticCounts[ta]) tacticCounts[ta].covered++;
+    }
+  }
+  const tacticBreakdown = Object.entries(tacticCounts)
+    .map(([id, v]) => ({ id, ...v, pct: v.total ? Math.round(v.covered / v.total * 100) : 0 }))
+    .sort((a, b) => b.pct - a.pct);
+
+  // Top detected techniques
+  const topDetected = Object.entries(cov)
+    .sort((a, b) => b[1].count - a[1].count).slice(0, 15)
+    .map(([id, d]) => ({ id, count: d.count, max_level: d.max_level, rules: d.rules, decoders: d.decoders }));
+
+  // Unmapped audit (from cache)
+  const auditSummary = _mitreAuditCache ? {
+    total_unmapped:  _mitreAuditCache.total_unmapped,
+    top_decoders:    (_mitreAuditCache.by_decoder || []).slice(0, 5).map(d => ({ decoder: d.decoder, count: d.count })),
+    top_rules:       (_mitreAuditCache.top_rules || []).slice(0, 10),
+  } : null;
+
+  res.json({
+    available:       true,
+    timeframe,
+    covered,
+    total,
+    pct,
+    log_sources:     logSrcs,
+    agents,
+    top_detected:    topDetected,
+    tactic_breakdown: tacticBreakdown,
+    ai_analysis:     _mitreAutoAnalysis?.result || null,
+    ai_analyzed_at:  _mitreAutoAnalysis?.last_analyzed_at || null,
+    unmapped_audit:  auditSummary,
+  });
+});
+
 app.get('/api/reports/summary', authMW, async (req, res) => {
+  const mitreCtx = _buildMitreCoverageContext();
+
   const TYPE_PROMPTS = {
-    exec:       'Generate a professional SOC executive summary report for today. Include: 1) Alert volume and severity breakdown, 2) Top threats and MITRE ATT&CK techniques observed, 3) Critical incidents requiring immediate attention, 4) Case management status, 5) Recommended immediate actions. Use markdown headers and bullet points. Be concise and professional.',
-    threat:     'Generate a threat intelligence report. Include: 1) Top IOC categories observed, 2) MITRE ATT&CK techniques detected, 3) Most active threat actors or campaigns, 4) High-risk source IPs and domains, 5) Recommended detection improvements. Use markdown.',
-    compliance: 'Generate a compliance status report. Include: 1) SOC 2 / ISO 27001 control coverage summary, 2) Log source coverage and gaps, 3) SLA breach risk for unanswered alerts, 4) User access anomalies, 5) Recommended remediation steps. Use markdown.',
-    incident:   'Generate an incident retrospective report. Include: 1) Incident timeline summary, 2) Root cause analysis, 3) Affected systems and blast radius, 4) Response actions taken, 5) Lessons learned and prevention recommendations. Use markdown.',
+    exec:       `Generate a professional SOC executive summary report for today. Include: 1) Alert volume and severity breakdown, 2) Top threats and MITRE ATT&CK techniques observed, 3) Critical incidents requiring immediate attention, 4) Case management status, 5) Recommended immediate actions. Use markdown headers and bullet points. Be concise and professional.${mitreCtx}`,
+    threat:     `Generate a threat intelligence report. Include: 1) Top IOC categories observed, 2) MITRE ATT&CK techniques detected with coverage analysis, 3) Most active threat actors or campaigns, 4) High-risk source IPs and domains, 5) Specific detection improvements based on coverage gaps. Use markdown.${mitreCtx}`,
+    compliance: `Generate a compliance status report. Include: 1) SOC 2 / ISO 27001 control coverage summary, 2) MITRE ATT&CK coverage gaps and their compliance implications, 3) Log source coverage and gaps, 4) SLA breach risk for unanswered alerts, 5) Remediation steps. Use markdown.${mitreCtx}`,
+    incident:   `Generate an incident retrospective report. Include: 1) Incident timeline summary, 2) Root cause analysis and MITRE technique mapping, 3) Affected systems and blast radius, 4) Detection gaps that allowed the incident, 5) Lessons learned and prevention recommendations. Use markdown.${mitreCtx}`,
+    coverage:   `Generate a detailed MITRE ATT&CK coverage analysis report. Include: 1) Executive coverage summary with percentage and key gaps, 2) Tactic-by-tactic breakdown with coverage percentages, 3) Top 10 priority gaps with specific detection recommendations, 4) Quick-win rule additions that can be implemented immediately, 5) Strategic roadmap for improving coverage. Use markdown headers. Be specific and actionable.${mitreCtx}`,
   };
   const prompt = TYPE_PROMPTS[req.query.type] || TYPE_PROMPTS.exec;
 
-  // Call LangChain /chat directly — n8n is not used here because its webhook
-  // may not be registered and it returns ambiguous 404 responses.
   try {
     const lc = await axios.post(`${LANGCHAIN_URL}/chat`, {
       message:  prompt,
@@ -4263,7 +4372,7 @@ app.get('/api/reports/summary', authMW, async (req, res) => {
       role:     req.user?.role     || 'analyst',
     }, { timeout: 120_000, headers: { Authorization: `Bearer ${LANGCHAIN_TOKEN}` } });
     const text = lc.data?.response || lc.data?.output || lc.data?.text || lc.data?.message || '';
-    if (text) return res.json({ text, ok: true });
+    if (text) return res.json({ text, ok: true, has_mitre_context: !!mitreCtx });
     return res.status(502).json({ ok: false, error: 'LangChain returned an empty response' });
   } catch (e) {
     console.error('[reports/summary]', e.message);

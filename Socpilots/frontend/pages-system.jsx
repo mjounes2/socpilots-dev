@@ -430,10 +430,11 @@ function StatusChip({ status }) {
 
 // ============= REPORTS =============
 const REPORT_TEMPLATES = [
-  { id: 'exec',       label: 'Executive Summary',      desc: 'High-level weekly brief for CxO audience',           icon: '📊' },
-  { id: 'threat',     label: 'Threat Intelligence',    desc: 'IOC analysis, MITRE coverage, threat actors',        icon: '🎯' },
-  { id: 'compliance', label: 'Compliance Report',      desc: 'SOC 2 / ISO 27001 / NIST framework alignment',       icon: '✅' },
-  { id: 'incident',   label: 'Incident Retrospective', desc: 'Post-incident timeline, root cause, lessons learned', icon: '🔍' },
+  { id: 'exec',       label: 'Executive Summary',      desc: 'High-level weekly brief for CxO audience',                   icon: '📊' },
+  { id: 'threat',     label: 'Threat Intelligence',    desc: 'IOC analysis, MITRE coverage, threat actors',                icon: '🎯' },
+  { id: 'compliance', label: 'Compliance Report',      desc: 'SOC 2 / ISO 27001 / NIST framework alignment',               icon: '✅' },
+  { id: 'incident',   label: 'Incident Retrospective', desc: 'Post-incident timeline, root cause, lessons learned',         icon: '🔍' },
+  { id: 'coverage',   label: 'ATT&CK Coverage Report', desc: 'Full MITRE gap analysis with detection recommendations',     icon: '🛡️' },
 ];
 const SCHED_FREQS = ['Daily', 'Weekly', 'Bi-weekly', 'Monthly'];
 const SCHED_DAYS  = ['Monday','Tuesday','Wednesday','Thursday','Friday'];
@@ -443,6 +444,7 @@ function PageReports() {
   const [selectedId, setSelectedId]   = useStateS(null);
   const [loading, setLoad]            = useStateS(false);
   const [generating, setGen]          = useStateS(false);
+  const [mitreCov, setMitreCov]       = useStateS(null);
   const [recipients, setRecipients]   = useStateS([
     { id: 1, type: 'email', addr: 'ciso@socpilots.com'      },
     { id: 2, type: 'email', addr: 'soc-leads@socpilots.com' },
@@ -463,30 +465,40 @@ function PageReports() {
     setLoad(true);
     window.SOC_API.get('/api/reports').then(d => {
       const arr = d?.items || d?.reports || (Array.isArray(d) ? d : null);
-      if (arr && arr.length > 0) {
-        setReports(arr);
-        setSelectedId(arr[0].id);
-      }
+      if (arr && arr.length > 0) { setReports(arr); setSelectedId(arr[0].id); }
       setLoad(false);
     }).catch(() => setLoad(false));
+    // Pre-load MITRE coverage data for the report sections
+    window.SOC_API.get('/api/reports/coverage').then(d => {
+      if (d && d.available) setMitreCov(d);
+    }).catch(() => {});
   }, []);
 
   async function generate(type = 'exec') {
     setGen(true);
     const tmpl = REPORT_TEMPLATES.find(t => t.id === type) || REPORT_TEMPLATES[0];
-    window.socToast?.({ title: `Generating ${tmpl.label}`, sub: 'AI draft · ~30 s', tone: 'info' });
-    const r = await window.SOC_API.get(`/api/reports/summary?type=${type}`);
+    window.socToast?.({ title: `Generating ${tmpl.label}`, sub: 'AI draft · ~30–60 s', tone: 'info' });
+
+    // Refresh MITRE coverage data so the report gets fresh context
+    const [r, covData] = await Promise.all([
+      window.SOC_API.get(`/api/reports/summary?type=${type}`),
+      window.SOC_API.get('/api/reports/coverage').catch(() => null),
+    ]);
+    if (covData && covData.available) setMitreCov(covData);
     setGen(false);
+
     if (r && r.text) {
       const rpt = {
-        id: 'RPT-' + Date.now(),
-        title: tmpl.label,
-        range: new Date().toLocaleDateString('en-GB'),
-        author: 'AI',
-        status: 'draft',
-        pages: 1,
-        when: 'now',
-        content: r.text,
+        id:       'RPT-' + Date.now(),
+        title:    tmpl.label,
+        range:    new Date().toLocaleDateString('en-GB'),
+        author:   'AI',
+        status:   'draft',
+        pages:    1,
+        when:     'now',
+        type,
+        content:  r.text,
+        has_mitre: r.has_mitre_context || false,
       };
       setReports(prev => [rpt, ...prev]);
       setSelectedId(rpt.id);
@@ -521,12 +533,60 @@ function PageReports() {
   function exportPDF(sel) {
     if (!sel) return;
     const win = window.open('', '_blank');
+    // Build MITRE section HTML for PDF
+    let mitreSectionHtml = '';
+    if (mitreCov) {
+      const effortColor = { quick_win: '#15803d', medium_effort: '#b45309', strategic: '#6d28d9' };
+      const effortLabel = { quick_win: 'Quick Win', medium_effort: 'Medium Effort', strategic: 'Strategic' };
+      const tacticRows = (mitreCov.tactic_breakdown || []).map(t =>
+        `<tr><td>${t.name}</td><td>${t.covered}/${t.total}</td>
+         <td><div style="width:100%;background:#e5e7eb;border-radius:3px;height:8px"><div style="width:${t.pct}%;background:${t.pct>=50?'#16a34a':t.pct>=25?'#d97706':'#dc2626'};height:8px;border-radius:3px"></div></div></td>
+         <td>${t.pct}%</td></tr>`
+      ).join('');
+      const recCards = (mitreCov.ai_analysis?.recommendations || []).map(r =>
+        `<div style="margin-bottom:10px;padding:10px 14px;border-left:4px solid ${effortColor[r.effort]||'#6b7280'};background:#f9fafb">
+          <div style="font-weight:700;font-size:13px">[${effortLabel[r.effort]||r.effort}] ${r.title}</div>
+          <div style="color:#16a34a;font-size:12px;margin:3px 0">${r.impact}</div>
+          <div style="color:#6b7280;font-size:12px">${r.steps || ''}</div>
+          ${(r.techniques_covered||[]).length?`<div style="font-size:11px;color:#374151;margin-top:4px">Covers: ${r.techniques_covered.join(', ')}</div>`:''}
+        </div>`
+      ).join('');
+      const gapRows = (mitreCov.ai_analysis?.gap_analysis || []).slice(0, 15).map(g =>
+        `<tr><td style="font-family:monospace;color:#b45309">${g.id}</td><td>${g.name}</td>
+         <td>${g.why_missing||'—'}</td><td style="color:#15803d">${g.detection_opportunity||'—'}</td></tr>`
+      ).join('');
+      mitreSectionHtml = `
+        <div style="margin-top:40px;padding-top:24px;border-top:2px solid #111">
+          <h2 style="font-size:18px;letter-spacing:1px;margin-bottom:4px">MITRE ATT&CK Coverage Analysis</h2>
+          <p style="color:#666;font-size:12px;margin-bottom:20px">Timeframe: ${mitreCov.timeframe} · ${mitreCov.covered}/${mitreCov.total} techniques (${mitreCov.pct}% coverage) · Log sources: ${(mitreCov.log_sources||[]).join(', ')||'N/A'}</p>
+
+          <h3 style="font-size:14px;margin:16px 0 8px">Tactic Coverage Breakdown</h3>
+          <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
+            <thead><tr style="background:#f3f4f6"><th style="text-align:left;padding:6px">Tactic</th><th>Techniques</th><th style="width:120px">Coverage</th><th>%</th></tr></thead>
+            <tbody>${tacticRows}</tbody>
+          </table>
+
+          ${gapRows ? `<h3 style="font-size:14px;margin:16px 0 8px">Priority Coverage Gaps</h3>
+          <table style="width:100%;border-collapse:collapse;font-size:11px;margin-bottom:20px">
+            <thead><tr style="background:#f3f4f6"><th>ID</th><th>Technique</th><th>Why Missing</th><th>Detection Opportunity</th></tr></thead>
+            <tbody>${gapRows}</tbody>
+          </table>` : ''}
+
+          ${recCards ? `<h3 style="font-size:14px;margin:16px 0 8px">Detection Recommendations</h3>${recCards}` : ''}
+
+          ${mitreCov.unmapped_audit ? `<div style="margin-top:16px;padding:10px 14px;background:#fefce8;border:1px solid #fde047;font-size:12px">
+            <strong>Unmapped Rules:</strong> ${mitreCov.unmapped_audit.total_unmapped?.toLocaleString()} alerts without MITRE tags — ${(mitreCov.unmapped_audit.top_decoders||[]).map(d=>d.decoder+'('+d.count.toLocaleString()+')').join(', ')}
+          </div>` : ''}
+        </div>`;
+    }
+
     win.document.write(`<!DOCTYPE html><html><head><title>${sel.title}</title><style>
-      body{font-family:sans-serif;max-width:780px;margin:48px auto;color:#111;line-height:1.6}
+      body{font-family:sans-serif;max-width:800px;margin:48px auto;color:#111;line-height:1.6}
       .hdr{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #111;padding-bottom:14px;margin-bottom:28px}
       .logo{font-size:22px;font-weight:800;letter-spacing:3px}.sub{font-size:11px;color:#666;margin-top:2px}
       .meta{font-size:12px;color:#555;text-align:right;line-height:1.8}
       pre{white-space:pre-wrap;word-break:break-word;font-size:13px;font-family:inherit}
+      table{border-collapse:collapse;width:100%} th,td{padding:5px 8px;border:1px solid #e5e7eb;text-align:left}
       .ft{margin-top:48px;border-top:1px solid #ccc;padding-top:8px;font-size:11px;color:#999;text-align:center}
       @media print{body{margin:24px}}
     </style></head><body>
@@ -536,6 +596,7 @@ function PageReports() {
         <div class="meta">Period: ${sel.range}<br>Author: ${sel.author}<br>Pages: ${sel.pages}</div>
       </div>
       <pre>${(sel.content || 'No content').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre>
+      ${mitreSectionHtml}
       <div class="ft">SOC Pilots · ${sel.id} · Generated ${sel.when || ''} · AI-drafted, human-approved</div>
     </body></html>`);
     win.document.close();
@@ -753,9 +814,12 @@ function PageReports() {
                           fontSize: '0.82rem', lineHeight: 1.6, resize: 'vertical' }}
                       />
                     ) : selected.content ? (
-                      <section className="rd-section">
-                        <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'var(--fm)', fontSize: '0.82rem', color: 'var(--fg-1)', margin: 0, lineHeight: 1.65 }}>{selected.content}</pre>
-                      </section>
+                      <>
+                        <section className="rd-section">
+                          <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'var(--fm)', fontSize: '0.82rem', color: 'var(--fg-1)', margin: 0, lineHeight: 1.65 }}>{selected.content}</pre>
+                        </section>
+                        {mitreCov && <ReportMitreSection cov={mitreCov} />}
+                      </>
                     ) : (
                       <div className="empty mono" style={{ padding: '40px 24px', textAlign: 'center' }}>
                         Click <strong>Generate</strong> or choose a <strong>Template</strong> to create a report.
@@ -771,6 +835,182 @@ function PageReports() {
         )}
       </div>
     </div>
+  );
+}
+
+// ── MITRE ATT&CK section rendered inside the report viewer ───────────────────
+function ReportMitreSection({ cov }) {
+  const [tab, setTab] = useStateS('tactic');
+  if (!cov) return null;
+
+  const EFFORT_COLOR = { quick_win: 'var(--ok)', medium_effort: 'var(--warn)', strategic: '#9c6cf7' };
+  const EFFORT_LABEL = { quick_win: 'Quick Win', medium_effort: 'Medium Effort', strategic: 'Strategic' };
+  const ai           = cov.ai_analysis;
+  const hasTabs      = !!(ai?.gap_analysis?.length || ai?.recommendations?.length);
+
+  return (
+    <section className="rd-section" style={{ borderTop: '1px solid var(--ln)', paddingTop: 20, marginTop: 20 }}>
+      {/* Section header */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
+        <div>
+          <div style={{ fontWeight: 700, fontSize: 13, color: 'var(--fg)', letterSpacing: '0.04em', marginBottom: 4 }}>
+            MITRE ATT&CK COVERAGE ANALYSIS
+          </div>
+          <div className="mono" style={{ fontSize: 10, color: 'var(--fg-3)' }}>
+            Timeframe: {cov.timeframe} · {cov.covered}/{cov.total} techniques ({cov.pct}% coverage)
+            {cov.ai_analyzed_at && ` · AI analyzed ${new Date(cov.ai_analyzed_at).toLocaleString()}`}
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 16, textAlign: 'right' }}>
+          <div>
+            <div className="mono" style={{ fontSize: 18, color: cov.pct >= 50 ? 'var(--ok)' : cov.pct >= 25 ? 'var(--warn)' : 'var(--crit)', fontWeight: 700 }}>{cov.pct}%</div>
+            <div style={{ fontSize: 10, color: 'var(--fg-3)' }}>Coverage</div>
+          </div>
+          <div>
+            <div className="mono" style={{ fontSize: 18, color: 'var(--acc)', fontWeight: 700 }}>{cov.covered}</div>
+            <div style={{ fontSize: 10, color: 'var(--fg-3)' }}>Detected</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Log sources */}
+      {cov.log_sources?.length > 0 && (
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 10, color: 'var(--fg-3)', fontFamily: 'var(--mono)', letterSpacing: '0.06em', marginBottom: 6 }}>ACTIVE LOG SOURCES</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+            {cov.log_sources.map(s => (
+              <span key={s} className="chip chip-mono" style={{ fontSize: 10, padding: '2px 8px', background: 'rgba(0,229,255,0.08)', border: '1px solid rgba(0,229,255,0.2)', borderRadius: 3, color: 'var(--acc)' }}>{s}</span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Tab navigation */}
+      {hasTabs && (
+        <div className="seg" style={{ marginBottom: 14 }}>
+          <button className={`seg-btn ${tab === 'tactic' ? 'on' : ''}`} style={{ fontSize: 10 }} onClick={() => setTab('tactic')}>Tactic Breakdown</button>
+          {ai?.gap_analysis?.length > 0 && (
+            <button className={`seg-btn ${tab === 'gaps' ? 'on' : ''}`} style={{ fontSize: 10 }} onClick={() => setTab('gaps')}>Top Gaps ({ai.gap_analysis.length})</button>
+          )}
+          {ai?.recommendations?.length > 0 && (
+            <button className={`seg-btn ${tab === 'recs' ? 'on' : ''}`} style={{ fontSize: 10 }} onClick={() => setTab('recs')}>Recommendations ({ai.recommendations.length})</button>
+          )}
+          {cov.unmapped_audit && (
+            <button className={`seg-btn ${tab === 'unmapped' ? 'on' : ''}`} style={{ fontSize: 10 }} onClick={() => setTab('unmapped')}>
+              Unmapped Rules ({cov.unmapped_audit.total_unmapped?.toLocaleString()})
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Tactic breakdown (always shown if no AI yet) */}
+      {(tab === 'tactic' || !hasTabs) && (
+        <div>
+          {(cov.tactic_breakdown || []).map(t => (
+            <div key={t.id} style={{ marginBottom: 8 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2 }}>
+                <span style={{ fontSize: 11, fontFamily: 'var(--mono)', color: 'var(--fg)' }}>{t.name}</span>
+                <span className="mono" style={{ fontSize: 11, color: t.pct >= 50 ? 'var(--ok)' : t.pct >= 25 ? 'var(--warn)' : 'var(--crit)' }}>
+                  {t.covered}/{t.total} · {t.pct}%
+                </span>
+              </div>
+              <div style={{ height: 5, background: 'rgba(255,255,255,0.06)', borderRadius: 3, overflow: 'hidden' }}>
+                <div style={{
+                  height: '100%', borderRadius: 3, width: `${t.pct}%`,
+                  background: t.pct >= 50 ? 'var(--ok)' : t.pct >= 25 ? 'var(--warn)' : 'var(--crit)',
+                  transition: 'width 0.4s ease',
+                }} />
+              </div>
+            </div>
+          ))}
+          {!hasTabs && (
+            <div style={{ marginTop: 12, padding: '10px 14px', background: 'rgba(0,229,255,0.05)', border: '1px solid rgba(0,229,255,0.15)', borderRadius: 6, fontSize: 11, color: 'var(--fg-2)' }}>
+              Go to <strong>ATT&CK Coverage</strong> page and run <strong>AI Analysis</strong> to get gap explanations and detection recommendations.
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Priority gaps */}
+      {tab === 'gaps' && ai?.gap_analysis?.length > 0 && (
+        <table className="data-table" style={{ fontSize: 11 }}>
+          <thead><tr><th>TECHNIQUE</th><th>WHY MISSING</th><th>DETECTION OPPORTUNITY</th></tr></thead>
+          <tbody>
+            {ai.gap_analysis.map(g => (
+              <tr key={g.id}>
+                <td>
+                  <span className="mono" style={{ color: 'var(--crit)', marginRight: 6 }}>{g.id}</span>
+                  <span style={{ color: 'var(--fg-2)' }}>{g.name}</span>
+                </td>
+                <td style={{ fontSize: 10, color: 'var(--fg-3)', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.why_missing || '—'}</td>
+                <td style={{ fontSize: 10, color: 'var(--ok)', maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.detection_opportunity || '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      {/* Recommendations */}
+      {tab === 'recs' && ai?.recommendations?.length > 0 && (
+        <div>
+          {['quick_win', 'medium_effort', 'strategic'].map(effort => {
+            const recs = ai.recommendations.filter(r => r.effort === effort);
+            if (!recs.length) return null;
+            return (
+              <div key={effort} style={{ marginBottom: 16 }}>
+                <div className="mono" style={{ fontSize: 10, color: EFFORT_COLOR[effort], letterSpacing: '0.06em', marginBottom: 8 }}>
+                  {EFFORT_LABEL[effort]} ({recs.length})
+                </div>
+                {recs.map((r, i) => (
+                  <div key={i} style={{
+                    marginBottom: 8, padding: '10px 14px',
+                    background: 'var(--bg-2)',
+                    borderLeft: `3px solid ${EFFORT_COLOR[effort]}`,
+                    borderRadius: 4,
+                  }}>
+                    <div style={{ fontWeight: 600, fontSize: 12, color: 'var(--fg)', marginBottom: 3 }}>{r.title}</div>
+                    <div style={{ fontSize: 11, color: 'var(--ok)', marginBottom: 4 }}>{r.impact}</div>
+                    <div style={{ fontSize: 11, color: 'var(--fg-3)', marginBottom: r.techniques_covered?.length ? 6 : 0 }}>{r.steps}</div>
+                    {r.techniques_covered?.length > 0 && (
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+                        {r.techniques_covered.map(t => (
+                          <span key={t} className="mono" style={{ fontSize: 9, padding: '1px 5px', background: 'rgba(0,229,255,0.06)', border: '1px solid rgba(0,229,255,0.15)', borderRadius: 2, color: 'var(--acc)' }}>{t}</span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Unmapped rules */}
+      {tab === 'unmapped' && cov.unmapped_audit && (
+        <div>
+          <div style={{ marginBottom: 12, padding: '8px 12px', background: 'rgba(255,152,0,0.06)', border: '1px solid rgba(255,152,0,0.2)', borderRadius: 6, fontSize: 11, color: 'var(--fg-2)' }}>
+            <span className="mono" style={{ color: 'var(--warn)' }}>{cov.unmapped_audit.total_unmapped?.toLocaleString()}</span> alerts have no <span className="mono" style={{ color: 'var(--warn)' }}>rule.mitre.id</span> tag.
+            These rules need MITRE mapping in your Wazuh ruleset to improve real coverage.
+          </div>
+          <table className="data-table" style={{ fontSize: 11 }}>
+            <thead><tr><th>RULE ID</th><th>LEVEL</th><th>SEV</th><th>LOG SOURCE</th><th>ALERTS</th><th>DESCRIPTION</th></tr></thead>
+            <tbody>
+              {(cov.unmapped_audit.top_rules || []).map(r => (
+                <tr key={r.id}>
+                  <td className="mono" style={{ color: 'var(--warn)' }}>{r.id}</td>
+                  <td className="mono">{r.level}</td>
+                  <td><SevChip sev={r.severity} /></td>
+                  <td className="mono" style={{ color: 'var(--acc)' }}>{r.decoder}</td>
+                  <td className="mono">{r.count?.toLocaleString()}</td>
+                  <td style={{ maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.description}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
   );
 }
 
