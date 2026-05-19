@@ -229,7 +229,7 @@ ul { list-style: none; }
 .chip[data-tone="crit"]{ color: var(--crit); border-color: oklch(0.40 0.12 22 / 0.5); }
 
 /* Severity primitives */
-.sev-dot { display: inline-block; border-radius: 50%; flex-shrink: 0; }
+.sev-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 .sev-dot[data-sev="critical"] { background: var(--crit); box-shadow: 0 0 6px oklch(0.68 0.20 22 / 0.6); }
 .sev-dot[data-sev="high"]     { background: var(--high); }
 .sev-dot[data-sev="medium"]   { background: var(--med); }

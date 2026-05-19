@@ -468,9 +468,10 @@ function MapSVG({ world, countryPaths, proj, w, h, origins, targets, tick, highl
         );
       })}
 
-      {/* Origin pulses */}
+      {/* Origin pulses — log-scaled so high-volume counts don't blow up the
+          map. With count=10 → r≈8, count=1000 → r≈15, count=10000 → r≈18 */}
       {oPts.map(o => {
-        const r = 3 + (o.count / 50) * 6;
+        const r = Math.max(3, Math.min(18, 3 + Math.log2((o.count || 1) + 1) * 1.5));
         const sevColor = SEV_COLOR[o.sev];
         const isHi = highlight === o.country;
         return (
@@ -478,13 +479,13 @@ function MapSVG({ world, countryPaths, proj, w, h, origins, targets, tick, highl
              onMouseEnter={() => onHover(o.country)}
              onMouseLeave={() => onHover(null)}
              style={{cursor: 'pointer'}}>
-            <circle cx={o.p[0]} cy={o.p[1]} r={r * 2.2}
+            <circle cx={o.p[0]} cy={o.p[1]} r={r * 1.8}
               fill={sevColor} opacity={isHi ? 0.22 : 0.12}>
-              <animate attributeName="r" values={`${r};${r*3};${r}`} dur="2.6s" repeatCount="indefinite"/>
-              <animate attributeName="opacity" values="0.25;0;0.25" dur="2.6s" repeatCount="indefinite"/>
+              <animate attributeName="r" values={`${r * 1.2};${r * 2.4};${r * 1.2}`} dur="2.6s" repeatCount="indefinite"/>
+              <animate attributeName="opacity" values="0.28;0;0.28" dur="2.6s" repeatCount="indefinite"/>
             </circle>
             <circle cx={o.p[0]} cy={o.p[1]} r={r} fill={sevColor} filter="url(#glow)"/>
-            <circle cx={o.p[0]} cy={o.p[1]} r={Math.max(1, r * 0.5)} fill="#fff" opacity="0.9"/>
+            <circle cx={o.p[0]} cy={o.p[1]} r={Math.max(1, r * 0.45)} fill="#fff" opacity="0.9"/>
             {isHi && (
               <g>
                 <text x={o.p[0] + r + 6} y={o.p[1] - 3} className="map-real-label"
