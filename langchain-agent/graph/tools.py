@@ -169,7 +169,7 @@ def tool_query_knowledge_base(query: str) -> Dict[str, Any]:
         prefix = "Represent this sentence for searching relevant passages: "
         r = _sync_client.post(
             f"{RAG_URL}/retrieve",
-            json={"query": prefix + query, "top_k": 5},
+            json={"query": prefix + query, "limit": 5},
             headers=headers,
         )
         if r.status_code == 200:
