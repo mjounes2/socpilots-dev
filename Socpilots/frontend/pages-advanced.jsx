@@ -1904,122 +1904,860 @@ function PageLogSources() {
 }
 
 // ============= PAGE INVESTIGATION =============
-function PageInvestigation() {
-  const [step, setStep]         = useStateADV(1);
-  const [target, setTarget]     = useStateADV('');
-  const [scope, setScope]       = useStateADV('host');
-  const [context, setContext]   = useStateADV('');
-  const [output, setOutput]     = useStateADV('');
-  const [streaming, setStream]  = useStateADV(false);
-  const [past, setPast]         = useStateADV([]);
+// Deep Investigation Modal — multi-source correlation + enrichment + remediation
+function DeepInvModal({ alert, onClose }) {
+  const [phase, setPhase]           = useStateADV('idle');  // idle | running | done | error
+  const [result, setResult]         = useStateADV(null);
+  const [activeTab, setActiveTab]   = useStateADV('report');
+  const [streaming, setStreaming]   = useStateADV(false);
+  const [liveText, setLiveText]     = useStateADV('');
+
+  const PHASES = ['Correlating SIEM events','Enriching IOCs','Querying UEBA','Checking TheHive','Building verdict'];
+  const [phaseIdx, setPhaseIdx]     = useStateADV(0);
 
   useEffectADV(() => {
-    window.SOC_API.get('/api/investigations?page=1&page_size=10').then(d => {
-      const arr = d?.items || d?.investigations || [];
-      setPast(arr);
+    if (!alert) return;
+    setPhase('running');
+    setPhaseIdx(0);
+    setLiveText('');
+
+    // Advance phase labels every ~8s for UX
+    let idx = 0;
+    const phaseTimer = setInterval(() => {
+      idx = Math.min(idx + 1, PHASES.length - 1);
+      setPhaseIdx(idx);
+    }, 8000);
+
+    const body = {
+      alert,
+      prompt: `Deep investigation required. Perform comprehensive multi-step analysis of this alert.
+Alert: Rule ${alert.ruleId} (level ${alert.level}) on agent ${alert.agent}.
+Description: ${alert.description}
+Source IP: ${alert.srcIp || 'N/A'}
+MITRE: ${(alert.mitre||[]).join(', ') || 'N/A'}
+Timestamp: ${alert.timestamp}
+
+Provide: 1) Executive summary 2) IOC enrichment from VirusTotal/AbuseIPDB/Shodan 3) UEBA behavior context 4) Lateral movement indicators 5) Specific remediation steps 6) Wazuh rule recommendations 7) Risk score with confidence. Use markdown tables.`,
+      session_id: `deep_${Date.now()}`,
+      deep_mode: true,
+    };
+
+    window.SOC_API.post('/api/ai/investigate', body).then(d => {
+      clearInterval(phaseTimer);
+      if (d?.error) { setPhase('error'); setResult({ error: d.error }); return; }
+      setResult(d);
+      setPhase('done');
+    }).catch(e => {
+      clearInterval(phaseTimer);
+      setPhase('error');
+      setResult({ error: e?.message || 'Deep investigation failed' });
     });
+
+    return () => clearInterval(phaseTimer);
+  }, [alert]);
+
+  const sv = result?.structured;
+  const tabs = ['report','verdict','ioc','remediation'];
+  const tabLabel = { report: 'Full Report', verdict: 'Verdict', ioc: 'IOC Enrichment', remediation: 'Remediation' };
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,.85)', zIndex: 9000,
+      display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+    }} onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div style={{
+        background: 'var(--bg2)', border: '1px solid var(--b2)', borderRadius: 10,
+        width: '100%', maxWidth: 900, maxHeight: '90vh', display: 'flex', flexDirection: 'column',
+        boxShadow: '0 0 60px rgba(0,229,255,.15)',
+      }}>
+        {/* Header */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '16px 20px', borderBottom: '1px solid var(--b2)' }}>
+          <Icon.brain width="18" height="18" style={{ color: 'var(--acc)' }}/>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontFamily: 'var(--fw)', fontWeight: 700, fontSize: '1rem', color: 'var(--txt)' }}>
+              Deep Investigation
+            </div>
+            <div className="mono dim" style={{ fontSize: '0.75rem' }}>
+              Rule {alert?.ruleId} · {alert?.agent} · {alert?.srcIp || 'No IP'}
+            </div>
+          </div>
+          {alert && <SevChip sev={alert.severity || 'high'} />}
+          <button className="btn btn-ghost" onClick={onClose} style={{ padding: '4px 10px', fontSize: '0.8rem' }}>✕ Close</button>
+        </div>
+
+        {/* Running state */}
+        {phase === 'running' && (
+          <div style={{ padding: 40, textAlign: 'center' }}>
+            <div className="thinking" style={{ justifyContent: 'center', marginBottom: 16 }}>
+              <span/><span/><span/>
+            </div>
+            <div className="mono" style={{ color: 'var(--acc)', fontSize: '0.9rem', marginBottom: 8 }}>
+              {PHASES[phaseIdx]}…
+            </div>
+            <div style={{ display: 'flex', gap: 6, justifyContent: 'center', marginTop: 12 }}>
+              {PHASES.map((p, i) => (
+                <div key={i} style={{
+                  width: 8, height: 8, borderRadius: '50%',
+                  background: i <= phaseIdx ? 'var(--acc)' : 'var(--b3)',
+                  transition: 'background .3s',
+                }} />
+              ))}
+            </div>
+            <div className="dim" style={{ fontSize: '0.75rem', marginTop: 16 }}>
+              Deep mode runs up to 8 AI tool calls — this may take 1–3 minutes
+            </div>
+          </div>
+        )}
+
+        {/* Error state */}
+        {phase === 'error' && (
+          <div style={{ padding: 32, textAlign: 'center' }}>
+            <div style={{ color: 'var(--r)', marginBottom: 8, fontWeight: 600 }}>Investigation Failed</div>
+            <div className="mono dim" style={{ fontSize: '0.82rem' }}>{result?.error}</div>
+            <button className="btn btn-ghost" onClick={onClose} style={{ marginTop: 16 }}>Close</button>
+          </div>
+        )}
+
+        {/* Done — tabs */}
+        {phase === 'done' && result && (
+          <>
+            {/* Tab bar */}
+            <div style={{ display: 'flex', gap: 0, borderBottom: '1px solid var(--b2)', padding: '0 20px' }}>
+              {tabs.map(t => (
+                <button key={t} onClick={() => setActiveTab(t)} style={{
+                  background: 'none', border: 'none', cursor: 'pointer', padding: '10px 16px',
+                  fontFamily: 'var(--fw)', fontSize: '0.82rem', fontWeight: 600,
+                  color: activeTab === t ? 'var(--acc)' : 'var(--txt2)',
+                  borderBottom: activeTab === t ? '2px solid var(--acc)' : '2px solid transparent',
+                  marginBottom: -1,
+                }}>
+                  {tabLabel[t]}
+                </button>
+              ))}
+            </div>
+
+            <div style={{ flex: 1, overflowY: 'auto', padding: 20 }}>
+              {/* Full Report tab */}
+              {activeTab === 'report' && (
+                <div className="inv-output" style={{ maxHeight: 'none' }}>
+                  <div dangerouslySetInnerHTML={{ __html: window.renderMd ? window.renderMd(result.response || '') : (result.response || '') }} />
+                </div>
+              )}
+
+              {/* Verdict tab */}
+              {activeTab === 'verdict' && sv && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 12 }}>
+                    {[
+                      { label: 'Verdict', value: (sv.verdict||'unknown').replace('_',' ').toUpperCase(), color: sv.verdict === 'true_positive' ? 'var(--r)' : sv.verdict === 'false_positive' ? 'var(--g)' : 'var(--o)' },
+                      { label: 'Confidence', value: `${sv.confidence||0}%`, color: 'var(--acc)' },
+                      { label: 'FP Probability', value: `${sv.fp_probability||0}%`, color: 'var(--y)' },
+                      { label: 'Risk Score', value: sv.risk_score || 'N/A', color: 'var(--o)' },
+                      { label: 'MITRE Technique', value: sv.mitre_technique || 'N/A', color: 'var(--acc)' },
+                      { label: 'Investigation ID', value: `#${result.investigation_id || '—'}`, color: 'var(--txt2)' },
+                    ].map(({ label, value, color }) => (
+                      <div key={label} style={{ background: 'var(--bg)', border: '1px solid var(--b2)', borderRadius: 8, padding: 14 }}>
+                        <div className="dim" style={{ fontSize: '0.72rem', marginBottom: 4 }}>{label}</div>
+                        <div className="mono" style={{ color, fontWeight: 700, fontSize: '1rem' }}>{value}</div>
+                      </div>
+                    ))}
+                  </div>
+                  {sv.recommended_actions?.length > 0 && (
+                    <div style={{ background: 'var(--bg)', border: '1px solid var(--b2)', borderRadius: 8, padding: 14 }}>
+                      <div className="dim" style={{ fontSize: '0.75rem', marginBottom: 8 }}>Recommended Actions</div>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                        {sv.recommended_actions.map((a, i) => (
+                          <span key={i} className="mono" style={{
+                            background: 'rgba(0,229,255,.1)', color: 'var(--acc)',
+                            border: '1px solid rgba(0,229,255,.2)', borderRadius: 4, padding: '3px 8px', fontSize: '0.78rem',
+                          }}>{a}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+              {activeTab === 'verdict' && !sv && (
+                <div className="inv-output">
+                  <div dangerouslySetInnerHTML={{ __html: window.renderMd ? window.renderMd(result.response || '') : '' }} />
+                </div>
+              )}
+
+              {/* IOC Enrichment tab */}
+              {activeTab === 'ioc' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  <div style={{ color: 'var(--txt2)', fontSize: '0.8rem', marginBottom: 4 }}>
+                    IOC enrichment data from VirusTotal, AbuseIPDB, Shodan, and OTX is embedded in the full report.
+                  </div>
+                  {alert?.srcIp && (
+                    <div style={{ background: 'var(--bg)', border: '1px solid var(--b2)', borderRadius: 8, padding: 14 }}>
+                      <div className="dim" style={{ fontSize: '0.72rem', marginBottom: 6 }}>Source IP</div>
+                      <div className="mono" style={{ color: 'var(--acc)', fontSize: '0.9rem' }}>{alert.srcIp}</div>
+                    </div>
+                  )}
+                  {(alert?.mitre||[]).length > 0 && (
+                    <div style={{ background: 'var(--bg)', border: '1px solid var(--b2)', borderRadius: 8, padding: 14 }}>
+                      <div className="dim" style={{ fontSize: '0.72rem', marginBottom: 6 }}>MITRE ATT&CK</div>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                        {(alert.mitre||[]).map(t => (
+                          <span key={t} className="mono" style={{
+                            background: 'rgba(255,152,0,.12)', color: 'var(--o)',
+                            border: '1px solid rgba(255,152,0,.25)', borderRadius: 4, padding: '3px 8px', fontSize: '0.78rem',
+                          }}>{t}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  <div className="inv-output" style={{ maxHeight: 'none' }}>
+                    <div dangerouslySetInnerHTML={{ __html: window.renderMd ? window.renderMd(result.response || '') : '' }} />
+                  </div>
+                </div>
+              )}
+
+              {/* Remediation tab */}
+              {activeTab === 'remediation' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  <div style={{ background: 'rgba(255,23,68,.07)', border: '1px solid rgba(255,23,68,.2)', borderRadius: 8, padding: 14 }}>
+                    <div style={{ color: 'var(--r)', fontWeight: 600, fontSize: '0.85rem', marginBottom: 4 }}>Immediate Actions Required</div>
+                    <div className="dim" style={{ fontSize: '0.8rem' }}>
+                      Review the full report for detailed remediation steps. Actions listed are AI-generated recommendations based on the investigation context.
+                    </div>
+                  </div>
+                  {sv?.recommended_actions?.length > 0 && (
+                    <div style={{ background: 'var(--bg)', border: '1px solid var(--b2)', borderRadius: 8, padding: 14 }}>
+                      <div className="dim" style={{ fontSize: '0.75rem', marginBottom: 8 }}>Playbook Actions</div>
+                      {sv.recommended_actions.map((a, i) => (
+                        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderBottom: i < sv.recommended_actions.length-1 ? '1px solid var(--b2)' : 'none' }}>
+                          <span style={{ color: 'var(--acc)', fontFamily: 'var(--fm)', fontSize: '0.8rem' }}>{i+1}.</span>
+                          <span className="mono" style={{ fontSize: '0.82rem' }}>{a}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div className="inv-output" style={{ maxHeight: 'none' }}>
+                    <div dangerouslySetInnerHTML={{ __html: window.renderMd ? window.renderMd(result.response || '') : '' }} />
+                  </div>
+                </div>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Live alert row for the LIVE ALERTS tab
+function LiveAlertRow({ alert, onDeepInv }) {
+  const sev = alert.severity || (alert.level >= 12 ? 'critical' : alert.level >= 9 ? 'high' : alert.level >= 6 ? 'medium' : 'low');
+  return (
+    <tr>
+      <td><SevChip sev={sev} /></td>
+      <td className="mono" style={{ fontSize: '0.78rem', color: 'var(--txt2)' }}>{alert.ruleId || '—'}</td>
+      <td className="mono" style={{ maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{alert.description || '—'}</td>
+      <td className="mono" style={{ fontSize: '0.8rem' }}>{alert.agent || '—'}</td>
+      <td className="mono dim" style={{ fontSize: '0.77rem' }}>{alert.srcIp || '—'}</td>
+      <td className="mono dim" style={{ fontSize: '0.77rem', whiteSpace: 'nowrap' }}>
+        {alert.timestamp ? window.SOC_API.relTs(alert.timestamp) : '—'}
+      </td>
+      <td>
+        <button className="btn btn-ghost" style={{ padding: '3px 8px', fontSize: '0.75rem' }}
+          onClick={() => onDeepInv(alert)}>
+          <Icon.brain width="11" height="11"/> Deep
+        </button>
+      </td>
+    </tr>
+  );
+}
+
+function PageInvestigation() {
+  // ── Tab & layout state ──
+  const [tab, setTab]               = useStateADV('history'); // 'live' | 'history' | 'launch'
+
+  // ── Auto-triage settings ──
+  const [autoEnabled, setAutoEn]    = useStateADV(false);
+  const [minLevel, setMinLevel]     = useStateADV('12');      // stored as string for settings API
+  const [settingsSaving, setSaving] = useStateADV(false);
+  const [isAdmin, setIsAdmin]       = useStateADV(false);
+
+  // ── KPI stats ──
+  const [invStats, setInvStats]     = useStateADV(null);
+  const [queueStats, setQueueStats] = useStateADV(null);
+
+  // ── Live alerts tab ──
+  const [liveAlerts, setLiveAlerts] = useStateADV([]);
+  const [liveLoading, setLiveLoad]  = useStateADV(false);
+  const [liveSev, setLiveSev]       = useStateADV('');        // severity filter
+  const [liveHours, setLiveHours]   = useStateADV('1');
+
+  // ── History tab ──
+  const [history, setHistory]       = useStateADV([]);
+  const [histTotal, setHistTotal]   = useStateADV(0);
+  const [histPage, setHistPage]     = useStateADV(1);
+  const [histLoading, setHistLoad]  = useStateADV(false);
+  const [histErr, setHistErr]       = useStateADV(null);
+  const [histSev, setHistSev]       = useStateADV('');
+  const [histQ, setHistQ]           = useStateADV('');
+  const [histFrom, setHistFrom]     = useStateADV('');
+  const [histTo, setHistTo]         = useStateADV('');
+  const HIST_PAGE_SIZE = 25;
+
+  // ── Launch tab ──
+  const [target, setTarget]         = useStateADV('');
+  const [scope, setScope]           = useStateADV('host');
+  const [context, setContext]       = useStateADV('');
+  const [output, setOutput]         = useStateADV('');
+  const [streaming, setStream]      = useStateADV(false);
+  const [launchDeep, setLaunchDeep] = useStateADV(false);
+
+  // ── Deep investigation modal ──
+  const [deepAlert, setDeepAlert]   = useStateADV(null);
+
+  // ── Selected investigation detail modal ──
+  const [detailInv, setDetailInv]   = useStateADV(null);
+  const [detailLoad, setDetailLoad] = useStateADV(false);
+
+  // ── Load settings & stats on mount ──
+  useEffectADV(() => {
+    // Determine if admin from token context
+    window.SOC_API.get('/api/settings').then(s => {
+      if (!s) return;
+      setAutoEn(s.auto_triage_enabled === 'true');
+      setMinLevel(s.auto_triage_min_level || '12');
+    });
+
+    // Check role
+    window.SOC_API.get('/api/me').then(p => {
+      if (p?.role === 'admin' || p?.role === 'l3') setIsAdmin(true);
+    }).catch(() => {});
+
+    refreshStats();
   }, []);
 
+  function refreshStats() {
+    window.SOC_API.get('/api/triage-queue/stats').then(s => setQueueStats(s)).catch(() => {});
+    window.SOC_API.get('/api/investigations?page=1&page_size=1').then(d => {
+      if (d?.stats) setInvStats(d.stats);
+    }).catch(() => {});
+  }
+
+  // ── Auto-refresh stats every 30s ──
+  useEffectADV(() => {
+    const t = setInterval(refreshStats, 30000);
+    return () => clearInterval(t);
+  }, []);
+
+  // ── Load history whenever filters/page changes ──
+  useEffectADV(() => {
+    if (tab !== 'history') return;
+    loadHistory();
+  }, [tab, histPage, histSev, histFrom, histTo]);
+
+  function loadHistory() {
+    setHistLoad(true);
+    setHistErr(null);
+    const params = new URLSearchParams({
+      page: histPage,
+      page_size: HIST_PAGE_SIZE,
+      ...(histSev  ? { severity: histSev } : {}),
+      ...(histQ    ? { q: histQ }          : {}),
+      ...(histFrom ? { time_from: histFrom } : {}),
+      ...(histTo   ? { time_to: histTo }     : {}),
+      sort_by: 'created_at',
+      sort_dir: 'desc',
+    });
+    window.SOC_API.get(`/api/investigations?${params}`).then(d => {
+      if (!d || d.error) {
+        setHistErr(d?.error || 'Failed to load investigation history');
+        setHistory([]);
+        setHistTotal(0);
+      } else {
+        const arr = d.items || d.investigations || (Array.isArray(d) ? d : []);
+        setHistory(arr);
+        setHistTotal(d.total || arr.length);
+      }
+      setHistLoad(false);
+    }).catch(e => {
+      setHistErr('Network error: ' + (e?.message || 'unknown'));
+      setHistLoad(false);
+    });
+  }
+
+  // ── Load live alerts ──
+  useEffectADV(() => {
+    if (tab !== 'live') return;
+    loadLiveAlerts();
+  }, [tab, liveHours, liveSev]);
+
+  function loadLiveAlerts() {
+    setLiveLoad(true);
+    const params = new URLSearchParams({
+      page: 1, page_size: 50, hours: liveHours,
+      ...(liveSev ? { severity: liveSev } : {}),
+      sort_by: 'timestamp', sort_dir: 'desc',
+    });
+    window.SOC_API.get(`/api/alerts?${params}`).then(d => {
+      const arr = d?.items || d?.alerts || (Array.isArray(d) ? d : []);
+      setLiveAlerts(arr);
+      setLiveLoad(false);
+    }).catch(() => setLiveLoad(false));
+  }
+
+  // ── Save auto-triage settings ──
+  async function saveTriageSettings() {
+    setSaving(true);
+    try {
+      await window.SOC_API.post('/api/settings', {
+        auto_triage_enabled: String(autoEnabled),
+        auto_triage_min_level: String(minLevel),
+      });
+      window.socToast?.({ title: autoEnabled ? 'Auto-Triage Enabled' : 'Auto-Triage Disabled', sub: `Min level: ${minLevel}`, tone: autoEnabled ? 'ok' : 'warn' });
+    } catch(e) {
+      window.socToast?.({ title: 'Save failed', sub: e?.message, tone: 'error' });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // ── Toggle auto-triage (admin only) ──
+  async function toggleAutoTriage() {
+    if (!isAdmin) return window.socToast?.({ title: 'Insufficient permissions', sub: 'Admin or L3 required', tone: 'error' });
+    const next = !autoEnabled;
+    setAutoEn(next);
+    setSaving(true);
+    try {
+      await window.SOC_API.post('/api/settings', {
+        auto_triage_enabled: String(next),
+        auto_triage_min_level: String(minLevel),
+      });
+      window.socToast?.({ title: next ? 'Auto-Triage Enabled' : 'Auto-Triage Disabled', sub: `Threshold: level ≥${minLevel}`, tone: next ? 'ok' : 'warn' });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // ── Change min level ──
+  async function changeMinLevel(val) {
+    setMinLevel(val);
+    if (!isAdmin) return;
+    try {
+      await window.SOC_API.post('/api/settings', { auto_triage_min_level: val });
+    } catch(e) { /* non-critical */ }
+  }
+
+  // ── Manual investigation (Launch tab) ──
   function launchInvestigation() {
-    if (!target.trim()) return;
-    setOutput('');
-    setStream(true);
+    if (!target.trim() && !launchDeep) return;
+    setOutput(''); setStream(true);
     const message = `Investigate ${scope}: ${target.trim()}${context ? '\n\nContext: ' + context : ''}`;
+    if (launchDeep) {
+      const fakeAlert = { ruleId: 'manual', level: 8, severity: 'high', agent: target.trim(), srcIp: '', description: context, mitre: [], timestamp: new Date().toISOString() };
+      setDeepAlert(fakeAlert);
+      setStream(false);
+      return;
+    }
     window.SOC_API.stream(
       '/api/ai/chat/stream',
       { message, history: [], session_id: `inv_${Date.now()}` },
-      (text) => setOutput(text),
-      (text) => { setOutput(text); setStream(false); }
+      txt => setOutput(txt),
+      txt => { setOutput(txt); setStream(false); loadHistory(); }
     ).catch(() => {
       setStream(false);
       window.socToast?.({ title: 'Investigation failed', sub: 'Could not reach AI engine', tone: 'error' });
     });
   }
 
-  function clearAll() {
-    setTarget(''); setScope('host'); setContext(''); setOutput(''); setStep(1); setStream(false);
+  // ── Open investigation detail ──
+  function openDetail(inv) {
+    setDetailLoad(true);
+    setDetailInv(inv);
+    window.SOC_API.get(`/api/investigations/${inv.id}`).then(d => {
+      if (d && !d.error) setDetailInv(d);
+      setDetailLoad(false);
+    }).catch(() => setDetailLoad(false));
   }
+
+  // ── KPI values ──
+  const kpi = {
+    critical:     parseInt(queueStats?.pending_critical || 0),
+    high:         parseInt(queueStats?.pending_high     || 0),
+    medium:       parseInt(queueStats?.pending_medium   || 0),
+    investigated: parseInt(invStats?.total || 0),
+    autoTriaged:  parseInt(invStats?.auto_triaged || 0),
+    last24h:      parseInt(invStats?.last_24h || 0),
+  };
+
+  const minLevelOptions = [
+    { val: '12', label: 'Critical only (≥12)' },
+    { val: '9',  label: 'High & above (≥9)' },
+    { val: '6',  label: 'Medium & above (≥6)' },
+    { val: '1',  label: 'All severities (≥1)' },
+  ];
 
   return (
     <div className="page">
       <Topbar
-        title="Investigation"
-        sub="AI-powered multi-step ReAct investigation"
+        title="AI Investigation"
+        sub="Deep AI analysis of alerts — autonomous triage, enrichment, and investigation workflow"
         actions={<>
-          <button className="btn btn-ghost" onClick={clearAll}>Clear</button>
-          <button className="btn btn-primary" onClick={() => { setStep(1); setOutput(''); }}>
+          <button className="btn btn-ghost" onClick={refreshStats}>↻ Refresh</button>
+          <button className="btn btn-primary" onClick={() => setTab('launch')}>
             <Icon.plus width="13" height="13"/> New Investigation
           </button>
         </>}
       />
+
       <div className="page-body">
-        <Card title="Launch Investigation" sub="step-by-step target definition">
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            <div>
-              <div className="card-sub" style={{ marginBottom: 6 }}>Step 1 — Target &amp; Scope</div>
+        {/* ── AUTO-TRIAGE CONTROL BAR ── */}
+        <div style={{
+          background: 'var(--bg2)', border: '1px solid var(--b2)', borderRadius: 10,
+          padding: '14px 20px', display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap',
+        }}>
+          {/* Toggle */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <button
+              onClick={toggleAutoTriage}
+              disabled={settingsSaving}
+              title={isAdmin ? undefined : 'Admin/L3 role required'}
+              style={{
+                background: autoEnabled ? 'rgba(0,230,118,.15)' : 'rgba(255,23,68,.1)',
+                border: `1px solid ${autoEnabled ? 'rgba(0,230,118,.4)' : 'rgba(255,23,68,.3)'}`,
+                borderRadius: 20, padding: '6px 16px', cursor: isAdmin ? 'pointer' : 'not-allowed',
+                display: 'flex', alignItems: 'center', gap: 8, transition: 'all .2s',
+              }}>
+              <span style={{ width: 10, height: 10, borderRadius: '50%', background: autoEnabled ? 'var(--g)' : 'var(--r)', display: 'inline-block', boxShadow: autoEnabled ? '0 0 6px var(--g)' : 'none' }}/>
+              <span className="mono" style={{ fontSize: '0.82rem', fontWeight: 700, color: autoEnabled ? 'var(--g)' : 'var(--r)' }}>
+                AUTO-TRIAGE {autoEnabled ? 'ENABLED' : 'DISABLED'}
+              </span>
+            </button>
+          </div>
+
+          {/* Min severity */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span className="dim" style={{ fontSize: '0.78rem' }}>MIN SEVERITY</span>
+            <select
+              className="select-mini mono"
+              value={minLevel}
+              onChange={e => changeMinLevel(e.target.value)}
+              disabled={!isAdmin}
+              style={{ background: 'var(--bg)', borderColor: 'var(--b2)', fontSize: '0.8rem' }}>
+              {minLevelOptions.map(o => <option key={o.val} value={o.val}>{o.label}</option>)}
+            </select>
+          </div>
+
+          {/* Feeder / processor status */}
+          <div className="mono dim" style={{ fontSize: '0.75rem', marginLeft: 'auto' }}>
+            Feeder 60s · Processor 15s
+            {queueStats && (
+              <span style={{ marginLeft: 10, color: 'var(--acc)' }}>
+                · Queue: {queueStats.pending} pending · {queueStats.processing} processing
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* ── KPI CARDS ── */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6,1fr)', gap: 10 }}>
+          <div className="kpi cr">
+            <div className="kpi-val mono">{kpi.critical || '—'}</div>
+            <div className="kpi-lbl">CRITICAL ALERTS</div>
+            <div className="kpi-sub">pending · level≥12</div>
+          </div>
+          <div className="kpi co">
+            <div className="kpi-val mono">{kpi.high || '—'}</div>
+            <div className="kpi-lbl">HIGH ALERTS</div>
+            <div className="kpi-sub">pending · level 9-11</div>
+          </div>
+          <div className="kpi" style={{ background: 'rgba(255,193,7,.06)', border: '1px solid rgba(255,193,7,.15)' }}>
+            <div className="kpi-val mono" style={{ color: 'var(--y)' }}>{kpi.medium || '—'}</div>
+            <div className="kpi-lbl">MEDIUM ALERTS</div>
+            <div className="kpi-sub">pending · level 6-8</div>
+          </div>
+          <div className="kpi cl">
+            <div className="kpi-val mono">{kpi.investigated}</div>
+            <div className="kpi-lbl">INVESTIGATED</div>
+            <div className="kpi-sub">total saved</div>
+          </div>
+          <div className="kpi cg">
+            <div className="kpi-val mono">{kpi.autoTriaged}</div>
+            <div className="kpi-lbl">AUTO-TRIAGED</div>
+            <div className="kpi-sub">by AI engine</div>
+          </div>
+          <div className="kpi cp">
+            <div className="kpi-val mono">{kpi.last24h}</div>
+            <div className="kpi-lbl">LAST 24H</div>
+            <div className="kpi-sub">investigations</div>
+          </div>
+        </div>
+
+        {/* ── TABS ── */}
+        <div style={{ borderBottom: '1px solid var(--b2)', display: 'flex', gap: 0 }}>
+          {[
+            { id: 'live',    label: 'Live Alerts' },
+            { id: 'history', label: 'Investigation History' },
+            { id: 'launch',  label: 'Manual Investigation' },
+          ].map(t => (
+            <button key={t.id} onClick={() => setTab(t.id)} style={{
+              background: 'none', border: 'none', cursor: 'pointer',
+              padding: '10px 20px', fontFamily: 'var(--fw)', fontWeight: 600, fontSize: '0.85rem',
+              color: tab === t.id ? 'var(--acc)' : 'var(--txt2)',
+              borderBottom: tab === t.id ? '2px solid var(--acc)' : '2px solid transparent',
+              marginBottom: -1, transition: 'color .15s',
+            }}>{t.label}</button>
+          ))}
+        </div>
+
+        {/* ── LIVE ALERTS TAB ── */}
+        {tab === 'live' && (
+          <div style={{ background: 'var(--bg2)', border: '1px solid var(--b2)', borderRadius: 10, overflow: 'hidden' }}>
+            {/* Filters */}
+            <div style={{ display: 'flex', gap: 10, padding: '14px 16px', borderBottom: '1px solid var(--b2)', alignItems: 'center', flexWrap: 'wrap' }}>
+              <span style={{ fontFamily: 'var(--fw)', fontWeight: 700, fontSize: '0.85rem', color: 'var(--txt)', flex: 1 }}>
+                Live SIEM Alerts
+              </span>
+              <select className="select-mini mono" value={liveSev} onChange={e => setLiveSev(e.target.value)}>
+                <option value="">All Severities</option>
+                <option value="critical">Critical</option>
+                <option value="high">High</option>
+                <option value="medium">Medium</option>
+                <option value="low">Low</option>
+              </select>
+              <select className="select-mini mono" value={liveHours} onChange={e => setLiveHours(e.target.value)}>
+                <option value="1">Last 1h</option>
+                <option value="4">Last 4h</option>
+                <option value="24">Last 24h</option>
+              </select>
+              <button className="btn btn-ghost" style={{ fontSize: '0.78rem', padding: '4px 10px' }} onClick={loadLiveAlerts}>Refresh</button>
+            </div>
+            {liveLoading ? (
+              <div className="loading mono" style={{ padding: 32, textAlign: 'center' }}>Loading alerts…</div>
+            ) : liveAlerts.length === 0 ? (
+              <div className="empty mono" style={{ padding: 32, textAlign: 'center' }}>No alerts in selected window</div>
+            ) : (
+              <div style={{ overflowX: 'auto' }}>
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>SEV</th><th>RULE</th><th>DESCRIPTION</th><th>AGENT</th>
+                      <th>SRC IP</th><th>TIME</th><th>ACTION</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {liveAlerts.map((a, i) => (
+                      <LiveAlertRow key={a.id || i} alert={a} onDeepInv={a => setDeepAlert(a)} />
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── INVESTIGATION HISTORY TAB ── */}
+        {tab === 'history' && (
+          <div style={{ background: 'var(--bg2)', border: '1px solid var(--b2)', borderRadius: 10, overflow: 'hidden' }}>
+            {/* Filters */}
+            <div style={{ display: 'flex', gap: 10, padding: '14px 16px', borderBottom: '1px solid var(--b2)', alignItems: 'center', flexWrap: 'wrap' }}>
+              <span style={{ fontFamily: 'var(--fw)', fontWeight: 700, fontSize: '0.85rem', color: 'var(--txt)' }}>
+                Saved Investigations
+              </span>
+              <input
+                className="mono" placeholder="Search agent / rule / IP…"
+                value={histQ} onChange={e => { setHistQ(e.target.value); setHistPage(1); }}
+                style={{ flex: 1, minWidth: 180, maxWidth: 260 }}
+                onKeyDown={e => e.key === 'Enter' && loadHistory()}
+              />
+              <select className="select-mini mono" value={histSev} onChange={e => { setHistSev(e.target.value); setHistPage(1); }}>
+                <option value="">All Severities</option>
+                <option value="critical">Critical</option>
+                <option value="high">High</option>
+                <option value="medium">Medium</option>
+                <option value="low">Low</option>
+              </select>
+              <input type="date" className="mono" value={histFrom} onChange={e => { setHistFrom(e.target.value); setHistPage(1); }}
+                style={{ background: 'var(--bg)', border: '1px solid var(--b2)', borderRadius: 4, color: 'var(--txt)', padding: '4px 8px', fontSize: '0.78rem' }} />
+              <input type="date" className="mono" value={histTo} onChange={e => { setHistTo(e.target.value); setHistPage(1); }}
+                style={{ background: 'var(--bg)', border: '1px solid var(--b2)', borderRadius: 4, color: 'var(--txt)', padding: '4px 8px', fontSize: '0.78rem' }} />
+              <button className="btn btn-ghost" style={{ fontSize: '0.78rem', padding: '4px 10px' }} onClick={() => { setHistPage(1); loadHistory(); }}>Search</button>
+            </div>
+
+            {histErr && (
+              <div style={{ padding: '10px 16px', background: 'rgba(255,23,68,.08)', color: 'var(--r)', fontFamily: 'var(--fm)', fontSize: '0.8rem' }}>
+                {histErr}
+              </div>
+            )}
+
+            {histLoading ? (
+              <div className="loading mono" style={{ padding: 32, textAlign: 'center' }}>Loading investigations…</div>
+            ) : history.length === 0 && !histErr ? (
+              <div className="empty mono" style={{ padding: 32, textAlign: 'center' }}>No investigations yet. Auto-triage or launch a manual investigation above.</div>
+            ) : (
+              <>
+                <div style={{ overflowX: 'auto' }}>
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>#</th><th>SEV</th><th>RULE</th><th>AGENT</th><th>SRC IP</th>
+                        <th>MITRE</th><th>STATUS</th><th>MODE</th><th>CREATED</th><th></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {history.map((inv, i) => (
+                        <tr key={inv.id || i} style={{ cursor: 'pointer' }} onClick={() => openDetail(inv)}>
+                          <td className="mono dim" style={{ fontSize: '0.78rem' }}>#{inv.id}</td>
+                          <td><SevChip sev={inv.severity || 'medium'} /></td>
+                          <td className="mono" style={{ fontSize: '0.78rem', color: 'var(--acc)' }}>{inv.rule_id || '—'}</td>
+                          <td className="mono" style={{ fontSize: '0.8rem' }}>{inv.agent || '—'}</td>
+                          <td className="mono dim" style={{ fontSize: '0.77rem' }}>{inv.src_ip || '—'}</td>
+                          <td>
+                            {(Array.isArray(inv.mitre) ? inv.mitre : []).slice(0, 2).map(t => (
+                              <span key={t} className="mono" style={{ fontSize: '0.7rem', background: 'rgba(255,152,0,.1)', color: 'var(--o)', borderRadius: 3, padding: '1px 5px', marginRight: 3 }}>{t}</span>
+                            ))}
+                          </td>
+                          <td>
+                            <Chip mono tone={inv.status === 'closed' ? 'dim' : inv.tp_status === 'confirmed_tp' ? 'crit' : 'ok'}>
+                              {inv.tp_status === 'confirmed_tp' ? 'TP' : inv.tp_status === 'confirmed_fp' ? 'FP' : inv.status || 'open'}
+                            </Chip>
+                          </td>
+                          <td>
+                            {inv.deep_mode && <Chip mono tone="acc">deep</Chip>}
+                            {inv.auto_triaged && <Chip mono tone="dim">auto</Chip>}
+                          </td>
+                          <td className="mono dim" style={{ fontSize: '0.77rem', whiteSpace: 'nowrap' }}>
+                            {inv.created_at ? window.SOC_API.relTs(inv.created_at) : '—'}
+                          </td>
+                          <td onClick={e => e.stopPropagation()}>
+                            <button className="btn btn-ghost" style={{ padding: '3px 8px', fontSize: '0.73rem' }}
+                              onClick={() => setDeepAlert({
+                                ruleId: inv.rule_id, level: inv.level || 8,
+                                severity: inv.severity, agent: inv.agent, srcIp: inv.src_ip,
+                                description: inv.description, mitre: inv.mitre || [],
+                                timestamp: inv.created_at,
+                              })}>
+                              <Icon.brain width="10" height="10"/> Re-Investigate
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Pagination */}
+                {histTotal > HIST_PAGE_SIZE && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', borderTop: '1px solid var(--b2)' }}>
+                    <button className="btn btn-ghost" onClick={() => setHistPage(p => Math.max(1, p-1))} disabled={histPage <= 1} style={{ fontSize: '0.8rem', padding: '4px 10px' }}>← Prev</button>
+                    <span className="mono dim" style={{ fontSize: '0.78rem' }}>Page {histPage} · {histTotal} total</span>
+                    <button className="btn btn-ghost" onClick={() => setHistPage(p => p+1)} disabled={histPage * HIST_PAGE_SIZE >= histTotal} style={{ fontSize: '0.8rem', padding: '4px 10px' }}>Next →</button>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
+        {/* ── MANUAL INVESTIGATION TAB ── */}
+        {tab === 'launch' && (
+          <Card title="Launch Investigation" sub="Manual AI-driven investigation with optional deep mode">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               <div style={{ display: 'flex', gap: 8 }}>
                 <input className="mono" placeholder="IP / hostname / username / case ID" value={target}
-                  onChange={e => { setTarget(e.target.value); if (e.target.value.trim()) setStep(2); else setStep(1); }}
+                  onChange={e => setTarget(e.target.value)}
                   style={{ flex: 1 }} />
                 <select className="select-mini mono" value={scope} onChange={e => setScope(e.target.value)}>
                   {['host','user','network','full'].map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
               </div>
+
+              <textarea rows="3" value={context} onChange={e => setContext(e.target.value)}
+                placeholder="Context / hypothesis: e.g. possible C2 beacon, lateral movement from this host, vulnerability exploitation suspected…"
+                style={{ width: '100%', background: 'var(--bg2)', border: '1px solid var(--b2)', borderRadius: 6, padding: 10, color: 'var(--txt)', fontFamily: 'var(--fm)', fontSize: '0.82rem', resize: 'vertical' }} />
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                <button className="btn btn-primary" onClick={launchInvestigation} disabled={streaming || (!target.trim() && !launchDeep)}>
+                  <Icon.brain width="13" height="13"/> {streaming ? 'Investigating…' : 'Launch Investigation'}
+                </button>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={launchDeep} onChange={e => setLaunchDeep(e.target.checked)} />
+                  <span className="mono" style={{ fontSize: '0.8rem', color: launchDeep ? 'var(--acc)' : 'var(--txt2)' }}>
+                    Deep Mode (multi-step, 1–3 min)
+                  </span>
+                </label>
+                {output && <button className="btn btn-ghost" onClick={() => { setOutput(''); setStream(false); }} style={{ marginLeft: 'auto', fontSize: '0.78rem' }}>Clear</button>}
+              </div>
+
+              {streaming && !output && (
+                <div className="thinking" style={{ padding: '8px 0' }}>
+                  <span/><span/><span/>
+                  <span className="th-text mono">querying SIEM · enriching IOCs · analyzing behavior…</span>
+                </div>
+              )}
+
+              {output && (
+                <div className="inv-output">
+                  <div dangerouslySetInnerHTML={{ __html: window.renderMd ? window.renderMd(output) : output }} />
+                  {streaming && <span className="mono" style={{ color: 'var(--acc)', opacity: .7 }}> ▋</span>}
+                </div>
+              )}
+            </div>
+          </Card>
+        )}
+      </div>
+
+      {/* ── DEEP INVESTIGATION MODAL ── */}
+      {deepAlert && <DeepInvModal alert={deepAlert} onClose={() => { setDeepAlert(null); loadHistory(); }} />}
+
+      {/* ── INVESTIGATION DETAIL MODAL ── */}
+      {detailInv && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,.8)', zIndex: 8000,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+        }} onClick={e => { if (e.target === e.currentTarget) setDetailInv(null); }}>
+          <div style={{
+            background: 'var(--bg2)', border: '1px solid var(--b2)', borderRadius: 10,
+            width: '100%', maxWidth: 780, maxHeight: '88vh', display: 'flex', flexDirection: 'column',
+            boxShadow: '0 0 40px rgba(0,229,255,.12)',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 18px', borderBottom: '1px solid var(--b2)' }}>
+              <Icon.brain width="16" height="16" style={{ color: 'var(--acc)' }}/>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontFamily: 'var(--fw)', fontWeight: 700, fontSize: '0.95rem' }}>
+                  Investigation #{detailInv.id} — Rule {detailInv.rule_id}
+                </div>
+                <div className="mono dim" style={{ fontSize: '0.72rem' }}>{detailInv.agent} · {detailInv.src_ip || 'No IP'}</div>
+              </div>
+              <SevChip sev={detailInv.severity} />
+              <button className="btn btn-ghost" onClick={() => setDetailInv(null)} style={{ padding: '4px 10px', fontSize: '0.8rem' }}>✕</button>
             </div>
 
-            {step >= 2 && (
-              <div>
-                <div className="card-sub" style={{ marginBottom: 6 }}>Step 2 — Context (optional)</div>
-                <textarea rows="3" value={context} onChange={e => setContext(e.target.value)}
-                  placeholder="What do you suspect? e.g. possible C2 beacon, lateral movement from this host…"
-                  style={{ width: '100%', background: 'var(--bg2)', border: '1px solid var(--b2)', borderRadius: 6, padding: 10, color: 'var(--txt)', fontFamily: 'var(--fm)', fontSize: '0.82rem' }} />
-                <div style={{ marginTop: 8 }}>
-                  <button className="btn btn-primary" onClick={launchInvestigation} disabled={streaming}>
-                    <Icon.brain width="13" height="13"/> {streaming ? 'Investigating…' : 'Launch Investigation'}
-                  </button>
+            {detailLoad ? (
+              <div className="loading mono" style={{ padding: 32, textAlign: 'center' }}>Loading…</div>
+            ) : (
+              <div style={{ flex: 1, overflowY: 'auto', padding: 18 }}>
+                {detailInv.description && (
+                  <div style={{ marginBottom: 12, padding: 10, background: 'var(--bg)', borderRadius: 6, border: '1px solid var(--b2)' }}>
+                    <span className="dim" style={{ fontSize: '0.72rem' }}>Description: </span>
+                    <span className="mono" style={{ fontSize: '0.82rem' }}>{detailInv.description}</span>
+                  </div>
+                )}
+                <div className="inv-output">
+                  <div dangerouslySetInnerHTML={{ __html: window.renderMd ? window.renderMd(detailInv.report || 'No report available.') : (detailInv.report || '') }} />
                 </div>
-              </div>
-            )}
-
-            {streaming && !output && (
-              <div className="thinking" style={{ padding: '8px 0' }}>
-                <span/> <span/> <span/>
-                <span className="th-text mono">querying SIEM · enriching IOCs · analyzing behavior…</span>
-              </div>
-            )}
-
-            {output && (
-              <div className="inv-output">
-                <div dangerouslySetInnerHTML={{ __html: window.renderMd ? window.renderMd(output) : output }} />
-                {streaming && <span className="mono" style={{ color: 'var(--acc)', opacity: .7 }}> ▋</span>}
+                {detailInv.related?.length > 0 && (
+                  <div style={{ marginTop: 16 }}>
+                    <div className="dim" style={{ fontSize: '0.75rem', marginBottom: 6 }}>Related Investigations</div>
+                    {detailInv.related.map(r => (
+                      <div key={r.id} className="mono" style={{ fontSize: '0.78rem', padding: '4px 0', borderBottom: '1px solid var(--b2)', color: 'var(--txt2)' }}>
+                        #{r.id} — Rule {r.rule_id} · {r.agent} · {r.severity}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </div>
-        </Card>
-
-        <Card title="Past Investigations" sub="last 10">
-          {past.length === 0
-            ? <div className="empty mono" style={{ padding: 20 }}>No investigations yet. Launch one above.</div>
-            : <table className="data-table">
-                <thead><tr><th>ID</th><th>ALERT ID</th><th>TARGET</th><th>SEVERITY</th><th>STATUS</th><th>CREATED</th></tr></thead>
-                <tbody>
-                  {past.map((inv, i) => (
-                    <tr key={inv.id || i}>
-                      <td className="mono dim">#{inv.id || i + 1}</td>
-                      <td className="mono" style={{ fontSize: 10, color: 'var(--acc)', letterSpacing: '.04em', whiteSpace: 'nowrap' }}>
-                        {inv.alert_short_id || '—'}
-                      </td>
-                      <td className="mono">{inv.agent || inv.target || '—'}</td>
-                      <td><SevChip sev={inv.severity || 'medium'} /></td>
-                      <td><Chip mono tone={inv.status === 'closed' ? 'dim' : 'ok'}>{inv.status || 'open'}</Chip></td>
-                      <td className="mono dim">{inv.created_at ? window.SOC_API.relTs(inv.created_at) : '—'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-          }
-        </Card>
-      </div>
+        </div>
+      )}
     </div>
   );
 }

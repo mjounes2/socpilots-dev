@@ -2602,6 +2602,7 @@ app.get('/api/darksoc/status', authMW, async (req, res) => {
       hunt_enabled:                   settings.darksoc_hunt_enabled === 'true',
       lateral_monitor_enabled:        settings.darksoc_lateral_monitor_enabled === 'true',
       auto_triage_enabled:            settings.auto_triage_enabled === 'true',
+      auto_triage_min_level:          settings.auto_triage_min_level || '12',
       active_playbooks:               pbCount,
       execution_stats:                stats,
     });
@@ -3127,19 +3128,25 @@ async function triageFeeder() {
   if (_osBackpressure('triageFeeder')) return;
   const enabled = await db.getSetting('auto_triage_enabled');
   if (enabled !== 'true') return;
+  const minLevelSetting = parseInt(await db.getSetting('auto_triage_min_level') || '12');
   _feederRunning = true;
   try {
     let enqueued = 0;
     let searchAfter = null;
     const batchSize = 100;
 
-    // Paginate up to 500 alerts from the last 2h (all levels)
+    // Paginate up to 500 alerts from the last 2h, filtered by configured min level
     for (let page = 0; page < 5; page++) {
       const body = {
         size: batchSize,
         sort: [{ '@timestamp': { order: 'desc' } }, { '_id': { order: 'desc' } }],
         query: {
-          bool: { filter: [{ range: { '@timestamp': { gte: 'now-2h' } } }] },
+          bool: {
+            filter: [
+              { range: { '@timestamp': { gte: 'now-2h' } } },
+              { range: { 'rule.level': { gte: minLevelSetting } } },
+            ],
+          },
         },
         ...(searchAfter ? { search_after: searchAfter } : {}),
       };
