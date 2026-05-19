@@ -45,6 +45,9 @@ function dashGeoH(ip) {
 }
 
 // ─── Canvas world map ─────────────────────────────────────────
+// Kaspersky-style rotating globe (d3 orthographic projection)
+// Renders: starfield, sphere, graticule, continent fills, pulsing attack dots,
+// and animated arcs from each attack origin to a fixed HQ target.
 function DashWorldMap({ ips }) {
   const cvRef   = useRef1(null);
   const wrapRef = useRef1(null);
@@ -52,73 +55,242 @@ function DashWorldMap({ ips }) {
   useEffect1(() => {
     const cv   = cvRef.current;
     const wrap = wrapRef.current;
-    if (!cv || !wrap) return;
+    if (!cv || !wrap || !window.d3) return;
+    const d3 = window.d3;
+
+    const dpr = window.devicePixelRatio || 1;
     const W = wrap.clientWidth || 400;
-    const H = 160;
-    cv.width  = W;
-    cv.height = H;
+    const H = 230;
+    cv.width  = W * dpr;
+    cv.height = H * dpr;
+    cv.style.width  = W + 'px';
+    cv.style.height = H + 'px';
     const ctx = cv.getContext('2d');
+    ctx.scale(dpr, dpr);
 
-    ctx.fillStyle = '#060d1a';
-    ctx.fillRect(0, 0, W, H);
-
-    // Grid lines
-    ctx.strokeStyle = 'rgba(0,229,255,.04)';
-    ctx.lineWidth = 0.4;
-    for (let lon = -180; lon <= 180; lon += 30) {
-      const x = ((lon + 180) / 360) * W;
-      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
-    }
-    for (let lat = -90; lat <= 90; lat += 30) {
-      const y = ((90 - lat) / 180) * H;
-      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
-    }
-    // Equator
-    ctx.strokeStyle = 'rgba(0,229,255,.08)';
-    ctx.lineWidth = 0.8;
-    const eq = (90 / 180) * H;
-    ctx.beginPath(); ctx.moveTo(0, eq); ctx.lineTo(W, eq); ctx.stroke();
-
-    const ll2xy = (lat, lon) => ({
-      x: ((lon + 180) / 360) * W,
-      y: ((90 - lat)  / 180) * H,
-    });
-
-    // Continents
-    DASH_CONTINENTS.forEach(pts => {
-      ctx.beginPath();
-      pts.forEach(([lon, lat], i) => {
-        const { x, y } = ll2xy(lat, lon);
-        i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    // Star field (seeded so positions are stable across renders)
+    const STAR_COUNT = 110;
+    const stars = [];
+    const rng = (() => { let s = 9301; return () => { s = (s * 9301 + 49297) % 233280; return s / 233280; }; })();
+    for (let i = 0; i < STAR_COUNT; i++) {
+      stars.push({
+        x: rng() * W,
+        y: rng() * H,
+        r: rng() < 0.85 ? 0.5 : 1.1,
+        twinkle: rng() * Math.PI * 2,
+        alpha: 0.35 + rng() * 0.55,
       });
-      ctx.closePath();
-      ctx.fillStyle   = 'rgba(14,36,72,.92)';
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(0,229,255,.22)';
-      ctx.lineWidth   = 0.8;
-      ctx.stroke();
+    }
+
+    // Globe geometry
+    const cx = W * 0.62, cy = H / 2, radius = Math.min(H, W) * 0.45;
+    const proj = d3.geoOrthographic()
+      .scale(radius)
+      .translate([cx, cy])
+      .clipAngle(90);
+
+    // Convert DASH_CONTINENTS to GeoJSON-style polygons
+    const continentFeatures = DASH_CONTINENTS.map(pts => ({
+      type: 'Feature',
+      geometry: { type: 'Polygon', coordinates: [pts] },
+    }));
+    const pathFn = d3.geoPath(proj, ctx);
+
+    // Attack origins (real IPs from API → lat/lon via dashGeoH)
+    const HQ = { lat: 33.5, lon: 36.3 }; // pulled from MAP_TARGETS_DEFAULT
+    const origins = (ips || []).slice(0, 30).map(({ ip, count }) => {
+      const g = dashGeoH(ip);
+      return {
+        ip,
+        count,
+        lat: g.lat,
+        lon: g.lon,
+        sev: count > 20 ? 'critical' : count > 10 ? 'high' : 'medium',
+      };
     });
 
-    // Attack dots
-    (ips || []).slice(0, 25).forEach(({ ip, count }) => {
-      const g = dashGeoH(ip);
-      const { x, y } = ll2xy(g.lat, g.lon);
-      if (x < 4 || x > W - 4 || y < 4 || y > H - 4) return;
-      const size = Math.min(5 + Math.log2((count || 1) + 1) * 1.5, 16);
-      const clr  = count > 20 ? '#ff1744' : count > 10 ? '#ff6d00' : '#ffab00';
+    // Each arc has a phase that advances; emit one new arc every ~700ms
+    const arcs = [];
+    let nextArcAt = 0;
+
+    // Continuous slow rotation: 0.06°/frame ≈ ~9°/sec at 60fps
+    let lambda = 30, raf = 0;
+    const start = performance.now();
+    let last = start;
+
+    function greatArcPoints(a, b, steps = 28) {
+      // Geodesic interpolation via slerp in 3D
+      const toRad = d => d * Math.PI / 180;
+      const v = (lat, lon) => {
+        const φ = toRad(lat), λ = toRad(lon);
+        return [Math.cos(φ) * Math.cos(λ), Math.cos(φ) * Math.sin(λ), Math.sin(φ)];
+      };
+      const v1 = v(a.lat, a.lon), v2 = v(b.lat, b.lon);
+      const dot = Math.max(-1, Math.min(1, v1[0]*v2[0] + v1[1]*v2[1] + v1[2]*v2[2]));
+      const Ω = Math.acos(dot);
+      if (Ω < 0.0001) return [[a.lon, a.lat], [b.lon, b.lat]];
+      const sinΩ = Math.sin(Ω);
+      const out = [];
+      for (let i = 0; i <= steps; i++) {
+        const t = i / steps;
+        const A = Math.sin((1 - t) * Ω) / sinΩ;
+        const B = Math.sin(t * Ω) / sinΩ;
+        const x = A * v1[0] + B * v2[0];
+        const y = A * v1[1] + B * v2[1];
+        const z = A * v1[2] + B * v2[2];
+        const lat = Math.asin(z) * 180 / Math.PI;
+        const lon = Math.atan2(y, x) * 180 / Math.PI;
+        out.push([lon, lat]);
+      }
+      return out;
+    }
+
+    function frame(now) {
+      const dt = now - last;
+      last = now;
+      lambda = (lambda + dt * 0.012) % 360;
+      proj.rotate([lambda, -15]);
+
+      // Background gradient (deep space)
+      const bg = ctx.createRadialGradient(cx, cy, radius * 0.4, cx, cy, radius * 2.2);
+      bg.addColorStop(0, '#081428');
+      bg.addColorStop(1, '#020610');
+      ctx.fillStyle = bg;
+      ctx.fillRect(0, 0, W, H);
+
+      // Stars (twinkle by sine)
+      stars.forEach(s => {
+        const tw = 0.6 + 0.4 * Math.sin((now / 1000) * 1.6 + s.twinkle);
+        ctx.fillStyle = `rgba(220,230,255,${s.alpha * tw})`;
+        ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2); ctx.fill();
+      });
+
+      // Globe outer glow halo
+      const halo = ctx.createRadialGradient(cx, cy, radius * 0.92, cx, cy, radius * 1.25);
+      halo.addColorStop(0, 'rgba(0,229,255,0.18)');
+      halo.addColorStop(1, 'rgba(0,229,255,0)');
+      ctx.fillStyle = halo;
+      ctx.beginPath(); ctx.arc(cx, cy, radius * 1.25, 0, Math.PI * 2); ctx.fill();
+
+      // Sphere body — subtle radial gradient for 3D feel
+      ctx.save();
+      ctx.beginPath(); ctx.arc(cx, cy, radius, 0, Math.PI * 2); ctx.clip();
+      const sphereBg = ctx.createRadialGradient(cx - radius * 0.3, cy - radius * 0.3, 0, cx, cy, radius);
+      sphereBg.addColorStop(0, '#0d2444');
+      sphereBg.addColorStop(1, '#040a16');
+      ctx.fillStyle = sphereBg;
+      ctx.fillRect(cx - radius, cy - radius, radius * 2, radius * 2);
+
+      // Graticule (lat/lon grid)
+      ctx.strokeStyle = 'rgba(0,229,255,0.08)';
+      ctx.lineWidth = 0.5;
+      const grat = d3.geoGraticule().step([20, 20])();
       ctx.beginPath();
-      ctx.arc(x, y, size / 2, 0, Math.PI * 2);
-      ctx.fillStyle  = clr;
-      ctx.shadowBlur = size + 4;
-      ctx.shadowColor = clr;
-      ctx.fill();
-      ctx.shadowBlur = 0;
-    });
+      d3.geoPath(proj, ctx)(grat);
+      ctx.stroke();
+
+      // Continents
+      continentFeatures.forEach(f => {
+        ctx.beginPath();
+        pathFn(f);
+        ctx.fillStyle = 'rgba(20,60,110,0.85)';
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(0,229,255,0.35)';
+        ctx.lineWidth = 0.7;
+        ctx.stroke();
+      });
+      ctx.restore();
+
+      // Sphere edge
+      ctx.beginPath(); ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(0,229,255,0.5)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      // Visibility test — only draw points on the visible hemisphere
+      const center = proj.invert([cx, cy]);
+      const visible = (lat, lon) => {
+        const p = proj([lon, lat]);
+        if (!p) return false;
+        const d3sph = d3.geoDistance([center[0], center[1]], [lon, lat]);
+        return d3sph < Math.PI / 2;
+      };
+
+      // Spawn new arcs from random visible origins toward HQ
+      if (now > nextArcAt && origins.length) {
+        const visOrigins = origins.filter(o => visible(o.lat, o.lon));
+        const src = (visOrigins.length ? visOrigins : origins)[Math.floor(Math.random() * (visOrigins.length || origins.length))];
+        const points = greatArcPoints(src, HQ, 32);
+        arcs.push({ points, t0: now, life: 2200, sev: src.sev });
+        nextArcAt = now + 600 + Math.random() * 700;
+      }
+
+      // Draw arcs (head-of-line glowing trail)
+      for (let i = arcs.length - 1; i >= 0; i--) {
+        const a = arcs[i];
+        const t = (now - a.t0) / a.life;
+        if (t > 1.1) { arcs.splice(i, 1); continue; }
+        const tipIdx = Math.min(a.points.length - 1, Math.floor(t * a.points.length));
+        const trailLen = 10;
+        const startIdx = Math.max(0, tipIdx - trailLen);
+        const color = a.sev === 'critical' ? '#ff1744' : a.sev === 'high' ? '#ff6d00' : '#00e5ff';
+        ctx.strokeStyle = color;
+        ctx.lineCap = 'round';
+        for (let k = startIdx; k < tipIdx; k++) {
+          const seg = (k - startIdx) / trailLen;
+          const p1 = proj(a.points[k]);
+          const p2 = proj(a.points[k + 1]);
+          if (!p1 || !p2) continue;
+          ctx.globalAlpha = seg * (1 - Math.max(0, t - 1));
+          ctx.lineWidth = 1.2 + seg * 1.4;
+          ctx.beginPath(); ctx.moveTo(p1[0], p1[1]); ctx.lineTo(p2[0], p2[1]); ctx.stroke();
+        }
+        ctx.globalAlpha = 1;
+      }
+
+      // Attack dots — pulse + glow, only if on visible hemisphere
+      origins.forEach((o, i) => {
+        if (!visible(o.lat, o.lon)) return;
+        const p = proj([o.lon, o.lat]);
+        if (!p) return;
+        const pulse = 0.5 + 0.5 * Math.sin((now / 1000) * 2 + i * 0.6);
+        const baseR = Math.min(2 + Math.log2((o.count || 1) + 1) * 0.7, 5);
+        const color = o.sev === 'critical' ? '#ff1744' : o.sev === 'high' ? '#ff6d00' : '#ffab00';
+        // Outer pulse ring
+        ctx.fillStyle = color;
+        ctx.globalAlpha = 0.15 + 0.25 * (1 - pulse);
+        ctx.beginPath(); ctx.arc(p[0], p[1], baseR + 4 + pulse * 5, 0, Math.PI * 2); ctx.fill();
+        // Solid dot
+        ctx.globalAlpha = 1;
+        ctx.shadowColor = color; ctx.shadowBlur = 8;
+        ctx.beginPath(); ctx.arc(p[0], p[1], baseR, 0, Math.PI * 2); ctx.fill();
+        ctx.shadowBlur = 0;
+      });
+
+      // HQ target dot (fixed bullseye)
+      if (visible(HQ.lat, HQ.lon)) {
+        const p = proj([HQ.lon, HQ.lat]);
+        ctx.strokeStyle = '#00e5ff'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.arc(p[0], p[1], 5, 0, Math.PI * 2); ctx.stroke();
+        ctx.fillStyle = '#00e5ff';
+        ctx.beginPath(); ctx.arc(p[0], p[1], 1.6, 0, Math.PI * 2); ctx.fill();
+      }
+
+      raf = requestAnimationFrame(frame);
+    }
+
+    raf = requestAnimationFrame(frame);
+    return () => cancelAnimationFrame(raf);
   }, [ips]);
 
   return (
-    <div ref={wrapRef} style={{ position: 'relative', background: '#060d1a', borderRadius: 4, overflow: 'hidden' }}>
-      <canvas ref={cvRef} height="160" style={{ display: 'block', width: '100%' }} />
+    <div ref={wrapRef} style={{
+      position: 'relative',
+      background: 'radial-gradient(circle at 60% 50%, #081428 0%, #020610 100%)',
+      borderRadius: 4,
+      overflow: 'hidden',
+    }}>
+      <canvas ref={cvRef} style={{ display: 'block', width: '100%' }} />
     </div>
   );
 }
