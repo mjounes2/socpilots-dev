@@ -373,13 +373,13 @@ function PageDashboard() {
     const rawAlerts = alertsData?.items || alertsData?.alerts || [];
     setRecentAlerts(rawAlerts.map(adaptAlert));
 
-    // Closed cases — non-blocking
+    // Closed cases — non-blocking; use total not page-limited .length
     Promise.all([
-      API.get('/api/cases?status=TruePositive'),
-      API.get('/api/cases?status=FalsePositive'),
-      API.get('/api/cases?status=Duplicate'),
+      API.get('/api/cases?status=TruePositive&page_size=1'),
+      API.get('/api/cases?status=FalsePositive&page_size=1'),
+      API.get('/api/cases?status=Duplicate&page_size=1'),
     ]).then(([tp, fp, dup]) => {
-      setClosedCases((tp?.cases?.length || 0) + (fp?.cases?.length || 0) + (dup?.cases?.length || 0));
+      setClosedCases((tp?.total || 0) + (fp?.total || 0) + (dup?.total || 0));
     }).catch(() => {});
 
     setLoading(false);

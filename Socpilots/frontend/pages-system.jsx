@@ -460,8 +460,12 @@ function PageReports() {
   const [schedTime, setSchedTime]     = useStateS('08:00');
   const [editMode, setEditMode]       = useStateS(false);
   const [editContent, setEditContent] = useStateS('');
+  const [metrics, setMetrics]         = useStateS(null);
 
   useEffectS(() => {
+    window.SOC_API.get('/api/reports/metrics').then(d => {
+      if (d && !d.error) setMetrics(d);
+    }).catch(() => {});
     setLoad(true);
     window.SOC_API.get('/api/reports').then(d => {
       const arr = d?.items || d?.reports || (Array.isArray(d) ? d : null);
@@ -694,6 +698,24 @@ function PageReports() {
       )}
 
       <div className="page-body">
+        {/* MTTD / MTTR KPIs */}
+        <div className="kpi-row" style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
+          <div className="kpi-card" style={{ flex: 1 }}>
+            <div className="kpi-label mono" style={{ fontSize: 10, color: 'var(--fg-3)', letterSpacing: '0.1em', marginBottom: 4 }}>MTTD (30d)</div>
+            <div className="kpi-value" style={{ fontSize: 28, fontWeight: 700, color: 'var(--accent)' }}>
+              {metrics ? (metrics.mttd_minutes != null ? `${metrics.mttd_minutes} min` : '—') : '…'}
+            </div>
+            <div className="kpi-sub mono" style={{ fontSize: 10, color: 'var(--fg-3)', marginTop: 2 }}>Mean Time to Detect</div>
+          </div>
+          <div className="kpi-card" style={{ flex: 1 }}>
+            <div className="kpi-label mono" style={{ fontSize: 10, color: 'var(--fg-3)', letterSpacing: '0.1em', marginBottom: 4 }}>MTTR (30d)</div>
+            <div className="kpi-value" style={{ fontSize: 28, fontWeight: 700, color: 'var(--green)' }}>
+              {metrics ? (metrics.mttr_minutes != null ? `${metrics.mttr_minutes} min` : '—') : '…'}
+            </div>
+            <div className="kpi-sub mono" style={{ fontSize: 10, color: 'var(--fg-3)', marginTop: 2 }}>Mean Time to Respond</div>
+          </div>
+        </div>
+
         {loading ? (
           <div className="loading mono">Loading reports…</div>
         ) : reports.length === 0 ? (

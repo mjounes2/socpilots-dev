@@ -47,6 +47,58 @@ function PageHunt() {
   const [hasRun, setHasRun]   = useStateX(false);
   const taRef = useStateX(null)[0]; // for ref — use useRef
 
+  // Scheduled hunts state
+  const [schedules, setSchedules]       = useStateX([]);
+  const [schedLoading, setSchedLoading] = useStateX(false);
+  const [showNewSched, setShowNewSched] = useStateX(false);
+  const [newSchedName, setNewSchedName] = useStateX('');
+  const [newSchedCron, setNewSchedCron] = useStateX('0 * * * *');
+  const [newSchedQuery, setNewSchedQuery] = useStateX('');
+  const [schedSaving, setSchedSaving]   = useStateX(false);
+
+  const loadSchedules = useCallbackX(async () => {
+    setSchedLoading(true);
+    const d = await API.get('/api/hunt/schedules?page_size=50');
+    setSchedules(d?.items || []);
+    setSchedLoading(false);
+  }, []);
+
+  useEffectX(() => { loadSchedules(); }, [loadSchedules]);
+
+  async function toggleSchedule(id, enabled) {
+    await API.patch(`/api/hunt/schedules/${id}`, { enabled: !enabled });
+    setSchedules(prev => prev.map(s => s.id === id ? { ...s, enabled: !enabled } : s));
+  }
+
+  async function runScheduleNow(id) {
+    window.socToast?.({ title: 'Hunt triggered', sub: 'Running in background…', tone: 'info' });
+    await API.post(`/api/hunt/schedules/${id}/run`, {});
+  }
+
+  async function deleteSchedule(id) {
+    await API.delete(`/api/hunt/schedules/${id}`);
+    setSchedules(prev => prev.filter(s => s.id !== id));
+  }
+
+  async function createSchedule() {
+    if (!newSchedName.trim() || !newSchedQuery.trim()) return;
+    setSchedSaving(true);
+    const d = await API.post('/api/hunt/schedules', {
+      name: newSchedName.trim(),
+      query: newSchedQuery.trim(),
+      cron_expr: newSchedCron.trim() || '0 * * * *',
+    });
+    setSchedSaving(false);
+    if (d && !d.error) {
+      await loadSchedules();
+      setShowNewSched(false);
+      setNewSchedName(''); setNewSchedQuery(''); setNewSchedCron('0 * * * *');
+      window.socToast?.({ title: 'Schedule created', sub: d.name || newSchedName, tone: 'ok' });
+    } else {
+      window.socToast?.({ title: 'Failed to create', sub: d?.error || 'API error', tone: 'error' });
+    }
+  }
+
   const taRefR = React.useRef(null);
 
   function selectPreset(id) {
@@ -233,6 +285,83 @@ function PageHunt() {
             )}
           </Card>
         )}
+        {/* Scheduled Hunts */}
+        <Card title="Scheduled Hunts" sub="Automated recurring threat hunts"
+          actions={<button className="btn btn-primary btn-sm" onClick={() => setShowNewSched(true)}>+ New schedule</button>}>
+
+          {showNewSched && (
+            <div style={{ background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 8, padding: '16px', marginBottom: 16 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <span style={{ fontSize: 11, color: 'var(--fg-3)' }}>NAME</span>
+                  <input className="mono" placeholder="My hunt name" value={newSchedName}
+                    onChange={e => setNewSchedName(e.target.value)} style={{ fontSize: 13 }}/>
+                </label>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <span style={{ fontSize: 11, color: 'var(--fg-3)' }}>CRON EXPRESSION</span>
+                  <input className="mono" placeholder="0 * * * *" value={newSchedCron}
+                    onChange={e => setNewSchedCron(e.target.value)} style={{ fontSize: 13 }}/>
+                </label>
+              </div>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 10 }}>
+                <span style={{ fontSize: 11, color: 'var(--fg-3)' }}>QUERY (DSL)</span>
+                <input className="mono" placeholder="rule.mitre.tactic:&quot;Lateral Movement&quot; | last 24h"
+                  value={newSchedQuery} onChange={e => setNewSchedQuery(e.target.value)} style={{ fontSize: 12 }}/>
+              </label>
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                <button className="btn btn-ghost btn-sm" onClick={() => setShowNewSched(false)}>Cancel</button>
+                <button className="btn btn-primary btn-sm" onClick={createSchedule} disabled={schedSaving}>
+                  {schedSaving ? 'Saving…' : 'Create'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {schedLoading ? (
+            <div className="mono dim" style={{ padding: '12px 0', fontSize: 12 }}>Loading schedules…</div>
+          ) : schedules.length === 0 ? (
+            <div style={{ padding: '16px 0', textAlign: 'center', color: 'var(--fg-3)', fontSize: 12 }}>
+              No scheduled hunts. Click <strong>+ New schedule</strong> to create one.
+            </div>
+          ) : (
+            <table className="data-table">
+              <thead><tr>
+                <th>NAME</th>
+                <th>CRON</th>
+                <th>QUERY</th>
+                <th>ENABLED</th>
+                <th>LAST RUN</th>
+                <th style={{ width: 120 }}>ACTIONS</th>
+              </tr></thead>
+              <tbody>
+                {schedules.map(s => (
+                  <tr key={s.id}>
+                    <td style={{ fontWeight: 600 }}>{s.name}</td>
+                    <td className="mono dim" style={{ fontSize: 11 }}>{s.cron_expr}</td>
+                    <td style={{ maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 11 }} title={s.query}>{s.query || '—'}</td>
+                    <td>
+                      <button className={`btn btn-sm ${s.enabled ? 'btn-primary' : 'btn-ghost'}`}
+                        onClick={() => toggleSchedule(s.id, s.enabled)} style={{ minWidth: 60 }}>
+                        {s.enabled ? 'ON' : 'OFF'}
+                      </button>
+                    </td>
+                    <td className="mono dim" style={{ fontSize: 11 }}>
+                      {s.last_run ? new Date(s.last_run).toLocaleString() : '—'}
+                    </td>
+                    <td>
+                      <div style={{ display: 'flex', gap: 4 }}>
+                        <button className="btn btn-ghost btn-sm" title="Run now" onClick={() => runScheduleNow(s.id)}>▶</button>
+                        <button className="btn btn-ghost btn-sm" title="Delete"
+                          style={{ color: 'var(--red)' }} onClick={() => deleteSchedule(s.id)}>✕</button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </Card>
+
       </div>
     </div>
   );

@@ -4336,6 +4336,33 @@ app.get('/api/detection-rules', authMW, async (req, res) => {
   res.json({ rules, total: rules.length, rawText: rules.length ? undefined : r.text });
 });
 
+// ── REPORTS METRICS (MTTD + MTTR) ──
+let _reportMetricsCache = null, _reportMetricsCacheTime = 0;
+app.get('/api/reports/metrics', authMW, async (req, res) => {
+  try {
+    const now = Date.now();
+    if (_reportMetricsCache && now - _reportMetricsCacheTime < 120000) return res.json(_reportMetricsCache);
+    const [mttdResult, slaStats] = await Promise.allSettled([
+      db.pool.query(`
+        SELECT ROUND(AVG(EXTRACT(EPOCH FROM (created_at - timestamp)) / 60.0))::INT AS mttd_minutes
+        FROM investigations
+        WHERE timestamp IS NOT NULL
+          AND created_at > NOW() - INTERVAL '30 days'
+          AND created_at > timestamp
+      `),
+      db.getSlaDashboardStats(),
+    ]);
+    const mttd = mttdResult.status === 'fulfilled' ? (mttdResult.value.rows[0]?.mttd_minutes || null) : null;
+    const mttr = slaStats.status === 'fulfilled'   ? (slaStats.value.mttr_minutes || null) : null;
+    const result = { mttd_minutes: mttd, mttr_minutes: mttr };
+    _reportMetricsCache = result; _reportMetricsCacheTime = now;
+    res.json(result);
+  } catch(e) {
+    console.error('[reports/metrics]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── REPORTS via SOCPilots AI ──
 app.get('/api/reports', authMW, async (req, res) => {
   res.json({ items: [], total: 0 });
