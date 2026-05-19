@@ -2180,6 +2180,12 @@ function PageInvestigation() {
   const [settingsSaving, setSaving] = useStateADV(false);
   const [isAdmin, setIsAdmin]       = useStateADV(false);
 
+  // ── Autonomous (LangGraph) engine settings ──
+  const [autoEngineOn, setAEOn]     = useStateADV(false);
+  const [autoEngineSaving, setAESaving] = useStateADV(false);
+  const [pendingApprovals, setPA]   = useStateADV(0);
+  const [autoConfig, setAutoCfg]    = useStateADV({ auto_execute_actions: [], approval_actions: [] });
+
   // ── KPI stats ──
   const [invStats, setInvStats]     = useStateADV(null);
   const [queueStats, setQueueStats] = useStateADV(null);
@@ -2219,14 +2225,25 @@ function PageInvestigation() {
 
   // ── Load settings & stats on mount ──
   useEffectADV(() => {
-    // Determine if admin from token context
     window.SOC_API.get('/api/settings').then(s => {
       if (!s) return;
       setAutoEn(s.auto_triage_enabled === 'true');
       setMinLevel(s.auto_triage_min_level || '12');
+      setAEOn(s.autonomous_engine_enabled === 'true');
     });
 
-    // Check role
+    // Autonomous engine config (policy + pending approvals count)
+    window.SOC_API.get('/api/autonomous/config').then(c => {
+      if (c) {
+        setAEOn(!!c.engine_enabled);
+        setAutoCfg({
+          auto_execute_actions: c.auto_execute_actions || [],
+          approval_actions:     c.approval_actions     || [],
+        });
+        setPA(c.pending_approvals || 0);
+      }
+    }).catch(() => {});
+
     window.SOC_API.get('/api/me').then(p => {
       if (p?.role === 'admin' || p?.role === 'l3') setIsAdmin(true);
     }).catch(() => {});
@@ -2239,6 +2256,26 @@ function PageInvestigation() {
     window.SOC_API.get('/api/investigations?page=1&page_size=1').then(d => {
       if (d?.stats) setInvStats(d.stats);
     }).catch(() => {});
+    window.SOC_API.get('/api/action-approvals/stats').then(d => {
+      if (d?.pending != null) setPA(d.pending);
+    }).catch(() => {});
+  }
+
+  async function toggleAutonomousEngine() {
+    if (!isAdmin) return window.socToast?.({ title: 'Insufficient permissions', sub: 'Admin or L3 required', tone: 'error' });
+    const next = !autoEngineOn;
+    setAEOn(next);
+    setAESaving(true);
+    try {
+      await window.SOC_API.post('/api/settings', { autonomous_engine_enabled: String(next) });
+      window.socToast?.({
+        title: next ? 'Autonomous Engine ENABLED' : 'Autonomous Engine DISABLED',
+        sub:   next ? 'AI may queue actions for approval; create_case may auto-execute' : 'No autonomous investigations will run',
+        tone:  next ? 'ok' : 'warn',
+      });
+    } finally {
+      setAESaving(false);
+    }
   }
 
   // ── Auto-refresh stats every 30s ──
@@ -2413,7 +2450,7 @@ function PageInvestigation() {
           background: 'var(--bg2)', border: '1px solid var(--b2)', borderRadius: 10,
           padding: '14px 20px', display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap',
         }}>
-          {/* Toggle */}
+          {/* Auto-triage toggle */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <button
               onClick={toggleAutoTriage}
@@ -2430,6 +2467,41 @@ function PageInvestigation() {
                 AUTO-TRIAGE {autoEnabled ? 'ENABLED' : 'DISABLED'}
               </span>
             </button>
+          </div>
+
+          {/* Autonomous engine (LangGraph) toggle */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <button
+              onClick={toggleAutonomousEngine}
+              disabled={autoEngineSaving}
+              title={isAdmin
+                ? `Auto-execute: ${autoConfig.auto_execute_actions.join(', ') || '—'}\nNeed approval: ${autoConfig.approval_actions.join(', ') || '—'}`
+                : 'Admin/L3 role required'}
+              style={{
+                background: autoEngineOn ? 'rgba(0,229,255,.12)' : 'rgba(120,120,120,.10)',
+                border: `1px solid ${autoEngineOn ? 'rgba(0,229,255,.4)' : 'rgba(120,120,120,.3)'}`,
+                borderRadius: 20, padding: '6px 16px', cursor: isAdmin ? 'pointer' : 'not-allowed',
+                display: 'flex', alignItems: 'center', gap: 8, transition: 'all .2s',
+              }}>
+              <Icon.brain width="11" height="11" style={{ color: autoEngineOn ? 'var(--acc)' : 'var(--txt3)' }}/>
+              <span className="mono" style={{ fontSize: '0.82rem', fontWeight: 700, color: autoEngineOn ? 'var(--acc)' : 'var(--txt3)' }}>
+                AUTONOMOUS ENGINE {autoEngineOn ? 'ON' : 'OFF'}
+              </span>
+            </button>
+            {pendingApprovals > 0 && (
+              <button
+                onClick={() => window.location.hash = '#approvals'}
+                style={{
+                  background: 'rgba(255,193,7,.12)', border: '1px solid rgba(255,193,7,.4)',
+                  borderRadius: 14, padding: '4px 10px', cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', gap: 6,
+                }}>
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--y)', boxShadow: '0 0 6px var(--y)' }}/>
+                <span className="mono" style={{ fontSize: '0.76rem', color: 'var(--y)', fontWeight: 700 }}>
+                  {pendingApprovals} APPROVAL{pendingApprovals !== 1 ? 'S' : ''} PENDING
+                </span>
+              </button>
+            )}
           </div>
 
           {/* Min severity */}

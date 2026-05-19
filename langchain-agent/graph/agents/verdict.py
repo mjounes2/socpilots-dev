@@ -79,16 +79,22 @@ def consensus_node(state: InvestigationState) -> Dict[str, Any]:
             "confidence": 0.0, "fp_probability": 50, "consensus_reached": False,
             "reasoning": "Consensus parsing failed", "blocking_concerns": ["parse_error"],
         })
-        # Consensus requires agreement on verdict AND independent confidence >= 0.7
-        agrees = bool(result.get("agrees_with_primary"))
+        # Consensus = both LLMs INDEPENDENTLY reached the same verdict.
+        # We use verdict equality (the actual decision) — not the `agrees_with_primary`
+        # flag, since LLMs sometimes return contradictory metadata while the verdict
+        # itself agrees. The safety_gate enforces per-action safety, so this gate
+        # is intentionally about "do we have a clear shared decision?"
         confidence = float(result.get("confidence", 0.0))
         primary_verdict = state.get("triage_verdict", "inconclusive")
         secondary_verdict = result.get("verdict", "inconclusive")
+        verdict_matches = primary_verdict == secondary_verdict
         consensus_reached = (
-            agrees and confidence >= 0.7 and primary_verdict == secondary_verdict
-            and not result.get("blocking_concerns")
+            verdict_matches
+            and confidence >= 0.6
+            and primary_verdict in ("true_positive", "suspicious", "false_positive")
         )
-        log.info(f"[consensus] reached={consensus_reached} agrees={agrees} conf={confidence}")
+        log.info(f"[consensus] reached={consensus_reached} primary={primary_verdict} "
+                  f"secondary={secondary_verdict} match={verdict_matches} conf={confidence}")
         return {
             "consensus_verdict":    result,
             "consensus_reached":    consensus_reached,

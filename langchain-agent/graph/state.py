@@ -67,6 +67,7 @@ class InvestigationState(TypedDict, total=False):
     # ── Phase 7: Execution ─────────────────────────────────────
     executed_actions: List[Dict[str, Any]]
     failed_actions: List[Dict[str, Any]]
+    pending_approvals: List[Dict[str, Any]]   # destructive actions awaiting human approval
     case_id: Optional[str]
 
     # ── Phase 8: Final report ──────────────────────────────────
@@ -101,6 +102,7 @@ def empty_state(alert: Dict[str, Any], session_id: str = "", deep_mode: bool = T
         "safety_reasons": [],
         "executed_actions": [],
         "failed_actions": [],
+        "pending_approvals": [],
         "node_trace": [],
         "errors": [],
         "started_at": time.time(),

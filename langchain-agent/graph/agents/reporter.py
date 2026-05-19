@@ -98,13 +98,17 @@ def reporter_node(state: InvestigationState) -> Dict[str, Any]:
     executed = state.get("executed_actions", []) or []
     failed = state.get("failed_actions", []) or []
 
+    pending = state.get("pending_approvals", []) or []
     actions_summary = "None executed."
-    if executed or failed:
+    if executed or failed or pending:
         lines = []
         for a in executed:
-            lines.append(f"  ✓ {a.get('type')} on {a.get('target')}")
+            lines.append(f"  ✓ AUTO-EXECUTED: {a.get('type')} on {a.get('target')}")
+        for a in pending:
+            lines.append(f"  ⏸ AWAITING APPROVAL: {a.get('type')} on {a.get('target')} "
+                          f"(approval_id={a.get('approval_id')}, expires={a.get('expires_at')})")
         for a in failed:
-            lines.append(f"  ✗ {a.get('type')}: {a.get('error', 'failed')}")
+            lines.append(f"  ✗ FAILED: {a.get('type')}: {a.get('error', 'failed')}")
         actions_summary = "\n".join(lines)
 
     consensus = state.get("consensus_verdict", {}) or {}
@@ -155,6 +159,7 @@ def reporter_node(state: InvestigationState) -> Dict[str, Any]:
         "attack_chain":          state.get("attack_chain", []),
         "recommended_actions":   [a.get("type") for a in state.get("planned_actions", [])],
         "executed_actions":      [a.get("type") for a in executed],
+        "pending_approvals":     pending,
         "failed_actions":        [a.get("type") for a in failed],
         "safety_status":         state.get("safety_status", "approved"),
         "safety_reasons":        state.get("safety_reasons", []),

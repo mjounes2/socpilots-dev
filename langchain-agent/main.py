@@ -2194,6 +2194,7 @@ async def autonomous_investigate(req: AutonomousRequest):
             "consensus_reached":   final_state.get("consensus_reached"),
             "consensus_confidence":final_state.get("consensus_confidence"),
             "executed_actions":    final_state.get("executed_actions", []),
+            "pending_approvals":   final_state.get("pending_approvals", []),
             "failed_actions":      final_state.get("failed_actions", []),
             "safety_status":       final_state.get("safety_status"),
             "safety_reasons":      final_state.get("safety_reasons", []),

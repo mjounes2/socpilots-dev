@@ -4707,8 +4707,19 @@ app.get('/api/autonomous/health', authMW, async (req, res) => {
 });
 
 app.post('/api/autonomous/investigate', authMW, requireRole('l2'), async (req, res) => {
-  const { alert, session_id, deep_mode } = req.body || {};
+  const { alert, session_id, deep_mode, force } = req.body || {};
   if (!alert) return res.status(400).json({ error: 'alert required' });
+
+  // Master toggle: autonomous engine must be explicitly enabled
+  const engineEnabled = await db.getSetting('autonomous_engine_enabled');
+  if (engineEnabled !== 'true' && !force) {
+    return res.status(403).json({
+      error: 'Autonomous engine is disabled',
+      hint: 'Enable it via POST /api/settings { autonomous_engine_enabled: "true" } (admin only)',
+      engine_enabled: false,
+    });
+  }
+
   try {
     const r = await axios.post(`${LANGCHAIN_URL}/autonomous/investigate`,
       { alert, session_id: session_id || `auto_${Date.now()}`, deep_mode: deep_mode !== false },
@@ -4827,6 +4838,86 @@ app.post('/api/ai/investigate/persist', authMW, async (req, res) => {
   } catch(e) {
     console.error('[ai/investigate/persist]', e.message);
     res.status(503).json({ error: e.message });
+  }
+});
+
+// ── Autonomous engine config (for graph executor) ────────────────
+app.get('/api/autonomous/config', authMW, async (req, res) => {
+  try {
+    const settings = await db.getAllSettings();
+    res.json({
+      engine_enabled:        settings.autonomous_engine_enabled === 'true',
+      auto_execute_actions:  (settings.autonomous_auto_execute_actions || 'create_case,close_case')
+                              .split(',').map(s => s.trim()).filter(Boolean),
+      approval_actions:      (settings.autonomous_require_approval_actions || 'block_ip,isolate_host,disable_user,kill_process')
+                              .split(',').map(s => s.trim()).filter(Boolean),
+      approval_ttl_min:      parseInt(settings.autonomous_approval_ttl_min || '30'),
+      pending_approvals:     await db.countPendingActionApprovals(),
+    });
+  } catch(e) { res.status(502).json({ error: e.message }); }
+});
+
+// ── Autonomous engine creates an approval entry instead of executing
+// Called by the LangGraph executor node when an action needs human approval.
+app.post('/api/autonomous/approval/create', authMW, async (req, res) => {
+  // Internal-only: requires l2+ which the LANGCHAIN_INTERNAL_TOKEN session has
+  if (!['l2','l3','admin'].includes(req.user.role)) {
+    return res.status(403).json({ error: 'insufficient role' });
+  }
+  const {
+    investigation_id, alert, action_type, target, reason,
+    confidence, fp_probability, summary,
+  } = req.body || {};
+  if (!action_type || !alert) return res.status(400).json({ error: 'action_type and alert required' });
+
+  try {
+    const ttlMin = parseInt(await db.getSetting('autonomous_approval_ttl_min') || '30');
+    const approval = await db.createActionApproval({
+      investigationId:     investigation_id || null,
+      alertKey:            `${alert.ruleId || ''}_${alert.timestamp || ''}_${alert.agent || ''}_${alert.srcIp || ''}`,
+      ruleId:              alert.ruleId,
+      agent:               alert.agent,
+      srcIp:               alert.srcIp,
+      severity:            alert.severity,
+      triageTier:          'autonomous',
+      verdict:             'needs_review',
+      confidence:          Math.round((confidence || 0) * 100),
+      riskScore:           0,
+      fpProbability:       fp_probability || 0,
+      summary:             summary || `Autonomous engine recommends ${action_type} on ${target}: ${reason || ''}`.slice(0, 500),
+      recommendedActions:  [action_type],
+      playbookIds:         [],
+      alertData:           { ...alert, _autonomous_target: target, _autonomous_reason: reason },
+      timeoutMin:          ttlMin,
+    });
+
+    // Real-time notification so analysts see the pending approval
+    io.emit('approval:pending', {
+      id:               approval.id,
+      action_type,
+      target,
+      severity:         alert.severity,
+      rule_id:          alert.ruleId,
+      agent:            alert.agent,
+      src_ip:           alert.srcIp,
+      investigation_id: investigation_id,
+      expires_at:       approval.expires_at,
+      origin:           'autonomous_engine',
+    });
+
+    db.createNotification(
+      'approval_required',
+      `Autonomous action pending: ${action_type}`,
+      `AI recommends ${action_type} on ${target} (rule ${alert.ruleId}). Approve within ${ttlMin}min.`,
+      alert.severity === 'critical' ? 'critical' : 'warning',
+      null,
+      { approval_id: approval.id, action_type, target, investigation_id }
+    ).catch(() => {});
+
+    res.json({ ok: true, approval_id: approval.id, expires_at: approval.expires_at });
+  } catch(e) {
+    console.error('[autonomous/approval/create]', e.message);
+    res.status(502).json({ error: e.message });
   }
 });
 

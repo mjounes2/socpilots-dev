@@ -216,7 +216,11 @@ async function initSchema() {
       ('darksoc_enabled','false','system'),
       ('darksoc_hunt_enabled','false','system'),
       ('darksoc_lateral_monitor_enabled','false','system'),
-      ('isolation_approval_timeout_min','30','system')
+      ('isolation_approval_timeout_min','30','system'),
+      ('autonomous_engine_enabled','false','system'),
+      ('autonomous_auto_execute_actions','create_case,close_case','system'),
+      ('autonomous_require_approval_actions','block_ip,isolate_host,disable_user,kill_process','system'),
+      ('autonomous_approval_ttl_min','30','system')
      ON CONFLICT(key) DO NOTHING`,
 
     // ── Users table — DB-backed accounts ──────────────────────

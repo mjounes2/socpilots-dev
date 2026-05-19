@@ -205,6 +205,55 @@ def tool_execute_playbook(action: str, alert: Dict[str, Any], investigation_id: 
         return {"error": str(e)}
 
 
+def tool_fetch_autonomous_config() -> Dict[str, Any]:
+    """Read autonomous engine settings (enabled state + per-action policy)."""
+    try:
+        r = _sync_client.get(
+            f"{WEBAPP_URL}/api/autonomous/config",
+            headers=_internal_headers(),
+            timeout=5.0,
+        )
+        if r.status_code == 200:
+            return r.json()
+    except Exception as e:
+        log.warning(f"[tool_fetch_autonomous_config] {e}")
+    # Safe defaults: nothing executes autonomously, everything goes to approval
+    return {
+        "engine_enabled":       False,
+        "auto_execute_actions": ["create_case", "close_case"],
+        "approval_actions":     ["block_ip", "isolate_host", "disable_user", "kill_process"],
+        "approval_ttl_min":     30,
+    }
+
+
+def tool_create_approval(investigation_id: int, alert: Dict[str, Any],
+                         action_type: str, target: str, reason: str,
+                         confidence: float = 0.0, fp_probability: float = 0.0,
+                         summary: str = "") -> Dict[str, Any]:
+    """Queue an action for human approval instead of executing it autonomously."""
+    try:
+        r = _sync_client.post(
+            f"{WEBAPP_URL}/api/autonomous/approval/create",
+            json={
+                "investigation_id": investigation_id,
+                "alert":            alert,
+                "action_type":      action_type,
+                "target":           target,
+                "reason":           reason,
+                "confidence":       confidence,
+                "fp_probability":   fp_probability,
+                "summary":          summary,
+            },
+            headers=_internal_headers(),
+            timeout=10.0,
+        )
+        if r.status_code == 200:
+            return r.json()
+        return {"error": f"HTTP {r.status_code}: {r.text[:200]}"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 def tool_create_case(alert: Dict[str, Any], investigation_id: int, report: str) -> Dict[str, Any]:
     """Create a TheHive case from investigation findings."""
     try:
