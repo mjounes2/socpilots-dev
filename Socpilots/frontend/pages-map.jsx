@@ -104,11 +104,15 @@ function PageMap() {
       const maxCount = Math.max(...data.map(d => d.count));
       const mapped = data.map(d => {
         const geo = geoHeuristic(d.ip);
-        // add tiny jitter so overlapping countries don't stack
+        // Deterministic jitter from IP so overlapping countries don't stack
+        // and dots don't twitch on re-render
+        const parts = (d.ip || '').split('.');
+        const h1 = ((parseInt(parts[2]) || 0) % 100) / 100 - 0.5;
+        const h2 = ((parseInt(parts[3]) || 0) % 100) / 100 - 0.5;
         return {
           ...geo,
-          lng: geo.lng + (Math.random() - 0.5) * 4,
-          lat: geo.lat + (Math.random() - 0.5) * 4,
+          lng: geo.lng + h1 * 4,
+          lat: geo.lat + h2 * 4,
           count: d.count,
           ip: d.ip,
           sev: countToSev(d.count, maxCount),
@@ -178,16 +182,35 @@ function PageMap() {
     return () => cancelAnimationFrame(raf);
   }, [playing]);
 
-  // Synthesize new feed events every ~2.5s
+  // Stream real new alerts every 10s — short-poll the live alerts API
+  // and dedupe by alert id. New alerts get a geo origin and join the feed.
+  const seenIdsRef = useMR(new Set());
   useME(() => {
     if (!playing) return;
-    const t = setInterval(() => {
-      if (!origins.length) return;
-      const o = origins[Math.floor(Math.random() * origins.length)];
-      const id = 'WZ-' + Math.floor(9280000 + Math.random() * 9000);
-      setFeed(f => [{ id, time: new Date(), origin: o, msg: `${o.ip || o.country} · ${o.count} hits` }, ...f].slice(0, 30));
-    }, 2500);
-    return () => clearInterval(t);
+    let stopped = false;
+    async function pollAlerts() {
+      const data = await window.SOC_API.get('/api/alerts?hours=1&page_size=20');
+      if (stopped || !data || data.error) return;
+      const items = data.items || data.alerts || [];
+      const fresh = [];
+      for (const a of items) {
+        const id = a.id || a.alertId || a.alert_id;
+        if (!id || seenIdsRef.current.has(id)) continue;
+        seenIdsRef.current.add(id);
+        const ip = a.srcip || a.src_ip || a.source_ip || '';
+        const geo = ip ? geoHeuristic(ip) : { country: '??', city: 'Unknown', lng: 0, lat: 0 };
+        fresh.push({
+          id: typeof id === 'string' ? id.slice(0, 12) : id,
+          time: a.timestamp ? new Date(a.timestamp) : new Date(),
+          origin: { ...geo, ip, count: 1, sev: a.severity || 'low' },
+          msg: (a.description || a.rule || `Alert ${id}`).slice(0, 80),
+        });
+      }
+      if (fresh.length) setFeed(f => [...fresh, ...f].slice(0, 30));
+    }
+    pollAlerts();
+    const t = setInterval(pollAlerts, 10_000);
+    return () => { stopped = true; clearInterval(t); };
   }, [playing]);
 
   // Compute projection
@@ -525,35 +548,6 @@ function pointsToPath(pts) {
     last = p;
   }
   return d;
-}
-
-function seedFeed(origs) {
-  const out = [];
-  if (!origs || !origs.length) return out;
-  for (let i = 0; i < 8; i++) {
-    const o = origs[i % origs.length];
-    out.push({
-      id: 'WZ-' + (9281047 - i * 3),
-      time: new Date(Date.now() - i * 1200),
-      origin: o,
-      msg: pickMsg(o),
-    });
-  }
-  return out;
-}
-
-function pickMsg(o) {
-  const pool = [
-    'SSH brute-force attempt',
-    'Suspicious PowerShell payload',
-    'SQL injection on /api/v2',
-    'Tor exit connection detected',
-    'Port scan · 1024 ports',
-    'Phishing URL clicked',
-    'Audit log clearing attempt',
-    'C2 beacon pattern',
-  ];
-  return pool[(o.count + o.lat.toString().length) % pool.length];
 }
 
 Object.assign(window, { PageMap });

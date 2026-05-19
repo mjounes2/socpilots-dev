@@ -72,12 +72,51 @@ function Spinner({ size = 24 }) {
 
 // ============= SIDEBAR =============
 function Sidebar({ current, onNav }) {
+  // Live badge counts — polled every 30s
+  const [badges, setBadges] = useState({});
+  const [me, setMe] = useState(null);
+  const [siemStatus, setSiemStatus] = useState({ ok: true, latency: null });
+
+  useEffect(() => {
+    let mounted = true;
+    const API = window.SOC_API;
+    async function loadAll() {
+      try {
+        const [dash, notifs, vulns, hiveAlerts] = await Promise.all([
+          API.get('/api/dashboard').catch(() => null),
+          API.get('/api/notifications?page=1&page_size=1&unread=true').catch(() => null),
+          API.get('/api/vulns').catch(() => null),
+          API.get('/api/hive-alerts/stats').catch(() => null),
+        ]);
+        if (!mounted) return;
+        const t0 = Date.now();
+        const ping = await API.get('/api/health').catch(() => null);
+        const latency = Date.now() - t0;
+        setSiemStatus({ ok: !!ping, latency });
+        setBadges({
+          alerts:        dash?.criticalAlerts > 0 ? String(dash.criticalAlerts) : null,
+          notifications: notifs?.total > 0 ? String(notifs.total) : null,
+          cases:         hiveAlerts?.new > 0 ? String(hiveAlerts.new) : null,
+          vulns:         vulns?.total > 0 ? String(vulns.total) : null,
+        });
+      } catch {}
+    }
+    async function loadMe() {
+      const m = await API.get('/api/me').catch(() => null);
+      if (mounted && m && !m.error) setMe(m);
+    }
+    loadMe();
+    loadAll();
+    const t = setInterval(loadAll, 30_000);
+    return () => { mounted = false; clearInterval(t); };
+  }, []);
+
   const items = [
     { group: 'OVERVIEW', items: [
       { id: 'dashboard',     label: 'Dashboard',          icon: Icon.grid, badge: null },
-      { id: 'alerts',        label: 'Alerts',             icon: Icon.bell, badge: '7' },
+      { id: 'alerts',        label: 'Alerts',             icon: Icon.bell, badge: badges.alerts },
       { id: 'investigation', label: 'Investigations',     icon: Icon.search, badge: null },
-      { id: 'notifications', label: 'Notifications',      icon: Icon.inbox, badge: '3' },
+      { id: 'notifications', label: 'Notifications',      icon: Icon.inbox, badge: badges.notifications },
     ]},
     { group: 'DETECT', items: [
       { id: 'mitre',        label: 'ATT&CK Coverage',    icon: Icon.grid, badge: null },
@@ -99,7 +138,7 @@ function Sidebar({ current, onNav }) {
       { id: 'map',          label: 'Live Threat Map',     icon: Icon.globe, badge: null },
     ]},
     { group: 'RESPOND', items: [
-      { id: 'cases',        label: 'SP-CM Cases',         icon: Icon.folder, badge: '23' },
+      { id: 'cases',        label: 'SP-CM Cases',         icon: Icon.folder, badge: badges.cases },
       { id: 'sp-alerts',    label: 'SP-CM Alerts',        icon: Icon.inbox, badge: null },
       { id: 'darksoc',      label: 'Dark SOC',            icon: Icon.shield, badge: 'BETA' },
       { id: 'sla',          label: 'SLA Management',      icon: Icon.cog, badge: null },
@@ -107,7 +146,7 @@ function Sidebar({ current, onNav }) {
     { group: 'SYSTEM', items: [
       { id: 'agents',       label: 'Agents',              icon: Icon.cpu, badge: null },
       { id: 'assets',       label: 'Assets',              icon: Icon.globe, badge: null },
-      { id: 'vulns',        label: 'Vulnerabilities',     icon: Icon.bug, badge: '142' },
+      { id: 'vulns',        label: 'Vulnerabilities',     icon: Icon.bug, badge: badges.vulns },
       { id: 'reports',      label: 'Reports',             icon: Icon.file, badge: null },
       { id: 'users',        label: 'Users',               icon: Icon.user, badge: null },
       { id: 'settings',     label: 'Settings',            icon: Icon.cog, badge: null },
@@ -157,17 +196,23 @@ function Sidebar({ current, onNav }) {
 
       <div className="sb-foot">
         <div className="sb-status">
-          <SevDot sev="low" />
+          <SevDot sev={siemStatus.ok ? 'low' : 'critical'} />
           <div className="sb-status-text">
             <div className="sb-status-label">SIEM · SP-CM · AI</div>
-            <div className="sb-status-sub">all systems nominal · 41ms</div>
+            <div className="sb-status-sub">
+              {siemStatus.ok
+                ? `all systems nominal · ${siemStatus.latency != null ? siemStatus.latency + 'ms' : '…'}`
+                : 'webapp unreachable'}
+            </div>
           </div>
         </div>
         <div className="sb-user" onClick={() => onNav('profile')} title="My Profile" style={{ cursor: 'pointer' }}>
-          <div className="sb-avatar">YJ</div>
+          <div className="sb-avatar">
+            {(me?.username || me?.display_name || '?').slice(0, 2).toUpperCase()}
+          </div>
           <div className="sb-user-text">
-            <div className="sb-user-name">younes</div>
-            <div className="sb-user-role">analyst · L3</div>
+            <div className="sb-user-name">{me?.username || 'guest'}</div>
+            <div className="sb-user-role">{me?.role || '—'}</div>
           </div>
         </div>
       </div>

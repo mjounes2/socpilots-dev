@@ -133,6 +133,9 @@ http {
       proxy_set_header   X-Forwarded-Proto https;
       proxy_cache_bypass $http_upgrade;
       proxy_read_timeout 90s;
+      # Prevent browser caching of the SPA HTML so design updates apply immediately
+      add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+      add_header Pragma "no-cache" always;
     }
   }
 }

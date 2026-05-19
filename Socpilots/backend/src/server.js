@@ -441,6 +441,93 @@ app.get('/health', (req, res) => res.json({
   time: new Date().toISOString(),
   config: { opensearch: OS_URL, thehive: HIVE_URL, n8n: N8N_URL }
 }));
+// Alias for /api/health (frontend uses /api/* prefix)
+app.get('/api/health', (req, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
+
+// ── Aggregated dependency health (used by Settings page) ──
+// Cached 30s. Pings each external dep in parallel with 3s timeout.
+let _depHealthCache = null;
+app.get('/api/health/deep', authMW, async (req, res) => {
+  const now = Date.now();
+  if (_depHealthCache && now - _depHealthCache.at < 30_000) {
+    return res.json(_depHealthCache.data);
+  }
+
+  const ping = async (name, fn) => {
+    const t0 = Date.now();
+    try {
+      const result = await Promise.race([
+        fn(),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 3000)),
+      ]);
+      return { name, ok: true, latency_ms: Date.now() - t0, ...result };
+    } catch (e) {
+      return { name, ok: false, latency_ms: Date.now() - t0, error: e.message.slice(0, 120) };
+    }
+  };
+
+  const checks = await Promise.all([
+    ping('postgres', async () => {
+      await db.pool.query('SELECT 1');
+      return { detail: 'connected' };
+    }),
+    ping('neo4j', async () => {
+      const ok = await ueba.ping();
+      if (!ok) throw new Error('not reachable');
+      return { detail: 'connected' };
+    }),
+    ping('opensearch', async () => {
+      const r = await axios.get(`${OS_URL}/_cluster/health`, {
+        timeout: 2500, auth: { username: OS_USER, password: OS_PASS },
+        httpsAgent: new (require('https').Agent)({ rejectUnauthorized: false }),
+      });
+      return { detail: r.data.status, cluster: r.data.cluster_name };
+    }),
+    ping('thehive', async () => {
+      const r = await axios.get(`${HIVE_URL}/api/status`, {
+        timeout: 2500,
+        httpsAgent: new (require('https').Agent)({ rejectUnauthorized: false }),
+      });
+      return { detail: r.data?.versions?.TheHive || 'reachable' };
+    }),
+    ping('langchain', async () => {
+      const r = await axios.get(`${LANGCHAIN_URL}/health`, { timeout: 2500 });
+      return { detail: r.data?.status || 'ok' };
+    }),
+    ping('rag', async () => {
+      const r = await axios.get(`${RAG_URL}/health`, { timeout: 2500 });
+      return { detail: r.data?.status || 'ok' };
+    }),
+    ping('knowledge', async () => {
+      const r = await axios.get(`${KNOWLEDGE_URL}/health`, { timeout: 2500 });
+      return { detail: r.data?.status || 'ok' };
+    }),
+    ping('ueba-ml', async () => {
+      const r = await axios.get(`${UEBA_ML_URL}/health`, { timeout: 2500 });
+      return { detail: r.data?.ok ? 'ok' : 'degraded', last_run: r.data?.last_run?.at };
+    }),
+    ping('qdrant', async () => {
+      const qUrl = process.env.QDRANT_URL || 'http://qdrant:6333';
+      const r = await axios.get(`${qUrl}/collections`, { timeout: 2500 });
+      return { detail: `${(r.data?.result?.collections || []).length} collections` };
+    }),
+  ]);
+
+  const okCount = checks.filter(c => c.ok).length;
+  const status = okCount === checks.length ? 'healthy'
+                : okCount >= checks.length * 0.7 ? 'degraded'
+                : 'critical';
+  const data = {
+    status,
+    ok_count: okCount,
+    total: checks.length,
+    checks,
+    uptime_sec: Math.floor(process.uptime()),
+    timestamp: new Date().toISOString(),
+  };
+  _depHealthCache = { at: now, data };
+  res.json(data);
+});
 
 // ── AUTH ──
 app.post('/api/login', async (req, res) => {
@@ -2408,6 +2495,104 @@ app.post('/api/settings', authMW, async (req, res) => {
     res.json({ ok: true, updated: keys });
   } catch(e) {
     res.status(503).json({ error: e.message });
+  }
+});
+
+// ── ENV-STATUS — show which config keys are SET; never expose values ──────
+// Settings page surfaces a configuration health check for operators.
+const ENV_KEY_SPEC = [
+  // Identity / TLS
+  { key: 'DOMAIN',                  category: 'Identity',    required: false, note: 'Public domain for TLS / cookies' },
+  { key: 'SERVER_IP',               category: 'Identity',    required: false, note: 'Public IP fallback' },
+  { key: 'CERTBOT_EMAIL',           category: 'Identity',    required: false, note: 'Let\'s Encrypt registration' },
+  { key: 'AUTH_SECRET_KEY',         category: 'Identity',    required: true,  note: 'Session signing key' },
+  { key: 'SOC_USERS',               category: 'Identity',    required: true,  note: 'Seed users (user:pass:role,...)' },
+  // SIEM
+  { key: 'WAZUH_HOST',              category: 'SIEM',        required: true,  note: 'Wazuh manager host' },
+  { key: 'WAZUH_PORT',              category: 'SIEM',        required: false, note: 'Wazuh manager API port' },
+  { key: 'WAZUH_USER',              category: 'SIEM',        required: true },
+  { key: 'WAZUH_PASS',              category: 'SIEM',        required: true,  secret: true },
+  { key: 'WAZUH_INDEXER_HOST',      category: 'SIEM',        required: true },
+  { key: 'WAZUH_INDEXER_PORT',      category: 'SIEM',        required: false },
+  { key: 'WAZUH_INDEXER_USER',      category: 'SIEM',        required: true },
+  { key: 'WAZUH_INDEXER_PASS',      category: 'SIEM',        required: true,  secret: true },
+  { key: 'OPENSEARCH_URL',          category: 'SIEM',        required: true,  note: 'OpenSearch HTTPS endpoint' },
+  { key: 'OPENSEARCH_USER',         category: 'SIEM',        required: true },
+  { key: 'OPENSEARCH_PASS',         category: 'SIEM',        required: true,  secret: true },
+  { key: 'WAZUH_INDEX',             category: 'SIEM',        required: false, note: 'Default: wazuh-alerts-*' },
+  // Cases (TheHive)
+  { key: 'THEHIVE_URL',             category: 'Cases',       required: true },
+  { key: 'THEHIVE_API_KEY',         category: 'Cases',       required: true,  secret: true },
+  // Database
+  { key: 'PG_USER',                 category: 'Database',    required: true },
+  { key: 'PG_PASSWORD',             category: 'Database',    required: true,  secret: true },
+  { key: 'PG_DATABASE',             category: 'Database',    required: true },
+  { key: 'NEO4J_PASSWORD',          category: 'Database',    required: false, secret: true, note: 'UEBA — leave empty to disable' },
+  { key: 'QDRANT_API_KEY',          category: 'Database',    required: false, secret: true, note: 'Vector DB' },
+  // AI / LLM
+  { key: 'OPENAI_API_KEY',          category: 'AI',          required: false, secret: true, note: 'Primary LLM' },
+  { key: 'MISTRAL_API_KEY',         category: 'AI',          required: false, secret: true, note: 'Fallback LLM' },
+  { key: 'LANGCHAIN_INTERNAL_TOKEN',category: 'AI',          required: false, secret: true, note: 'Service-to-service auth' },
+  { key: 'RAG_API_KEY',             category: 'AI',          required: false, secret: true },
+  // Threat Intel
+  { key: 'VIRUSTOTAL_API_KEY',      category: 'Threat Intel',required: false, secret: true },
+  { key: 'ABUSEIPDB_API_KEY',       category: 'Threat Intel',required: false, secret: true },
+  { key: 'OTX_API_KEY',             category: 'Threat Intel',required: false, secret: true, note: 'AlienVault OTX' },
+  { key: 'SHODAN_API_KEY',          category: 'Threat Intel',required: false, secret: true },
+  { key: 'GREYNOISE_API_KEY',       category: 'Threat Intel',required: false, secret: true },
+  { key: 'URLSCAN_API_KEY',         category: 'Threat Intel',required: false, secret: true },
+  { key: 'HYBRID_ANALYSIS_API_KEY', category: 'Threat Intel',required: false, secret: true },
+  { key: 'CROWDSEC_API_KEY',        category: 'Threat Intel',required: false, secret: true },
+  { key: 'MISP_URL',                category: 'Threat Intel',required: false },
+  { key: 'MISP_API_KEY',            category: 'Threat Intel',required: false, secret: true },
+  { key: 'OPENCTI_URL',             category: 'Threat Intel',required: false },
+  { key: 'OPENCTI_API_KEY',         category: 'Threat Intel',required: false, secret: true },
+  // Automation
+  { key: 'N8N_USER',                category: 'Automation',  required: false },
+  { key: 'N8N_PASSWORD',            category: 'Automation',  required: false, secret: true },
+  { key: 'N8N_WEBHOOK_URL',         category: 'Automation',  required: false },
+  { key: 'N8N_INVESTIGATION_URL',   category: 'Automation',  required: false },
+  { key: 'HUNT_SCHEDULER_ENABLED',  category: 'Automation',  required: false, note: 'true/false' },
+  { key: 'MCP_API_KEY',             category: 'Automation',  required: false, secret: true },
+  { key: 'WAZUH_MCP_AUTH_MODE',     category: 'Automation',  required: false },
+];
+
+function _envPreview(value, isSecret) {
+  if (!value) return '';
+  if (!isSecret) {
+    // Non-secret values: show up to 32 chars
+    return value.length > 32 ? value.slice(0, 29) + '…' : value;
+  }
+  // Secrets: show only enough to confirm "yes, that one"
+  if (value.length <= 6)  return '••••';
+  if (value.length <= 14) return value.slice(0, 2) + '••••' + value.slice(-2);
+  return value.slice(0, 4) + '••••' + value.slice(-3);
+}
+
+app.get('/api/settings/env-status', authMW, async (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'admin only' });
+  try {
+    const items = ENV_KEY_SPEC.map(spec => {
+      const raw = process.env[spec.key];
+      const set = !!(raw && raw.trim().length > 0);
+      return {
+        key: spec.key,
+        category: spec.category,
+        required: !!spec.required,
+        set,
+        preview: set ? _envPreview(raw, !!spec.secret) : '',
+        note: spec.note || '',
+      };
+    });
+    const summary = {
+      total: items.length,
+      set: items.filter(i => i.set).length,
+      missing_required: items.filter(i => i.required && !i.set).length,
+    };
+    res.json({ items, summary });
+  } catch (e) {
+    console.error('[settings/env-status]', e.message);
+    res.status(500).json({ error: e.message });
   }
 });
 

@@ -1,47 +1,22 @@
 // Settings — connection diagnostics, integrations, users, audit log
 const { useState: useStateSet, useMemo: useMemoSet, useEffect: useEffectSet } = React;
 
-const INTEGRATIONS = [
-  { id: 'siem',    name: 'SIEM · Wazuh + OpenSearch', host: 'vmi3247591.contaboserver.net:9200', latency: 41, status: 'healthy', uptime: 99.97, lastEvent: '2s ago', icon: 'globe',  desc: 'Alerts · agents · rules · MITRE mapping' },
-  { id: 'spcm',    name: 'SP-CM · TheHive',           host: 'app.socpilots.com',                 latency: 22, status: 'healthy', uptime: 99.99, lastEvent: '4s ago', icon: 'folder', desc: 'Case management · alert inbox' },
-  { id: 'n8n',     name: 'SOCPilots AI · n8n',         host: 'vmi3254460.contaboserver.net:5678', latency: 38, status: 'healthy', uptime: 99.92, lastEvent: '8s ago', icon: 'brain',  desc: 'Workflow automation · MCP bridge' },
-  { id: 'openai',  name: 'OpenAI · gpt-4o',            host: 'api.openai.com',                    latency: 412, status: 'healthy', uptime: 99.78, lastEvent: '12s ago', icon: 'spark', desc: 'AI investigation engine' },
-  { id: 'vt',      name: 'VirusTotal',                  host: 'www.virustotal.com',                latency: 287, status: 'degraded', uptime: 98.42, lastEvent: '1m ago', icon: 'target', desc: 'IOC reputation enrichment' },
-  { id: 'abuse',   name: 'AbuseIPDB',                   host: 'api.abuseipdb.com',                 latency: 198, status: 'healthy', uptime: 99.81, lastEvent: '34s ago', icon: 'shield', desc: 'IP reputation scoring' },
-  { id: 'misp',    name: 'MISP threat feed',           host: 'misp.cert.local',                   latency: 0,   status: 'offline',  uptime: 87.21, lastEvent: '14m ago', icon: 'share',  desc: 'Indicator sharing platform' },
-  { id: 'mcp',     name: 'Wazuh MCP bridge',            host: 'vmi3254460.contaboserver.net:8080', latency: 19, status: 'healthy', uptime: 99.94, lastEvent: '6s ago', icon: 'cpu',    desc: 'AI ↔ SIEM tool-call bridge' },
-];
+// ── Map /api/health/deep check name → display label + icon + description ──
+const HEALTH_META = {
+  postgres:   { name: 'PostgreSQL',                icon: 'cpu',    desc: 'Persistent state · investigations · approvals' },
+  neo4j:      { name: 'Neo4j · UEBA graph',        icon: 'share',  desc: 'User & entity behavior graph' },
+  opensearch: { name: 'SIEM · OpenSearch',         icon: 'globe',  desc: 'Wazuh alerts · agents · rule index' },
+  thehive:    { name: 'SP-CM · TheHive',           icon: 'folder', desc: 'Case management · alert inbox' },
+  langchain:  { name: 'LangChain · ReAct agent',   icon: 'brain',  desc: 'AI investigation engine' },
+  rag:        { name: 'RAG Retrieval',             icon: 'search', desc: 'Vector search · MITRE knowledge' },
+  knowledge:  { name: 'Knowledge Ingestion',       icon: 'file',   desc: 'Evidence upload · embedding pipeline' },
+  'ueba-ml':  { name: 'UEBA ML',                   icon: 'cpu',    desc: 'Isolation Forest · z-score · DBSCAN' },
+  qdrant:     { name: 'Qdrant vector DB',          icon: 'target', desc: 'BGE embeddings · 384-dim cosine' },
+};
 
-const USERS = [
-  { id: 'u1', name: 'younes',  email: 'younes@socpilots.com', role: 'admin',   last: 'now',     mfa: true,  cases: 14 },
-  { id: 'u2', name: 'sara',    email: 'sara@socpilots.com',   role: 'analyst', last: '2m ago',  mfa: true,  cases: 8  },
-  { id: 'u3', name: 'amir',    email: 'amir@socpilots.com',   role: 'analyst', last: '5h ago',  mfa: true,  cases: 6  },
-  { id: 'u4', name: 'ciso',    email: 'ciso@socpilots.com',   role: 'viewer',  last: '1d ago',  mfa: true,  cases: 0  },
-  { id: 'u5', name: 'on-call', email: 'oncall@socpilots.com', role: 'analyst', last: '12d ago', mfa: false, cases: 0  },
-];
-
-const AUDIT_LOG = [
-  { t: '14:22:47', who: 'younes',  action: 'case.create',      target: 'CASE-4471',       tone: 'ok' },
-  { t: '14:22:31', who: 'system',  action: 'agent.isolate',    target: 'web-prod-01',     tone: 'crit' },
-  { t: '14:22:08', who: 'younes',  action: 'runbook.advance',  target: 'CASE-4471 · 2/6', tone: 'default' },
-  { t: '14:21:42', who: 'system',  action: 'firewall.block',   target: '185.220.101.42',  tone: 'crit' },
-  { t: '14:20:55', who: 'sara',    action: 'alert.promote',    target: 'AL-2640 → CASE-4470', tone: 'ok' },
-  { t: '14:18:11', who: 'younes',  action: 'rule.disable',     target: 'rule 5503',       tone: 'default' },
-  { t: '14:15:02', who: 'system',  action: 'integration.degrade', target: 'VirusTotal',   tone: 'warn' },
-  { t: '14:11:54', who: 'amir',    action: 'case.close',       target: 'CASE-4438',       tone: 'ok' },
-  { t: '14:08:33', who: 'system',  action: 'auth.login',       target: 'younes from 10.0.8.41', tone: 'default' },
-  { t: '14:02:09', who: 'sara',    action: 'report.send',      target: 'RPT-2026-018',    tone: 'ok' },
-];
-
-const SECRETS = [
-  { key: 'OPENSEARCH_PASS',       value: '••••••••••••••••', rotated: '12d ago' },
-  { key: 'THEHIVE_API_KEY',       value: '••••••••••••••••', rotated: '8d ago' },
-  { key: 'OPENAI_API_KEY',        value: '••••••••••••••••', rotated: '3d ago' },
-  { key: 'VIRUSTOTAL_API_KEY',    value: '••••••••••••••••', rotated: '21d ago', warn: true },
-  { key: 'ABUSEIPDB_API_KEY',     value: '••••••••••••••••', rotated: '5d ago' },
-  { key: 'AUTH_SECRET_KEY',       value: '••••••••••••••••', rotated: '1d ago' },
-  { key: 'MCP_API_KEY',           value: '••••••••••••••••', rotated: '7d ago' },
-  { key: 'N8N_PASSWORD',          value: '••••••••••••••••', rotated: '14d ago' },
+// Settings keys that store API keys / passwords (never exposed)
+const SECRET_KEY_PATTERNS = [
+  /api_key/i, /password/i, /pass$/i, /_pass$/i, /secret/i, /token/i,
 ];
 
 function PageSettings() {
@@ -100,53 +75,105 @@ function PageSettings() {
   );
 }
 
-// ============= INTEGRATIONS =============
+// ============= INTEGRATIONS — wired to /api/health/deep ===========
 function SettingsIntegrations() {
+  const [health, setHealth] = useStateSet(null);
+  const [loading, setLoading] = useStateSet(true);
   const [testing, setTesting] = useStateSet(null);
-  function test(id) {
-    setTesting(id);
-    setTimeout(() => {
-      setTesting(null);
-      window.socToast?.({ title: 'Connection OK', sub: id + ' · responded in ' + (20 + Math.random() * 200 | 0) + 'ms', tone: 'ok' });
-    }, 1100);
+
+  async function load() {
+    setLoading(true);
+    const d = await window.SOC_API.get('/api/health/deep');
+    if (d && !d.error) setHealth(d);
+    setLoading(false);
   }
+  useEffectSet(() => {
+    load();
+    const t = setInterval(load, 30_000);
+    return () => clearInterval(t);
+  }, []);
+
+  async function test(checkName) {
+    setTesting(checkName);
+    await load();
+    setTesting(null);
+    const check = health?.checks?.find(c => c.name === checkName);
+    if (check) {
+      window.socToast?.({
+        title:  check.ok ? 'Connection OK' : 'Connection failed',
+        sub:    `${checkName} · ${check.ok ? `${check.latency_ms}ms` : check.error}`,
+        tone:   check.ok ? 'ok' : 'crit',
+      });
+    }
+  }
+
+  if (loading && !health) {
+    return <Card title="External integrations"><div className="empty mono"><Spinner/> Probing dependencies…</div></Card>;
+  }
+  if (!health) {
+    return <Card title="External integrations"><div className="empty mono">Health endpoint unavailable</div></Card>;
+  }
+
+  const checks = health.checks || [];
+  const statusToLabel = ok => ok ? 'healthy' : 'offline';
+
   return (
     <>
-      <Card title="External integrations" sub="upstream services this app depends on">
+      <Card title="External integrations"
+        sub={`${health.ok_count}/${health.total} healthy · refreshed every 30s`}
+        actions={<>
+          <Chip mono tone={health.status === 'healthy' ? 'ok' : health.status === 'degraded' ? 'warn' : 'crit'}>
+            {health.status?.toUpperCase()}
+          </Chip>
+          <button className="btn btn-ghost btn-sm" onClick={load}>
+            <Icon.refresh width="11" height="11"/> Refresh
+          </button>
+        </>}>
         <ul className="integrations-list">
-          {INTEGRATIONS.map(s => {
-            const Ic = Icon[s.icon] || Icon.dot;
+          {checks.map(c => {
+            const meta = HEALTH_META[c.name] || { name: c.name, icon: 'dot', desc: 'internal service' };
+            const Ic = Icon[meta.icon] || Icon.dot;
+            const status = statusToLabel(c.ok);
             return (
-              <li key={s.id} className={`integration ${s.status}`}>
+              <li key={c.name} className={`integration ${status}`}>
                 <div className="int-icon"><Ic width="16" height="16"/></div>
                 <div className="int-info">
-                  <div className="int-name">{s.name}</div>
-                  <div className="int-host mono">{s.host}</div>
-                  <div className="int-desc">{s.desc}</div>
+                  <div className="int-name">{meta.name}</div>
+                  <div className="int-host mono">{c.detail || c.error || '—'}</div>
+                  <div className="int-desc">{meta.desc}</div>
                 </div>
                 <div className="int-stats">
                   <div className="int-stat">
                     <div className="is-lbl mono">LATENCY</div>
-                    <div className="is-val mono">{s.latency === 0 ? '—' : s.latency + 'ms'}</div>
+                    <div className="is-val mono">{c.latency_ms != null ? c.latency_ms + 'ms' : '—'}</div>
                   </div>
                   <div className="int-stat">
-                    <div className="is-lbl mono">UPTIME 30D</div>
-                    <div className="is-val mono">{s.uptime}%</div>
+                    <div className="is-lbl mono">STATUS</div>
+                    <div className="is-val mono" style={{ color: c.ok ? 'var(--low)' : 'var(--crit)' }}>
+                      {c.ok ? 'OK' : 'DOWN'}
+                    </div>
                   </div>
-                  <div className="int-stat">
-                    <div className="is-lbl mono">LAST EVENT</div>
-                    <div className="is-val mono">{s.lastEvent}</div>
-                  </div>
+                  {c.cluster && (
+                    <div className="int-stat">
+                      <div className="is-lbl mono">CLUSTER</div>
+                      <div className="is-val mono">{c.cluster}</div>
+                    </div>
+                  )}
+                  {c.last_run && (
+                    <div className="int-stat">
+                      <div className="is-lbl mono">LAST RUN</div>
+                      <div className="is-val mono">{c.last_run.slice(11,16)}</div>
+                    </div>
+                  )}
                 </div>
                 <div className="int-status">
-                  <StatusBadge status={s.status}/>
+                  <StatusBadge status={status}/>
                 </div>
                 <div className="int-actions">
-                  <button className="btn btn-ghost btn-sm" onClick={()=>test(s.id)}>
-                    {testing === s.id ? <span className="test-spin"/> : <Icon.refresh width="11" height="11"/>}
+                  <button className="btn btn-ghost btn-sm" onClick={() => test(c.name)} disabled={testing === c.name}>
+                    {testing === c.name ? <span className="test-spin"/> : <Icon.refresh width="11" height="11"/>}
                     Test
                   </button>
-                  <button className="btn btn-ghost btn-sm">Configure</button>
                 </div>
               </li>
             );
@@ -154,18 +181,10 @@ function SettingsIntegrations() {
         </ul>
       </Card>
 
-      <Card title="System health" sub="last 24h">
-        <div className="health-grid">
-          {INTEGRATIONS.slice(0, 6).map(s => (
-            <div key={s.id} className="health-cell">
-              <div className="hc-head">
-                <span className="hc-name">{s.name.split(' · ')[0]}</span>
-                <StatusBadge status={s.status} small/>
-              </div>
-              <HealthSpark status={s.status}/>
-              <div className="hc-foot mono">avg {s.latency || '—'}ms · {s.uptime}%</div>
-            </div>
-          ))}
+      <Card title="Process info" sub="webapp container">
+        <div className="mono" style={{ fontSize: 12, color: 'var(--fg-1)', padding: 8, display: 'flex', gap: 20 }}>
+          <div>uptime: <span style={{ color: 'var(--fg-0)' }}>{Math.floor((health.uptime_sec || 0) / 60)}m</span></div>
+          <div>last refresh: <span style={{ color: 'var(--fg-0)' }}>{health.timestamp?.slice(11,19)}</span></div>
         </div>
       </Card>
     </>
@@ -183,57 +202,74 @@ function StatusBadge({ status, small }) {
   );
 }
 
-function HealthSpark({ status }) {
-  const data = useMemoSet(() => {
-    const base = status === 'healthy' ? 40 : status === 'degraded' ? 80 : 0;
-    const variance = status === 'healthy' ? 12 : status === 'degraded' ? 30 : 0;
-    return Array.from({length: 30}, (_, i) => base + (Math.sin(i / 3 + base) * variance) + Math.random() * 10);
-  }, [status]);
-  const color = status === 'healthy' ? 'var(--low)' : status === 'degraded' ? 'var(--high)' : 'var(--crit)';
-  if (status === 'offline') {
+// ============= USERS — wired to /api/users (admin only) =============
+function SettingsUsers() {
+  const [users, setUsers] = useStateSet([]);
+  const [loading, setLoading] = useStateSet(true);
+  const [denied, setDenied] = useStateSet(false);
+
+  async function load() {
+    setLoading(true);
+    const d = await window.SOC_API.get('/api/users');
+    if (d?.error?.toLowerCase().includes('permission') || d?.error?.toLowerCase().includes('insufficient')) {
+      setDenied(true);
+    } else if (Array.isArray(d?.users)) {
+      setUsers(d.users);
+    } else if (Array.isArray(d)) {
+      setUsers(d);
+    }
+    setLoading(false);
+  }
+  useEffectSet(() => { load(); }, []);
+
+  if (denied) {
     return (
-      <div className="health-spark-offline mono">
-        — connection lost —
-      </div>
+      <Card title="Users & roles" sub="admin permission required">
+        <div className="mono" style={{ padding: 14, color: 'var(--fg-2)' }}>
+          <Icon.shield width="13" height="13"/> Only administrators can view user accounts. Ask an admin to grant your role.
+        </div>
+      </Card>
     );
   }
-  return <Sparkline data={data} height={40} color={color}/>;
-}
 
-// ============= USERS =============
-function SettingsUsers() {
   return (
-    <Card title="Users & roles" sub={`${USERS.length} accounts`}
-      actions={<button className="btn btn-primary btn-sm"><Icon.plus width="11" height="11"/> Invite user</button>}>
-      <table className="data-table">
-        <thead><tr>
-          <th>USER</th>
-          <th>EMAIL</th>
-          <th>ROLE</th>
-          <th>MFA</th>
-          <th>LAST SEEN</th>
-          <th>OPEN CASES</th>
-          <th></th>
-        </tr></thead>
-        <tbody>
-          {USERS.map(u => (
-            <tr key={u.id}>
-              <td>
-                <div className="user-cell">
-                  <span className="sb-avatar" style={{width:24,height:24,fontSize:10}}>{u.name[0].toUpperCase()}</span>
-                  <span className="mono">{u.name}</span>
-                </div>
-              </td>
-              <td className="mono dim">{u.email}</td>
-              <td><RoleChip role={u.role}/></td>
-              <td>{u.mfa ? <Chip mono tone="ok">enabled</Chip> : <Chip mono tone="crit">disabled</Chip>}</td>
-              <td className="mono dim">{u.last}</td>
-              <td className="mono">{u.cases}</td>
-              <td><button className="btn-icon"><Icon.chevron width="12" height="12"/></button></td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <Card title="Users & roles" sub={`${users.length} accounts`}
+      actions={
+        <button className="btn btn-ghost btn-sm" onClick={load}>
+          <Icon.refresh width="11" height="11"/> Refresh
+        </button>
+      }>
+      {loading ? <div className="empty mono"><Spinner/> Loading users…</div>
+      : users.length === 0 ? <div className="empty mono">No users yet</div>
+      : (
+        <table className="data-table">
+          <thead><tr>
+            <th>USER</th>
+            <th>ROLE</th>
+            <th>CREATED</th>
+            <th>LAST LOGIN</th>
+            <th>OPEN CASES</th>
+          </tr></thead>
+          <tbody>
+            {users.map(u => (
+              <tr key={u.username || u.id}>
+                <td>
+                  <div className="user-cell">
+                    <span className="sb-avatar" style={{width:24,height:24,fontSize:10}}>
+                      {(u.username || '?')[0].toUpperCase()}
+                    </span>
+                    <span className="mono">{u.username || u.name}</span>
+                  </div>
+                </td>
+                <td><RoleChip role={u.role}/></td>
+                <td className="mono dim">{u.created_at ? u.created_at.slice(0, 10) : '—'}</td>
+                <td className="mono dim">{u.last_login ? u.last_login.slice(0, 16).replace('T', ' ') : '—'}</td>
+                <td className="mono">{u.open_cases ?? '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </Card>
   );
 }
@@ -243,46 +279,61 @@ function RoleChip({ role }) {
   return <Chip mono tone={map[role]}>{role}</Chip>;
 }
 
-// ============= SECRETS =============
+// ============= SECRETS — show configuration status only (never values) =====
+// Lists secret-looking env vars expected by the stack and shows whether each
+// is configured. The webapp never reads back env values to the frontend —
+// only "set" or "missing" is exposed.
 function SettingsSecrets() {
-  const [revealed, setRevealed] = useStateSet(new Set());
-  function rotate(k) {
-    window.socToast?.({title: 'Secret rotated', sub: k + ' · new value generated and re-deployed', tone: 'ok'});
+  const [envStatus, setEnvStatus] = useStateSet(null);
+  const [loading, setLoading] = useStateSet(true);
+
+  async function load() {
+    setLoading(true);
+    const d = await window.SOC_API.get('/api/settings/env-status');
+    if (d && !d.error) setEnvStatus(d);
+    setLoading(false);
   }
+  useEffectSet(() => { load(); }, []);
+
   return (
-    <Card title=".env secrets" sub="encrypted at rest · rotate regularly"
-      actions={<button className="btn btn-ghost btn-sm">Export .env.example</button>}>
+    <Card title="Environment & secrets" sub="configuration status · values never exposed"
+      actions={<button className="btn btn-ghost btn-sm" onClick={load}>
+        <Icon.refresh width="11" height="11"/> Refresh
+      </button>}>
       <div className="secrets-warning mono">
         <Icon.shield width="13" height="13"/>
-        Secrets are stored in your <code>.env</code> file. Never commit them. The values shown are masked; click the eye to reveal locally.
+        Secret values live in the host <code>.env</code> file and are read by the container at boot.
+        This UI shows only <strong>whether each key is set</strong> — values are never sent over the wire.
+        Rotate secrets by editing <code>.env</code> and running <code>docker compose restart</code>.
       </div>
-      <table className="data-table secrets-table">
-        <thead><tr>
-          <th style={{width:280}}>KEY</th>
-          <th>VALUE</th>
-          <th style={{width:120}}>LAST ROTATED</th>
-          <th style={{width:120}}></th>
-        </tr></thead>
-        <tbody>
-          {SECRETS.map(s => (
-            <tr key={s.key}>
-              <td className="mono">{s.key}</td>
-              <td>
-                <div className="secret-row">
-                  <span className="mono">{revealed.has(s.key) ? 'sk-proj-' + Math.random().toString(36).slice(2, 18) : s.value}</span>
-                  <button className="btn-icon" onClick={()=>setRevealed(r => { const n = new Set(r); if (n.has(s.key)) n.delete(s.key); else n.add(s.key); return n; })}>
-                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-                  </button>
-                </div>
-              </td>
-              <td className="mono dim">{s.rotated}{s.warn && <span className="ver-warn" title="overdue"> ↑</span>}</td>
-              <td>
-                <button className="btn btn-ghost btn-sm" onClick={()=>rotate(s.key)}><Icon.refresh width="10" height="10"/> Rotate</button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      {loading ? <div className="empty mono"><Spinner/> Checking environment…</div>
+      : !envStatus ? <div className="empty mono">Unable to read env status</div>
+      : (
+        <table className="data-table secrets-table">
+          <thead><tr>
+            <th style={{width:300}}>KEY</th>
+            <th style={{width:120}}>CATEGORY</th>
+            <th>STATUS</th>
+            <th style={{width:200}}>NOTES</th>
+          </tr></thead>
+          <tbody>
+            {(envStatus.items || []).map(s => (
+              <tr key={s.key}>
+                <td className="mono">{s.key}</td>
+                <td><Chip mono tone={s.required ? 'crit' : 'default'}>{s.category || 'misc'}</Chip></td>
+                <td>
+                  {s.set
+                    ? <Chip mono tone="ok">SET · {s.preview}</Chip>
+                    : s.required
+                      ? <Chip mono tone="crit">MISSING (required)</Chip>
+                      : <Chip mono>not set</Chip>}
+                </td>
+                <td className="mono dim" style={{ fontSize: 11 }}>{s.note || ''}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </Card>
   );
 }
