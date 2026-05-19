@@ -2112,6 +2112,128 @@ Analyst narrative:"""
     return {"explanation": explanation, "entity": req.entity, "risk_score": risk_score}
 
 
+# ═══════════════════════════════════════════════════════════════
+#  AUTONOMOUS DARK SOC — LangGraph Multi-Agent Investigation
+#  Zero-human investigation pipeline with safety gates.
+#  Coexists with the legacy ReAct endpoints above (still used by n8n).
+# ═══════════════════════════════════════════════════════════════
+try:
+    from graph.engine import (
+        run_autonomous_investigation,
+        stream_autonomous_investigation,
+        get_graph,
+    )
+    _LANGGRAPH_AVAILABLE = True
+    log.info("[main] LangGraph autonomous engine loaded")
+except Exception as _e:
+    log.warning(f"[main] LangGraph engine unavailable: {_e}")
+    _LANGGRAPH_AVAILABLE = False
+
+
+class AutonomousRequest(BaseModel):
+    alert: dict
+    session_id: str = ""
+    deep_mode: bool = True
+
+
+@app.get("/autonomous/health")
+def autonomous_health():
+    if not _LANGGRAPH_AVAILABLE:
+        return {"available": False, "reason": "LangGraph not installed or failed to load"}
+    try:
+        g = get_graph()
+        return {
+            "available": True,
+            "engine": "langgraph",
+            "nodes": list(g.nodes.keys()) if hasattr(g, "nodes") else [],
+            "version": "1.0",
+        }
+    except Exception as e:
+        return {"available": False, "error": str(e)}
+
+
+@app.post("/autonomous/investigate")
+async def autonomous_investigate(req: AutonomousRequest):
+    """
+    Run a complete autonomous (zero-human) investigation through the LangGraph pipeline.
+
+    Pipeline:
+      1. Memory retrieval (prior investigations, entity reputation)
+      2. Fast triage
+      3. Parallel enrichment (IOC/Shodan/UEBA/hunt/cases/assets/RAG)
+      4. Correlation synthesis
+      5. Two-LLM consensus verdict
+      6. Action planning
+      7. Safety gate (replaces human approval)
+      8. Autonomous executor
+      9. Final report
+      10. Persistence
+
+    Returns the final state with executed actions, report, and structured verdict.
+    """
+    if not _LANGGRAPH_AVAILABLE:
+        raise HTTPException(503, "LangGraph engine not available")
+    if not req.alert:
+        raise HTTPException(400, "alert required")
+
+    try:
+        # Run in executor to avoid blocking the event loop on sync graph.invoke
+        loop = asyncio.get_event_loop()
+        final_state = await loop.run_in_executor(
+            None,
+            lambda: run_autonomous_investigation(req.alert, req.session_id, req.deep_mode),
+        )
+        return {
+            "ok": True,
+            "session_id":          final_state.get("session_id"),
+            "investigation_id":    final_state.get("investigation_id"),
+            "report":              final_state.get("final_report", ""),
+            "structured":          final_state.get("structured_verdict", {}),
+            "severity":            final_state.get("severity_assessment"),
+            "triage_verdict":      final_state.get("triage_verdict"),
+            "consensus_reached":   final_state.get("consensus_reached"),
+            "consensus_confidence":final_state.get("consensus_confidence"),
+            "executed_actions":    final_state.get("executed_actions", []),
+            "failed_actions":      final_state.get("failed_actions", []),
+            "safety_status":       final_state.get("safety_status"),
+            "safety_reasons":      final_state.get("safety_reasons", []),
+            "mitre_techniques":    final_state.get("mitre_techniques", []),
+            "attack_chain":        final_state.get("attack_chain", []),
+            "duration_ms":         final_state.get("duration_ms"),
+            "node_trace":          final_state.get("node_trace", []),
+            "errors":              final_state.get("errors", []),
+            "engine":              "langgraph",
+        }
+    except Exception as e:
+        log.exception(f"[autonomous/investigate] {e}")
+        raise HTTPException(500, f"Autonomous engine error: {e}")
+
+
+@app.post("/autonomous/stream")
+async def autonomous_stream(req: AutonomousRequest):
+    """SSE streaming: emit each node completion event as it happens."""
+    if not _LANGGRAPH_AVAILABLE:
+        raise HTTPException(503, "LangGraph engine not available")
+    if not req.alert:
+        raise HTTPException(400, "alert required")
+
+    async def _gen():
+        try:
+            async for event in stream_autonomous_investigation(req.alert, req.session_id, req.deep_mode):
+                # event is a dict of {node_name: state_update}
+                for node_name, update in event.items():
+                    chunk = {
+                        "node": node_name,
+                        "trace": update.get("node_trace", [])[-1] if update.get("node_trace") else None,
+                    }
+                    yield f"data: {json.dumps(chunk)}\n\n"
+            yield "data: " + json.dumps({"node": "__end__"}) + "\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'node': '__error__', 'error': str(e)[:300]})}\n\n"
+
+    return StreamingResponse(_gen(), media_type="text/event-stream")
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8001, log_level="info")

@@ -4692,6 +4692,169 @@ app.post('/api/langchain/hunt-queries', authMW, async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════
+//  AUTONOMOUS DARK SOC — LangGraph multi-agent pipeline
+//  Zero-human investigation with built-in safety gate.
+// ═══════════════════════════════════════════════════════════════
+
+app.get('/api/autonomous/health', authMW, async (req, res) => {
+  try {
+    const r = await axios.get(`${LANGCHAIN_URL}/autonomous/health`, { timeout: 5_000 });
+    res.json(r.data);
+  } catch(e) {
+    res.status(502).json({ available: false, error: e.message });
+  }
+});
+
+app.post('/api/autonomous/investigate', authMW, requireRole('l2'), async (req, res) => {
+  const { alert, session_id, deep_mode } = req.body || {};
+  if (!alert) return res.status(400).json({ error: 'alert required' });
+  try {
+    const r = await axios.post(`${LANGCHAIN_URL}/autonomous/investigate`,
+      { alert, session_id: session_id || `auto_${Date.now()}`, deep_mode: deep_mode !== false },
+      { timeout: 300_000, headers: { Authorization: `Bearer ${LANGCHAIN_TOKEN}` } }
+    );
+    const d = r.data || {};
+
+    // Emit real-time event so frontend can update KPIs
+    io.emit('autonomous:complete', {
+      session_id:       d.session_id,
+      investigation_id: d.investigation_id,
+      severity:         d.severity,
+      executed_actions: (d.executed_actions || []).map(a => a.type),
+      safety_status:    d.safety_status,
+      timestamp:        new Date().toISOString(),
+    });
+
+    // Audit log
+    db.createSystemEvent(
+      'autonomous_investigation',
+      req.user.username,
+      `Autonomous investigation: rule ${alert.ruleId} on ${alert.agent} — ${d.severity || 'unknown'} — ${(d.executed_actions || []).length} action(s)`,
+      d.errors?.length ? 'error' : 'ok',
+      {
+        investigation_id: d.investigation_id,
+        severity: d.severity,
+        executed_count: (d.executed_actions || []).length,
+        consensus_reached: d.consensus_reached,
+        safety_status: d.safety_status,
+        duration_ms: d.duration_ms,
+      }
+    ).catch(() => {});
+
+    res.json(d);
+  } catch(e) {
+    const msg = e.response?.data?.detail || e.message;
+    console.error('[autonomous/investigate]', msg);
+    res.status(502).json({ error: `Autonomous engine error: ${msg}` });
+  }
+});
+
+app.post('/api/autonomous/stream', authMW, requireRole('l2'), async (req, res) => {
+  try {
+    const upstream = await axios.post(`${LANGCHAIN_URL}/autonomous/stream`, req.body, {
+      timeout: 300_000,
+      headers: { Authorization: `Bearer ${LANGCHAIN_TOKEN}` },
+      responseType: 'stream',
+    });
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    upstream.data.pipe(res);
+  } catch(e) {
+    res.status(502).json({ error: `Autonomous stream error: ${e.message}` });
+  }
+});
+
+// ── Internal: LangGraph engine persistence callback ─────────────
+// Called by the autonomous engine (graph/memory.py persist_node) to save the
+// completed investigation to PostgreSQL. Uses internal Bearer token.
+app.post('/api/ai/investigate/persist', authMW, async (req, res) => {
+  // Only allow internal service calls (langchain-agent)
+  if (req.user.role !== 'l2' && req.user.role !== 'admin' && req.user.role !== 'l3') {
+    return res.status(403).json({ error: 'insufficient role' });
+  }
+  const { alert, session_id, autoTriaged, deep_mode, _precomputed } = req.body || {};
+  if (!alert || !_precomputed) return res.status(400).json({ error: 'alert and _precomputed required' });
+
+  try {
+    const report     = _precomputed.report || '';
+    const structured = _precomputed.structured || null;
+    const text       = report;
+    const alertSeverity = alert.severity ||
+      (alert.level >= 12 ? 'critical' : alert.level >= 8 ? 'high' : alert.level >= 5 ? 'medium' : 'low');
+
+    const saved = await db.saveInvestigation({
+      alertId:           alert.id || alert._id,
+      ruleId:            alert.ruleId,
+      level:             alert.level,
+      severity:          alertSeverity,
+      agent:             alert.agent,
+      srcIp:             alert.srcIp,
+      description:       alert.description,
+      mitre:             alert.mitre,
+      timestamp:         alert.timestamp,
+      report:            text,
+      user:              'autonomous',
+      autoTriaged:       autoTriaged !== false,
+      durationMs:        structured?.duration_ms || 0,
+      rawAlert:          alert,
+      compositeRisk:     null,
+      groupId:           null,
+      deepMode:          deep_mode !== false,
+      structuredVerdict: structured,
+    });
+
+    // Audit-log autonomous executions in playbook_executions if any
+    for (const action of (_precomputed.executed_actions || [])) {
+      db.savePlaybookExecution({
+        playbookName:       `autonomous:${action.type}`,
+        investigationId:    saved.id,
+        alertKey:           `${alert.ruleId}_${alert.timestamp}_${alert.agent}_${alert.srcIp || ''}`,
+        agent:              alert.agent,
+        srcIp:              alert.srcIp,
+        ruleId:              alert.ruleId,
+        severity:            alertSeverity,
+        fpProbability:       structured?.fp_probability || null,
+        consensusApproved:   structured?.consensus_reached ?? null,
+        actionsTaken:        [action.type],
+        results:             [action.result || {}],
+        outcome:             'executed',
+      }).catch(() => {});
+    }
+
+    res.json({ ok: true, investigation_id: saved.id });
+  } catch(e) {
+    console.error('[ai/investigate/persist]', e.message);
+    res.status(503).json({ error: e.message });
+  }
+});
+
+// ── Protected assets check (used by autonomous safety gate) ─────
+app.get('/api/protected-assets/check', authMW, async (req, res) => {
+  const target = (req.query.target || '').toString().trim();
+  if (!target) return res.json({ protected: false });
+  try {
+    const r = await db.pool.query(
+      `SELECT id, identifier, label, tier FROM protected_assets
+       WHERE LOWER(identifier) = LOWER($1) OR LOWER(identifier) = LOWER($2)
+       LIMIT 1`,
+      [target, target.split('.')[0]]
+    );
+    if (r.rows.length > 0) {
+      return res.json({
+        protected: true,
+        tier: r.rows[0].tier,
+        identifier: r.rows[0].identifier,
+        label: r.rows[0].label,
+      });
+    }
+    res.json({ protected: false });
+  } catch(e) {
+    res.status(503).json({ error: e.message, protected: false });
+  }
+});
+
 // ── RAG / Vector Search endpoints ──────────────────────────────
 const RAG_HEADERS = () => process.env.RAG_API_KEY ? { 'X-API-Key': process.env.RAG_API_KEY } : {};
 
