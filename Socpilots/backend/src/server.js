@@ -4625,6 +4625,56 @@ app.post('/api/ueba/recalc', authMW, requireRole('admin'), async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── UEBA Overview — single call for hero/KPI/watchlist/anomaly-counts ──
+// 30s cache. Used by the redesigned PageUEBA Command Center.
+let _uebaOverviewCache = new Map();
+app.get('/api/ueba/overview', authMW, async (req, res) => {
+  try {
+    const hours = Math.min(parseInt(req.query.hours || '24') || 24, 720);
+    const key = `ovw:${hours}`;
+    const cached = _uebaOverviewCache.get(key);
+    if (cached && Date.now() - cached.at < 30_000) return res.json(cached.data);
+
+    const withTimeout = (p, ms = 10_000) =>
+      Promise.race([p, new Promise(r => setTimeout(() => r(null), ms))]);
+
+    const [stats, watchlist, anomalies] = await Promise.all([
+      withTimeout(ueba.getUebaStats()),
+      withTimeout(ueba.getCriticalWatchlist(5, hours)),
+      withTimeout(ueba.getAllAnomalies(hours)),
+    ]);
+
+    // Anomaly counts only — full payload is fetched separately if needed
+    const anomalyCounts = anomalies ? Object.fromEntries(
+      Object.entries(anomalies).map(([k, v]) => [k, Array.isArray(v) ? v.length : 0])
+    ) : {};
+
+    const data = {
+      stats:           stats || { users:0, hosts:0, processes:0, relationships:0, avg_risk:0, high_risk_users:0 },
+      watchlist:       watchlist || [],
+      anomaly_counts:  anomalyCounts,
+      hours,
+    };
+    _uebaOverviewCache.set(key, { at: Date.now(), data });
+    res.json(data);
+  } catch (e) {
+    console.error('[ueba/overview]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── UEBA Entity Timeline — 24h hourly anomaly sparkline ──
+app.get('/api/ueba/entity/:name/timeline', authMW, async (req, res) => {
+  try {
+    const hours = Math.min(parseInt(req.query.hours || '24') || 24, 168);
+    const buckets = await ueba.getEntityTimeline(req.params.name, hours);
+    res.json({ entity: req.params.name, hours, buckets });
+  } catch (e) {
+    console.error('[ueba/timeline]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ═══════════════════════════════════════════════════════════════
 // ─── LANGCHAIN AGENT PROXY ─────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════

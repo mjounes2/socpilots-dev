@@ -1084,6 +1084,137 @@ async function getAttackPath(fromEntity, toEntity) {
   return { nodes: pathNodes, edges: pathEdges, hops, maxDeviation, from: fromEntity, to: toEntity };
 }
 
+// ── 24h Anomaly Timeline per Entity (for sparkline) ─────────────
+// Returns 24 hourly buckets: [{hour_offset:-23..0, count, max_deviation}]
+async function getEntityTimeline(entity, hours = 24) {
+  const buckets = Array.from({ length: hours }, (_, i) => ({
+    hour_offset: -(hours - 1 - i),
+    count: 0,
+    max_deviation: 0,
+  }));
+
+  try {
+    const recs = await run(
+      `MATCH (e)-[r]-()
+       WHERE (e.name = $name OR e.address = $name)
+         AND r.time IS NOT NULL
+         AND datetime(r.time) > datetime() - duration({hours: $hours})
+       RETURN datetime(r.time) AS t,
+              coalesce(r.deviation_score, 0) AS dev,
+              r.flags AS flags`,
+      { name: entity, hours: require('neo4j-driver').int(hours) }
+    );
+
+    const now = Date.now();
+    for (const rec of recs) {
+      const t = rec.get('t');
+      if (!t) continue;
+      const ts = new Date(
+        Number(t.year) + '-' +
+        String(Number(t.month)).padStart(2, '0') + '-' +
+        String(Number(t.day)).padStart(2, '0') + 'T' +
+        String(Number(t.hour)).padStart(2, '0') + ':' +
+        String(Number(t.minute)).padStart(2, '0') + ':00Z'
+      ).getTime();
+      if (!ts) continue;
+      const hoursAgo = Math.floor((now - ts) / 3_600_000);
+      if (hoursAgo < 0 || hoursAgo >= hours) continue;
+      const idx = hours - 1 - hoursAgo;
+      const dev = rec.get('dev')?.toNumber?.() ?? rec.get('dev') ?? 0;
+      const flags = rec.get('flags') || [];
+      // Count only anomalous events (deviation >= 30 OR has flags)
+      if (dev >= 30 || flags.length > 0) {
+        buckets[idx].count++;
+        if (dev > buckets[idx].max_deviation) buckets[idx].max_deviation = dev;
+      }
+    }
+  } catch (e) {
+    console.warn('[UEBA] getEntityTimeline error:', e.message);
+  }
+
+  return buckets;
+}
+
+// ── Critical Watchlist — top N risk entities with rich detail ───
+// One query returns: top entities + their recent anomaly flag breakdown
+// for the watchlist hero cards.
+async function getCriticalWatchlist(limit = 5, hours = 24) {
+  const d = getDriver();
+  if (!d) return [];
+  const neo4j = require('neo4j-driver');
+  try {
+    const recs = await run(
+      `MATCH (u:User)
+       WHERE coalesce(u.risk_score, 0) >= 40
+       OPTIONAL MATCH (u)-[r:LOGGED_IN]->(h:Host)
+       WHERE r.time IS NOT NULL
+         AND datetime(r.time) > datetime() - duration({hours: $hours})
+       WITH u,
+            count(r) AS events,
+            collect(DISTINCT h.name)[..5] AS hosts,
+            [f IN apoc.coll.flatten(collect(r.flags)) | f] AS allFlags
+       RETURN u.name AS entity,
+              'user' AS entity_type,
+              coalesce(u.risk_score, 0) AS risk_score,
+              coalesce(u.anomaly_count, 0) AS anomaly_count,
+              u.last_anomaly AS last_anomaly,
+              u.last_seen AS last_seen,
+              events,
+              hosts,
+              allFlags AS flags
+       ORDER BY risk_score DESC, u.total_events DESC LIMIT $limit`,
+      { limit: neo4j.int(limit), hours: neo4j.int(hours) }
+    ).catch(async () => {
+      // Fallback if APOC not available — fetch flags manually
+      return run(
+        `MATCH (u:User)
+         WHERE coalesce(u.risk_score, 0) >= 40
+         OPTIONAL MATCH (u)-[r:LOGGED_IN]->(h:Host)
+         WHERE r.time IS NOT NULL
+           AND datetime(r.time) > datetime() - duration({hours: $hours})
+         WITH u, count(r) AS events,
+              collect(DISTINCT h.name)[..5] AS hosts,
+              collect(r.flags) AS flagLists
+         RETURN u.name AS entity,
+                'user' AS entity_type,
+                coalesce(u.risk_score, 0) AS risk_score,
+                coalesce(u.anomaly_count, 0) AS anomaly_count,
+                u.last_anomaly AS last_anomaly,
+                u.last_seen AS last_seen,
+                events, hosts,
+                flagLists AS flags
+         ORDER BY risk_score DESC, u.total_events DESC LIMIT $limit`,
+        { limit: neo4j.int(limit), hours: neo4j.int(hours) }
+      );
+    });
+
+    return recs.map(r => {
+      // Flatten flag lists if returned as array of arrays
+      const rawFlags = r.get('flags') || [];
+      const flatFlags = Array.isArray(rawFlags[0])
+        ? rawFlags.flat().filter(Boolean)
+        : rawFlags.filter(Boolean);
+      // Tally flag types
+      const flagCounts = {};
+      for (const f of flatFlags) flagCounts[f] = (flagCounts[f] || 0) + 1;
+      return {
+        entity:        r.get('entity'),
+        entity_type:   r.get('entity_type'),
+        risk_score:    r.get('risk_score')?.toNumber?.() ?? r.get('risk_score') ?? 0,
+        anomaly_count: r.get('anomaly_count')?.toNumber?.() ?? 0,
+        last_anomaly:  r.get('last_anomaly'),
+        last_seen:     r.get('last_seen'),
+        events:        r.get('events')?.toNumber?.() ?? 0,
+        hosts:         r.get('hosts') || [],
+        flag_breakdown: flagCounts,
+      };
+    });
+  } catch (e) {
+    console.warn('[UEBA] getCriticalWatchlist error:', e.message);
+    return [];
+  }
+}
+
 async function purgeOldData(daysOld = 30) {
   const cutoff = new Date(Date.now() - daysOld * 86400_000).toISOString();
   const results = {};
@@ -1131,6 +1262,7 @@ module.exports = {
   detectMultiStageAttack, detectSharedCredentials,
   getGraphNodes, getAttackPath,
   computeEntityBaseline, assessEntityFP,
+  getEntityTimeline, getCriticalWatchlist,
   purgeOldData,
   ANOMALY_WEIGHTS,
 };
