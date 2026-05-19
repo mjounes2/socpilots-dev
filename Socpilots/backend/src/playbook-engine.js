@@ -432,6 +432,9 @@ async function runPlaybook(playbook, alert, investigationReport, fpProbability =
   }
 
   // ── Execute actions ──────────────────────────────────────────
+  // FP threshold for case creation. Anything ≥ this and we won't open a
+  // TheHive case automatically — only TP-leaning verdicts get cases.
+  const FP_CASE_THRESHOLD = 70;
   for (const action of actions) {
     const isDestructive = destructiveTypes.includes(action.type) || action.type === 'block_ip';
 
@@ -444,6 +447,18 @@ async function runPlaybook(playbook, alert, investigationReport, fpProbability =
       };
       results.push(r);
       console.log(`[Playbook] ${playbook.name} → ${action.type}: SKIPPED (FP=${fpProbability}%)`);
+      continue;
+    }
+
+    // FP gate for case creation — don't open TheHive cases for likely-FP alerts.
+    // Stops the "case opened → immediately closed as FalsePositive" pattern.
+    if (action.type === 'create_case' && fpProbability >= FP_CASE_THRESHOLD) {
+      results.push({
+        action:  'create_case',
+        success: false,
+        detail:  `Skipped — alert classified as False Positive (FP=${fpProbability}% ≥ ${FP_CASE_THRESHOLD}%)`,
+      });
+      console.log(`[Playbook] ${playbook.name} → create_case: SKIPPED (FP=${fpProbability}%)`);
       continue;
     }
 

@@ -2890,6 +2890,7 @@ const ACTION_MAP = {
   kill:        ['kill_process'],
   disable:     ['disable_user'],
   close:       ['close_case'],
+  close_alert: ['close_alert'],   // FP marker — no case, audit-logged only
   monitor:     ['create_case'],
   investigate: ['create_case'],
   review:      ['create_case'],
@@ -2945,7 +2946,9 @@ function _getAdjustedFp(ruleId, langchainFp) {
 
 // Start: load on boot (after 20s so DB is ready) + every 10 min
 setTimeout(() => refreshRuleFpCache(), 20000);
-setInterval(() => refreshRuleFpCache(), 600000);
+// Refresh every 2 min so analyst tp_status corrections propagate quickly
+// into the next batch of triage decisions.
+setInterval(() => refreshRuleFpCache(), 120000);
 
 // ── Alert Suppression Cache ───────────────────────────────────────────────
 let _suppressionCache = [];
@@ -3066,7 +3069,11 @@ function _extractStructuredVerdict(triageData, alert, fpBlend = null) {
                    : confidence >= 65 ? 'true_positive'
                    : 'needs_review';
   const rawAction  = (triageData?.recommended_action || 'review').toLowerCase().replace(/ /g,'_');
-  const actions    = ACTION_MAP[rawAction] || ['create_case'];
+  // FP verdicts never get create_case — they get close_alert (no-op marker).
+  // Prevents the "case opened → immediately closed as FalsePositive" pattern.
+  const actions    = verdict === 'false_positive'
+                     ? ['close_alert']
+                     : (ACTION_MAP[rawAction] || ['create_case']);
   const mitre      = triageData?.mitre_technique
                      ? [triageData.mitre_technique]
                      : (Array.isArray(alert.mitre) ? alert.mitre : []);
@@ -3084,14 +3091,17 @@ function _extractStructuredVerdict(triageData, alert, fpBlend = null) {
 }
 
 function _buildMediumVerdict(alert, fpBlend = null) {
-  const fpProb = fpBlend ? fpBlend.adjusted_fp : 60;
+  const fpProb  = fpBlend ? fpBlend.adjusted_fp : 60;
+  const isFp    = fpProb >= 70;
+  const verdict = isFp ? 'false_positive' : 'needs_review';
   return {
-    verdict:             fpProb >= 70 ? 'false_positive' : 'needs_review',
+    verdict,
     confidence:          Math.max(0, Math.min(100, 100 - fpProb)),
     fp_probability:      fpProb,
     fp_blend_info:       fpBlend || null,
     mitre_techniques:    Array.isArray(alert.mitre) ? alert.mitre : [],
-    recommended_actions: ['create_case'],
+    // FP → close_alert (no-op marker). Otherwise queue for case review.
+    recommended_actions: isFp ? ['close_alert'] : ['create_case'],
     summary:             `Pattern match — rule ${alert.ruleId||alert.rule_id} on ${alert.agent} (level ${alert.level||alert.rule_level})`.slice(0, 300),
     risk_score:          Math.round(((alert.level || alert.rule_level || 0) / 15) * 100),
     requires_approval:   false,
@@ -3207,6 +3217,28 @@ async function _executePlaybooks(alert, report, savedId, fpProbability, playbook
 
 // ── Route playbook actions through approval gate or execute immediately ──
 async function _routeActionsOrApproval(alert, report, savedId, fpProbability, verdict) {
+  // FP short-circuit: don't run any playbooks for FP alerts.
+  // Audit-log the decision so analysts can review what was auto-FP'd.
+  if (verdict?.verdict === 'false_positive') {
+    db.createSystemEvent(
+      'auto_fp',
+      'auto-triage',
+      `Alert auto-classified as False Positive — no case opened. Rule ${alert.ruleId||alert.rule_id} on ${alert.agent} (FP=${fpProbability}%)`,
+      'ok',
+      {
+        investigation_id: savedId,
+        rule_id:          alert.ruleId || alert.rule_id,
+        agent:            alert.agent,
+        src_ip:           alert.srcIp  || alert.src_ip,
+        fp_probability:   fpProbability,
+        confidence:       verdict.confidence,
+        summary:          verdict.summary,
+      }
+    ).catch(() => {});
+    console.log(`[TriageProcessor] FP short-circuit inv#${savedId} (FP=${fpProbability}%) — no case created`);
+    return;
+  }
+
   let uebaRisk = 0;
   if (alert.agent) {
     try {
