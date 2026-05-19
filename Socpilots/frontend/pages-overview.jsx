@@ -221,58 +221,121 @@ function DashSpark({ data, height = 28, color = 'var(--acc)' }) {
   );
 }
 
-// ─── Stacked area timeline (SVG) ─────────────────────────────
+// ─── Stacked-bar timeline (SVG) ─────────────────────────────
+// Vertical bars per hour bucket, stacked by severity (Critical at bottom,
+// then High, Medium, Low). Centered legend above the chart.
 function AlertTimeline({ data }) {
-  if (!data || data.length < 2) return <EmptyState icon="📊" text="Insufficient timeline data" />;
-  const w = 800, h = 180, pad = { l: 36, r: 12, t: 12, b: 26 };
+  if (!data || data.length < 1) return <EmptyState icon="📊" text="Insufficient timeline data" />;
+
+  const w = 800, h = 240;
+  const pad = { l: 56, r: 16, t: 36, b: 28 };
   const innerW = w - pad.l - pad.r;
   const innerH = h - pad.t - pad.b;
-  const layers = ['low', 'medium', 'high', 'critical'];
-  const layerColor = { critical: 'var(--crit)', high: 'var(--high)', medium: 'var(--med)', low: 'var(--low)' };
 
-  const stack = data.map(d => {
-    let acc = 0;
-    return layers.map(L => { const v0 = acc; acc += (d[L] || 0); return [v0, acc]; });
-  });
-  const maxY = Math.max(...stack.flatMap(s => s.map(p => p[1])), 1);
-  const x = i => pad.l + (i / Math.max(data.length - 1, 1)) * innerW;
-  const y = v => pad.t + innerH - (v / maxY) * innerH;
+  // Order from bottom of stack → top
+  const layers = ['critical', 'high', 'medium', 'low'];
+  const layerLabel = { critical: 'Critical', high: 'High', medium: 'Medium', low: 'Low' };
+  const layerColor = {
+    critical: '#ff1744',
+    high:     '#ff9800',
+    medium:   '#ffc107',
+    low:      '#26c6da',
+  };
 
-  const paths = layers.map((L, li) => {
-    const top = stack.map((s, i) => [x(i), y(s[li][1])]);
-    const bot = stack.map((s, i) => [x(i), y(s[li][0])]).reverse();
-    const all = [...top, ...bot];
-    return { L, d: all.map((p, i) => `${i ? 'L' : 'M'}${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join(' ') + 'Z' };
-  });
+  // Pre-compute totals to find max for Y axis
+  const totals = data.map(d => layers.reduce((s, L) => s + (d[L] || 0), 0));
+  const rawMax = Math.max(...totals, 1);
+  // Round max to a "nice" round number for grid (1k, 2k, 5k bands)
+  const niceMax = (() => {
+    const pow = Math.pow(10, Math.floor(Math.log10(rawMax)));
+    const m = rawMax / pow;
+    const nice = m <= 1 ? 1 : m <= 2 ? 2 : m <= 5 ? 5 : 10;
+    return nice * pow;
+  })();
 
-  const yTicks = [0, Math.round(maxY / 2), maxY];
+  // 6 Y gridlines from 0 → niceMax
+  const tickStep = niceMax / 6;
+  const yTicks = Array.from({ length: 7 }, (_, i) => Math.round(i * tickStep));
+
+  const fmtTick = v => v.toLocaleString('en-US');
+
+  // Bar geometry — leave 25% of column width as gap between bars
+  const colW = innerW / data.length;
+  const barW = colW * 0.7;
+  const x = i => pad.l + colW * i + (colW - barW) / 2;
+  const y = v => pad.t + innerH - (v / niceMax) * innerH;
+  const ySpan = v => (v / niceMax) * innerH;
 
   return (
     <svg viewBox={`0 0 ${w} ${h}`} width="100%" height={h} className="chart">
-      {yTicks.map((t, i) => (
+      {/* Legend (centered above chart area) */}
+      <g transform={`translate(${pad.l + innerW / 2},${10})`}>
+        {(() => {
+          const items = ['critical', 'high', 'medium', 'low'];
+          // Approx widths: square (8) + gap (4) + label width
+          const widths = items.map(L => 8 + 4 + layerLabel[L].length * 7 + 18);
+          const total = widths.reduce((a, b) => a + b, 0);
+          let cursor = -total / 2;
+          return items.map((L, i) => {
+            const tx = cursor;
+            cursor += widths[i];
+            return (
+              <g key={L} transform={`translate(${tx},0)`}>
+                <rect width="10" height="10" y="-1" rx="1" fill={layerColor[L]} />
+                <text x="16" y="9" className="chart-legend" style={{ fontSize: 11, fill: 'var(--fg-2)' }}>{layerLabel[L]}</text>
+              </g>
+            );
+          });
+        })()}
+      </g>
+
+      {/* Y gridlines + tick labels */}
+      {yTicks.slice().reverse().map((t, i) => (
         <g key={i}>
-          <line x1={pad.l} x2={w - pad.r} y1={y(t)} y2={y(t)} stroke="var(--ln)" strokeDasharray="2 4" />
-          <text x={pad.l - 8} y={y(t) + 3} textAnchor="end" className="chart-tick">
-            {t >= 1000 ? `${(t / 1000).toFixed(0)}k` : t}
+          <line x1={pad.l} x2={w - pad.r} y1={y(t)} y2={y(t)} stroke="var(--ln)" strokeOpacity="0.4" />
+          <text x={pad.l - 10} y={y(t) + 3} textAnchor="end" className="chart-tick" style={{ fontSize: 10, fill: 'var(--fg-3)', fontFamily: 'var(--mono)' }}>
+            {fmtTick(t)}
           </text>
         </g>
       ))}
-      {data.map((d, i) => i % Math.max(1, Math.floor(data.length / 6)) === 0 && (
-        <text key={i} x={x(i)} y={h - 8} textAnchor="middle" className="chart-tick">
-          {String(d.hour).padStart(2, '0')}:00
-        </text>
-      ))}
-      {paths.map(p => (
-        <path key={p.L} d={p.d} fill={layerColor[p.L]} opacity={p.L === 'low' ? 0.45 : 0.78} />
-      ))}
-      <g transform={`translate(${pad.l},${pad.t - 2})`}>
-        {layers.slice().reverse().map((L, i) => (
-          <g key={L} transform={`translate(${i * 78},0)`}>
-            <rect width="8" height="8" fill={layerColor[L]} />
-            <text x="12" y="8" className="chart-legend">{L}</text>
+
+      {/* Stacked bars */}
+      {data.map((d, i) => {
+        let acc = 0;
+        return (
+          <g key={i}>
+            {layers.map(L => {
+              const v = d[L] || 0;
+              if (v <= 0) return null;
+              const segH = ySpan(v);
+              const segY = y(acc + v);
+              acc += v;
+              return (
+                <rect key={L}
+                  x={x(i)} y={segY}
+                  width={barW} height={Math.max(0, segH)}
+                  fill={layerColor[L]} />
+              );
+            })}
           </g>
-        ))}
-      </g>
+        );
+      })}
+
+      {/* X-axis labels (HH:00) */}
+      {data.map((d, i) => {
+        const stride = Math.max(1, Math.floor(data.length / 8));
+        if (i % stride !== 0 && i !== data.length - 1) return null;
+        return (
+          <text key={i}
+            x={x(i) + barW / 2}
+            y={h - 8}
+            textAnchor="middle"
+            className="chart-tick"
+            style={{ fontSize: 10, fill: 'var(--fg-3)', fontFamily: 'var(--mono)' }}>
+            {String(d.hour).padStart(2, '0')}:00
+          </text>
+        );
+      })}
     </svg>
   );
 }
