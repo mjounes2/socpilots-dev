@@ -1217,25 +1217,32 @@ app.get('/api/mitre/technique/:id', authMW, async (req, res) => {
       ]}},
       sort: [{ '@timestamp': { order: 'desc' } }],
       aggs: {
-        rules:    { terms: { field: 'rule.id', size: 20 }, aggs: {
-          desc:  { terms: { field: 'rule.description', size: 1 } },
-          level: { max:   { field: 'rule.level' } },
+        rules:     { terms: { field: 'rule.id', size: 20 }, aggs: {
+          desc:    { terms: { field: 'rule.description', size: 1 } },
+          level:   { max:   { field: 'rule.level' } },
         }},
-        agents:   { terms: { field: 'agent.name',        size: 20 } },
-        decoders: { terms: { field: 'rule.decoder.name', size: 10 } },
-        tactics:  { terms: { field: 'rule.mitre.tactic', size:  5 } },
-        timeline: { date_histogram: { field: '@timestamp', calendar_interval: 'day' } },
+        agents:    { terms: { field: 'agent.name',        size: 20 } },
+        decoders:  { terms: { field: 'decoder.name',      size: 10 } },
+        tactics:   { terms: { field: 'rule.mitre.tactic', size:  5 } },
+        max_level: { max:   { field: 'rule.level' } },
+        last_seen: { max:   { field: '@timestamp' } },
+        timeline:  { date_histogram: { field: '@timestamp', calendar_interval: 'day' } },
       },
     });
+    const total = r.hits?.total?.value || 0;
     res.json({
       technique:     techId,
       timeframe:     tf,
-      total:         r.hits?.total?.value || 0,
+      count:         total,
+      total:         total,
+      max_level:     Math.round(r.aggregations?.max_level?.value || 0),
+      last_seen:     r.aggregations?.last_seen?.value || null,
       recent_alerts: (r.hits?.hits || []).map(h => ({
         id:          h._id,
         timestamp:   h._source['@timestamp'],
         agent:       h._source.agent?.name || 'unknown',
-        rule:        h._source.rule?.id,
+        ruleId:      h._source.rule?.id,
+        severity:    sevFromLevel(h._source.rule?.level || 0),
         description: h._source.rule?.description,
         level:       h._source.rule?.level,
       })),
@@ -1246,6 +1253,66 @@ app.get('/api/mitre/technique/:id', authMW, async (req, res) => {
       timeline: (r.aggregations?.timeline?.buckets || []).map(b => ({ date: b.key_as_string?.slice(0,10), count: b.doc_count })),
     });
   } catch (e) { console.error('[mitre/technique]', e.message); res.status(502).json({ error: e.message }); }
+});
+
+// ── MITRE COVERAGE AUDIT (unmapped rules) ──
+let _mitreAuditCache = null, _mitreAuditCacheTime = 0, _mitreAuditCacheTf = '';
+
+app.get('/api/mitre/coverage-audit', authMW, async (req, res) => {
+  try {
+    const tf = (['24h','7d','30d','90d'].includes(req.query.timeframe) ? req.query.timeframe : '7d');
+    const now = Date.now();
+    if (_mitreAuditCache && tf === _mitreAuditCacheTf && now - _mitreAuditCacheTime < 60000) return res.json(_mitreAuditCache);
+    const r = await osSearch({
+      size: 0,
+      query: { bool: {
+        must:     [{ range: { '@timestamp': { gte: `now-${tf}` } } }],
+        must_not: [{ exists: { field: 'rule.mitre.id' } }],
+      }},
+      aggs: {
+        total_unmapped: { value_count: { field: '_id' } },
+        by_decoder: { terms: { field: 'decoder.name', size: 20 }, aggs: {
+          top_rules: { terms: { field: 'rule.id', size: 5 }, aggs: {
+            max_level: { max:   { field: 'rule.level' } },
+            desc:      { terms: { field: 'rule.description', size: 1 } },
+          }},
+        }},
+        top_rules: { terms: { field: 'rule.id', size: 25 }, aggs: {
+          max_level: { max:   { field: 'rule.level' } },
+          desc:      { terms: { field: 'rule.description', size: 1 } },
+          decoder:   { terms: { field: 'decoder.name', size: 1 } },
+        }},
+        mapped_count: {
+          filter: { exists: { field: 'rule.mitre.id' } },
+        },
+      },
+    });
+    const result = {
+      timeframe: tf,
+      total_unmapped: r.aggregations?.total_unmapped?.value || 0,
+      by_decoder: (r.aggregations?.by_decoder?.buckets || []).map(b => ({
+        decoder:   b.key,
+        count:     b.doc_count,
+        top_rules: (b.top_rules?.buckets || []).map(r2 => ({
+          id:          r2.key,
+          count:       r2.doc_count,
+          level:       Math.round(r2.max_level?.value || 0),
+          severity:    sevFromLevel(r2.max_level?.value || 0),
+          description: r2.desc?.buckets?.[0]?.key || 'Unknown',
+        })),
+      })),
+      top_rules: (r.aggregations?.top_rules?.buckets || []).map(b => ({
+        id:          b.key,
+        count:       b.doc_count,
+        level:       Math.round(b.max_level?.value || 0),
+        severity:    sevFromLevel(b.max_level?.value || 0),
+        description: b.desc?.buckets?.[0]?.key || 'Unknown',
+        decoder:     b.decoder?.buckets?.[0]?.key || 'Unknown',
+      })),
+    };
+    _mitreAuditCache = result; _mitreAuditCacheTime = now; _mitreAuditCacheTf = tf;
+    res.json(result);
+  } catch (e) { console.error('[mitre/coverage-audit]', e.message); res.status(502).json({ error: e.message }); }
 });
 
 // ── THEHIVE CASES ──
