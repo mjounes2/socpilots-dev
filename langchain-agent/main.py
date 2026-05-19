@@ -711,6 +711,64 @@ def get_llm(model_preference: str = "auto"):
     raise ValueError("No LLM API key configured (OPENAI_API_KEY or MISTRAL_API_KEY)")
 
 
+def _is_rate_limit(err: Exception) -> bool:
+    msg = str(err).lower()
+    return any(s in msg for s in ("429", "rate limit", "too many requests", "ratelimit", "quota"))
+
+
+async def ainvoke_with_fallback(prompt, preferred: str = "mistral"):
+    """
+    Call an LLM with retry + provider fallback.
+
+    Strategy:
+      1. Try preferred provider (default Mistral) with up to 2 retries on 429
+         with exponential backoff (1s, 2s).
+      2. If preferred still fails (rate-limited or otherwise) and OpenAI is
+         configured, fall back to GPT-4o (1 attempt — should be reliable).
+      3. If preferred was already OpenAI and failed, retry Mistral as last
+         resort if available.
+
+    Returns (response_text, model_used). Raises RuntimeError if all
+    providers are exhausted.
+    """
+    last_err: Exception = None
+    pref = (preferred or "mistral").lower()
+
+    # Build ordered candidate list (model_name, factory)
+    candidates = []
+    if pref in ("mistral", "auto") and MISTRAL_API_KEY:
+        candidates.append(("mistral-large", lambda: ChatMistralAI(model="mistral-large-latest", api_key=MISTRAL_API_KEY, temperature=0)))
+    if OPENAI_API_KEY:
+        candidates.append(("gpt-4o", lambda: ChatOpenAI(model="gpt-4o", api_key=OPENAI_API_KEY, temperature=0)))
+    # If preferred was Mistral and not yet added (e.g. no MISTRAL key), append at end
+    if pref == "gpt" and MISTRAL_API_KEY and not any(n == "mistral-large" for n, _ in candidates):
+        candidates.append(("mistral-large", lambda: ChatMistralAI(model="mistral-large-latest", api_key=MISTRAL_API_KEY, temperature=0)))
+
+    if not candidates:
+        raise RuntimeError("No LLM API key configured (OPENAI_API_KEY or MISTRAL_API_KEY)")
+
+    for model_name, factory in candidates:
+        max_attempts = 3 if model_name == "mistral-large" else 1
+        for attempt in range(max_attempts):
+            try:
+                llm = factory()
+                response = await llm.ainvoke(prompt)
+                if attempt > 0 or model_name != candidates[0][0]:
+                    log.info(f"[LLM-fallback] succeeded with {model_name} (attempt {attempt+1})")
+                return response.content.strip(), model_name
+            except Exception as e:
+                last_err = e
+                if _is_rate_limit(e) and attempt < max_attempts - 1:
+                    backoff = 2 ** attempt  # 1s, 2s
+                    log.warning(f"[LLM-fallback] {model_name} rate-limited, retrying in {backoff}s (attempt {attempt+1}/{max_attempts})")
+                    await asyncio.sleep(backoff)
+                    continue
+                log.warning(f"[LLM-fallback] {model_name} attempt {attempt+1} failed: {str(e)[:140]}")
+                break  # move to next provider
+
+    raise RuntimeError(f"All LLM providers exhausted; last error: {last_err}")
+
+
 # ── ReAct Prompt (standard mode — 3-5 tool calls, fast) ───────
 REACT_PROMPT = PromptTemplate.from_template("""You are an expert SOC analyst. Use tools to investigate the input, then write a Final Answer.
 
@@ -1015,11 +1073,6 @@ async def investigate(req: InvestigateRequest):
 @app.post("/triage")
 async def triage(req: TriageRequest):
     start = time.time()
-    try:
-        llm = get_llm(req.model)
-    except ValueError as e:
-        raise HTTPException(status_code=503, detail=str(e))
-
     a = req.alert
     prompt = f"""Analyze this security alert and respond in JSON only:
 
@@ -1037,11 +1090,11 @@ Return ONLY valid JSON with these fields:
 }}"""
 
     try:
-        response = await llm.ainvoke(prompt)
-        text = response.content.strip()
+        text, model_used = await ainvoke_with_fallback(prompt, preferred=req.model or "mistral")
         match = re.search(r'\{[\s\S]*\}', text)
         result = json.loads(match.group()) if match else {"raw": text}
         result["duration_ms"] = int((time.time() - start) * 1000)
+        result["model_used"] = model_used
         return result
     except Exception as e:
         log.error(f"Triage error: {e}")

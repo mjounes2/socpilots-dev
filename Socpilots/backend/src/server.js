@@ -3112,6 +3112,40 @@ let _feederRunning    = false;
 let _processorRunning = false;
 let _lastLowBatch     = 0;
 
+// ── Rule-level triage cache ────────────────────────────────────────────
+// Avoids hammering the LLM (and rate-limiters) for noisy rules that fire
+// repeatedly with similar payloads. Key: `${ruleId}::${agent}`. TTL 5 min.
+// Real-world impact: rule 110074 (SSH brute force) fired 97× recently and
+// would have called Mistral 97× — with the cache it calls once per agent
+// per 5 min.
+const _triageCache    = new Map();
+const TRIAGE_CACHE_TTL_MS  = 5 * 60 * 1000;
+const TRIAGE_CACHE_MAX     = 500;
+let   _triageCacheHits = 0;
+let   _triageCacheMiss = 0;
+
+function _triageCacheKey(ruleId, agent) {
+  return `${ruleId || 'unknown'}::${agent || 'unknown'}`;
+}
+function _getCachedTriage(ruleId, agent) {
+  const hit = _triageCache.get(_triageCacheKey(ruleId, agent));
+  if (!hit) return null;
+  if (Date.now() - hit.cachedAt > TRIAGE_CACHE_TTL_MS) {
+    _triageCache.delete(_triageCacheKey(ruleId, agent));
+    return null;
+  }
+  return hit.triageData;
+}
+function _setCachedTriage(ruleId, agent, triageData) {
+  if (!ruleId || !triageData) return;
+  _triageCache.set(_triageCacheKey(ruleId, agent), { triageData, cachedAt: Date.now() });
+  // Simple GC: drop oldest entry when over capacity
+  if (_triageCache.size > TRIAGE_CACHE_MAX) {
+    const firstKey = _triageCache.keys().next().value;
+    _triageCache.delete(firstKey);
+  }
+}
+
 // ── Shared: save investigation + side-effects ─────────────────────────
 async function _saveTriageInvestigation({ alert, report, tier, durationMs, queueId, structuredVerdict }) {
   const saved = await db.saveInvestigation({
@@ -3454,12 +3488,22 @@ async function triageProcessor() {
         if (!text) { await db.markQueueItemFailed(item.id, 'empty LangChain response'); continue; }
 
         let fpProbability = 0;
-        let triageData    = null;
-        try {
-          const tr = await axios.post(`${LANGCHAIN_URL}/triage`, { alert },
-            { timeout: 30000, headers: { Authorization: `Bearer ${LANGCHAIN_TOKEN}` }, validateStatus: () => true });
-          if (tr.status < 400) { triageData = tr.data; fpProbability = triageData?.false_positive_probability || 0; }
-        } catch(e) { /* non-fatal */ }
+        let triageData    = _getCachedTriage(item.rule_id, item.agent);
+        if (triageData) {
+          _triageCacheHits++;
+          fpProbability = triageData?.false_positive_probability || 0;
+        } else {
+          _triageCacheMiss++;
+          try {
+            const tr = await axios.post(`${LANGCHAIN_URL}/triage`, { alert },
+              { timeout: 30000, headers: { Authorization: `Bearer ${LANGCHAIN_TOKEN}` }, validateStatus: () => true });
+            if (tr.status < 400) {
+              triageData    = tr.data;
+              fpProbability = triageData?.false_positive_probability || 0;
+              if (triageData) _setCachedTriage(item.rule_id, item.agent, triageData);
+            }
+          } catch(e) { /* non-fatal */ }
+        }
 
         const fpBlend = _getAdjustedFp(item.rule_id, fpProbability);
         const verdict = _extractStructuredVerdict(triageData, alert, fpBlend);
@@ -3481,11 +3525,20 @@ async function triageProcessor() {
                       mitre: item.mitre || [], fullLog: item.full_log };
       const start = Date.now();
       try {
-        const resp = await axios.post(`${LANGCHAIN_URL}/triage`,
-          { alert },
-          { timeout: 30000, headers: { Authorization: `Bearer ${LANGCHAIN_TOKEN}` }, validateStatus: () => true }
-        );
-        const raw = resp.status < 400 ? resp.data : null;
+        // Cache check: same rule+agent already triaged within 5 min?
+        let raw = _getCachedTriage(item.rule_id, item.agent);
+        let fromCache = !!raw;
+        if (fromCache) {
+          _triageCacheHits++;
+        } else {
+          _triageCacheMiss++;
+          const resp = await axios.post(`${LANGCHAIN_URL}/triage`,
+            { alert },
+            { timeout: 30000, headers: { Authorization: `Bearer ${LANGCHAIN_TOKEN}` }, validateStatus: () => true }
+          );
+          raw = resp.status < 400 ? resp.data : null;
+          if (raw) _setCachedTriage(item.rule_id, item.agent, raw);
+        }
         const prose = raw?.result || raw?.answer || raw?.response || raw?.text || raw?.summary || '';
         if (!prose) { await db.markQueueItemFailed(item.id, 'empty triage response'); continue; }
 
@@ -3510,7 +3563,7 @@ ${prose.slice(0, 2000)}`;
         const saved = await _saveTriageInvestigation({ alert, report, tier: 'high', durationMs: Date.now()-start, queueId: item.id, structuredVerdict: verdict });
         await db.markQueueItemDone(item.id, saved.id);
         if (darkSoc === 'true') await _routeActionsOrApproval(alert, report, saved.id, fpBlend.adjusted_fp, verdict);
-        console.log(`[TriageProcessor] HIGH ${item.rule_id} → inv#${saved.id} verdict=${verdict.verdict} (${Date.now()-start}ms)`);
+        console.log(`[TriageProcessor] HIGH ${item.rule_id} → inv#${saved.id} verdict=${verdict.verdict} (${Date.now()-start}ms${fromCache ? ' · cached' : ''})`);
       } catch(e) {
         console.warn(`[TriageProcessor] HIGH ${item.rule_id} failed:`, e.message);
         await db.markQueueItemFailed(item.id, e.message);
@@ -7135,6 +7188,14 @@ app.post('/api/action-approvals/:id/reject', authMW, requireRole('l2'), async (r
 app.get('/api/triage-queue/stats', authMW, async (req, res) => {
   try {
     const stats = await db.getQueueStats();
+    const totalCacheReq = _triageCacheHits + _triageCacheMiss;
+    stats.triage_cache = {
+      size:     _triageCache.size,
+      hits:     _triageCacheHits,
+      misses:   _triageCacheMiss,
+      hit_rate: totalCacheReq > 0 ? Math.round((_triageCacheHits / totalCacheReq) * 100) : 0,
+      ttl_ms:   TRIAGE_CACHE_TTL_MS,
+    };
     res.json(stats);
   } catch(e) {
     console.error('[triage-queue/stats]', e.message);
